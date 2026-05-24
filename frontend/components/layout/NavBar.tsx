@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
-import { Wordmark } from '@/components/ui/Wordmark';
 import { shortAddr } from '@/lib/data';
 
 const NAVIGATION_ITEMS = [
@@ -24,30 +23,30 @@ export function NavBar() {
     href === '/stocks' ? pathname.startsWith('/stocks') : pathname === href;
 
   return (
-    <div
-      className="hairline-strong"
-      style={{ position: 'sticky', top: 0, zIndex: 100, background: 'var(--canvas)', padding: '14px 24px' }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+    <div className="hairline-strong sticky top-[0px] z-[100] bg-[var(--canvas)] px-[24px] py-[14px]">
+      <div className="relative flex items-center justify-between gap-[16px]">
 
-        {/* Left: hamburger (mobile) + navigation tabs */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1, minWidth: 0 }}>
+        {/* Left: hamburger + logo mobile + nav tabs desktop */}
+        <div className="flex items-center gap-[16px] flex-1 min-w-0">
           <button
-            className="only-mobile"
+            type="button"
+            className="only-mobile appearance-none border border-[var(--ink)] bg-[var(--canvas)] p-[8px] cursor-pointer text-[var(--ink)] leading-none"
             onClick={() => setIsMobileMenuOpen(isOpen => !isOpen)}
             aria-label="Toggle navigation menu"
-            style={{ appearance: 'none', border: '1px solid var(--ink)', background: 'var(--canvas)', padding: '8px', cursor: 'pointer', color: 'var(--ink)', lineHeight: 0 }}
           >
             <Icon name={isMobileMenuOpen ? 'x' : 'menu'} size={18} />
           </button>
 
-          <nav className="nav-tabs-desktop" style={{ display: 'flex', gap: 28 }}>
+          <Link href="/home" className="only-mobile no-underline">
+            <Image src="/logo-only-nobg.png" alt="PulsarFi" width={40} height={40} className="nav-logo-mobile w-auto block" />
+          </Link>
+
+          <nav className="nav-tabs-desktop flex gap-[28px]">
             {NAVIGATION_ITEMS.map(item => (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`tab ${isRouteActive(item.href) ? 'active' : ''}`}
-                style={{ textDecoration: 'none', color: 'inherit' }}
+                className={`tab no-underline text-inherit ${isRouteActive(item.href) ? 'active' : ''}`}
               >
                 {item.label}
               </Link>
@@ -55,36 +54,35 @@ export function NavBar() {
           </nav>
         </div>
 
-        {/* Center: Wordmark */}
-        <div style={{ textAlign: 'center' }}>
-          <Link href="/home" style={{ textDecoration: 'none', color: 'inherit' }}>
-            {/*<Wordmark size={28} />*/}
-            <Image src="/logo.png" alt="PulsarFi" width={200} height={55} style={{ objectFit: 'contain' }} />
+        {/* Center: Logo desktop — absolute so it doesn't expand navbar height */}
+        <div className="nav-logo-center only-desktop">
+          <Link href="/home" className="no-underline">
+            <Image src="/logo-nobg.png" alt="PulsarFi" width={200} height={70} className="nav-logo-img w-auto block" />
           </Link>
         </div>
 
         {/* Right: wallet connect */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, alignItems: 'center', flex: 1 }}>
-          <span className="eyebrow nav-wallet-ens" style={{ color: 'var(--body)' }}>EN · IDR/USD 16,142</span>
+        <div className="flex justify-end gap-[12px] items-center flex-1">
+          <span className="eyebrow nav-wallet-ens text-[var(--body)]">EN · IDR/USD 16,142</span>
           <ConnectButton.Custom>
             {({ account, chain, openConnectModal, openAccountModal, mounted }) => {
               if (!mounted) return null;
               const isWalletConnected = account && chain;
               if (!isWalletConnected) {
                 return (
-                  <button className="btn btn-merah" onClick={openConnectModal} style={{ padding: '10px 14px', fontSize: 13 }}>
+                  <button type="button" className="btn btn-merah px-[14px] py-[10px] text-[13px]" onClick={openConnectModal}>
                     Connect Wallet
                   </button>
                 );
               }
               return (
                 <button
-                  className="btn btn-outline"
+                  type="button"
+                  className="btn btn-outline inline-flex items-center gap-[10px] px-[14px] py-[10px]"
                   onClick={openAccountModal}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '10px 14px' }}
                 >
-                  <span style={{ width: 8, height: 8, background: '#1f7a4b', display: 'inline-block' }} />
-                  <span className="mono" style={{ fontSize: 12 }}>{shortAddr(account.address)}</span>
+                  <span className="w-[8px] h-[8px] bg-[#1f7a4b] inline-block" />
+                  <span className="mono text-[12px]">{shortAddr(account.address)}</span>
                 </button>
               );
             }}
@@ -99,8 +97,7 @@ export function NavBar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`mm-tab ${isRouteActive(item.href) ? 'active' : ''}`}
-              style={{ textDecoration: 'none' }}
+              className={`mm-tab no-underline ${isRouteActive(item.href) ? 'active' : ''}`}
               onClick={() => setIsMobileMenuOpen(false)}
             >
               {item.label}

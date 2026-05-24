@@ -10,12 +10,12 @@ export function PriceTicker() {
   }));
 
   const renderTickerRow = (animationKey: string) => (
-    <div key={animationKey} style={{ display: "flex", gap: 48 }}>
+    <div key={animationKey} className="flex gap-[48px]">
       {tickerItems.map(stockItem => (
-        <div key={animationKey + stockItem.ticker} style={{ display: "flex", alignItems: "baseline", gap: 8, whiteSpace: "nowrap" }}>
-          <span style={{ fontWeight: 600, fontSize: 12 }}>{stockItem.ticker}</span>
-          <span className="mono" style={{ fontSize: 12, color: "var(--ink)" }}>${stockItem.price.toFixed(4)}</span>
-          <span className="mono" style={{ fontSize: 11, color: stockItem.changePercent >= 0 ? "var(--positive)" : "var(--negative)" }}>
+        <div key={animationKey + stockItem.ticker} className="flex items-baseline gap-[8px] whitespace-nowrap">
+          <span className="font-[600] text-[12px]">{stockItem.ticker}</span>
+          <span className="mono text-[12px] text-[var(--ink)]">${stockItem.price.toFixed(4)}</span>
+          <span className={`mono text-[11px] ${stockItem.changePercent >= 0 ? 'text-[var(--positive)]' : 'text-[var(--negative)]'}`}>
             {fmtPct(stockItem.changePercent)}
           </span>
         </div>
@@ -24,7 +24,7 @@ export function PriceTicker() {
   );
 
   return (
-    <div className="hairline" style={{ padding: "10px 0", background: "var(--canvas)", overflow: "hidden" }}>
+    <div className="hairline py-[10px] bg-[var(--canvas)] overflow-hidden">
       <div className="ticker-track">
         {renderTickerRow("first")}{renderTickerRow("second")}
       </div>
