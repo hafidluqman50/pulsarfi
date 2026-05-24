@@ -1,97 +1,103 @@
-PulsarFi - Agent Strategy & Context Guide
-1. Project Core Philosophy & Business Logic
-PulsarFi is an Asset-Backed Tokenization Platform (RWA) on Arbitrum Sepolia that brings traditional asset exposure (specifically Indonesian IDX equities like BUMIP and ENRGP) to a global DeFi audience using IDRX as the core fiat-stable matching currency.
+# PulsarFi — Agent Strategy & Context Guide
 
-Fundamental Rules:
+## 1. Project Core Philosophy
 
-• Asset-Backed, NOT Synthetic: Every token minted (`BUMIP`, `ENRGP`) represents actual physical underlying shares legally held and locked 1:1 in custody. Price discovery is driven by direct market mechanics and arbitrage, not oracles.
+PulsarFi is an Asset-Backed Tokenization Platform (RWA) on Arbitrum Sepolia that tokenizes Indonesian IDX equities (BUMIP, ENRGP, etc.) into 1:1 on-chain receipts paired against IDRX liquidity pools.
 
-• The USDC Compliance Model: Anyone globally can hold and trade tokens in the AMM DEX pools completely permissionless (without upfront KYC) to capture price exposure and economics sharing. However, strict Anti-Money Laundering (AML) and Identity Matching (KYC) are enforced at the Redemption Gateway when converting digital tokens back into physical securities via traditional brokers (e.g., Stockbit/Ajaib).
+**Fundamental Rules:**
 
----
-
-2. Token Naming Convention
-To mirror institutional asset listings and avoid confusing RWA entity tokens with yield-bearing instruments (like stETH), all asset tokens must use All-Caps with a 'P' suffix indicating Pulsar.
-
-• Valid Ticketing Examples: `BUMIP`, `ENRGP`
-
-• Forbidden Patterns: `pBUMI`, `pENRG`, `PBUMI`, `PENRG`
+- **Asset-Backed, NOT Synthetic.** Every token minted represents actual shares held 1:1 in custody at KSEI. Price discovery comes from AMM mechanics and arbitrage, not oracles.
+- **USDC Compliance Model.** Anyone can hold and swap tokens permissionlessly (no upfront KYC). KYC is enforced only at the Redemption Gateway when converting tokens back to physical securities.
 
 ---
 
-3. Core Functional Operations & Backend Triggers (Golang to Web3)
-All operations are unified via a REST API backend written in Golang, interfacing with PostgreSQL for state queuing and Foundry/Ethers RPC for smart contracts.
+## 2. Token Naming Convention
 
-A. The B2B Custodian Order (Mint to Client Wallet)
+All asset tokens use ALL-CAPS with a `P` suffix indicating Pulsar origin.
 
-Used when an external institution or authorized entity completes off-chain custody settlement and requests initial primary token issuance.
-
-• Endpoint: `POST /api/custodian/mint`
-
-• Payload:
-
-```
-
-{
-
-  "ticker": "ENRGP",
-
-  "amount": "1000000",
-
-  "target_wallet": "0xClientWalletAddress..."
-
-}
-
-```
-
-• Flow: Enters PostgreSQL as `PENDING` $\rightarrow$ Validated on the admin portal (`/custodian`) $\rightarrow$ Executed by Golang backend using Custodian private key calling the `mint(to, amount)` function on the token contract.
-
-B. The Internal Market Maker Initialize (Open AMM Pool)
-
-Used when PulsarFi initializes direct platform-driven market liquidity on the Uniswap V2 Router.
-
-• Endpoint: `POST /api/amm/initialize`
-
-• Payload:
-
-```
-
-{
-
-  "ticker": "BUMIP",
-
-  "initial_token_supply": "10000",
-
-  "initial_idrx_liquidity": "100000000"
-
-}
-
-```
-
-• Flow Sequential:
-
-  1. Backend calls contract `mint()` to send tokens to the internal automated arbitrage/bot wallet.
-
-  2. Sends contract `approve()` granting maximum allowance to the Uniswap V2 Router address.
-
-  3. Triggers `addLiquidity()` on the Uniswap Router with the defined token and `IDRX` amount.
-
-  4. Automatically boots up the background Goroutine tracking live on-chain prices against live reference data for programmatic rebalancing.
+- Valid: `BUMIP`, `ENRGP`, `KIJAP`, `TLKMP`, `BBRIP`, `GOTOP`, `ASIIP`, `UNVRP`
+- Forbidden: `pBUMI`, `pENRG`, `PBUMI`, `PENRG`
 
 ---
 
-4. UI Layout Routing Guidelines
-Maintain consistent screen architectures when building Frontend blocks in Next.js:
+## 3. Architecture
 
-• `/swap` : Permissionless consumer swap view handling standard Router operations.
+### Smart Contracts (`/smart-contract`)
+- **`PulsarProtocol.sol`** — UUPS upgradeable proxy, single entry point for all protocol operations.
+  - On-chain 3/5 multisig: `requestMint` → `approveMint` → `executeMint` (only requester can execute after threshold)
+  - `MintDestination`: `OperatorWallet` or `LiquidityPool`
+  - `swap(ticker, amountIn, amountOutMin, buyStock)` — permissionless, no auth required
+  - `redeem(ticker, user, amount, attestationHash)` — custodian only
+  - `approveKYC` / `revokeKYC` — admin only
+- **`PulsarStock.sol`** — Independent ERC20 per stock, owned by PulsarProtocol. Deployed lazily on first `executeMint`.
+- **`IDRX.sol`** — Mock stablecoin (2 decimals), deployed alongside protocol. Ownership transferred to PulsarProtocol so `_provideToPool` can mint.
+- **Router**: Uniswap V2 (custom deploy on Arbitrum Sepolia — not available by default).
+- **Upgrade path**: UUPS → Uniswap V4 with `beforeSwap` KYC hooks post-MVP.
 
-• `/custodian` : Administrative operation control deck highlighting pending database queues, state changes, and primary token minting controls. Use Sonner library exclusively for all system notifications and confirmations.
+### Backend (`/backend`)
+- Go + Gin + GORM + PostgreSQL
+- Structure: `src/{app,auth,config,http,logger,model,repository,service}`
+- **Auth**: SIWE (Sign-In with Ethereum, EIP-4361) for ALL users — custodians and retail alike. No email/password.
+  - `GET /api/v1/auth/nonce?address=0x...` → nonce (5-min TTL, one-time use)
+  - `POST /api/v1/auth/verify` → `{ address, message, signature, nonce }` → JWT
+  - JWT payload: `{ wallet_address, role: "custodian"|"user" }`
+  - Custodian role determined by wallet lookup in `custodians` table at verify time.
+- **Response format** (all endpoints):
+  ```json
+  { "status_code": 200, "message": "...", "data": {...} }
+  ```
+- **Event indexing**: WebSocket subscription (not polling) to Alchemy to sync on-chain events into DB. Avoids burning Alchemy CU budget.
 
-• Code validation error formats must remain strictly in English for international validator/hackathon standards.
+### Frontend (`/frontend`)
+- Next.js + TailwindCSS + RainbowKit (wallet connection + SIWE)
+- `/swap` — permissionless swap view
+- `/custodian` — multisig mint dashboard, KYC management, pending proposals
+- Sonner for all toast/notification UI
 
 ---
 
-5. Router Versioning & Evolution Strategy (MVP vs Production)
-• MVP Implementation (Current): Strictly use Uniswap V2 Router on Arbitrum Sepolia. It is lightweight, mathematically predictable ($x \cdot y = k$), and avoids tick/singleton complexities, allowing rapid 20-day delivery of core Golang/Kustodian infrastructure.
+## 4. Custodian Mint Flow (3/5 Multisig)
 
-• Production Roadmap: Explicitly target Uniswap V4 with `beforeSwap` KYC Hooks. This will dynamically gate liquidity pools using Horizon Labs' Identity Registry, ensuring automated protocol-level compliance. However, this requires significant architectural changes and will be a major milestone post-MVP launch.
+```
+Custodian A  →  requestMint(ticker, stockName, idxTicker, tokenAmount, idrxAmount, attestationHash, destination)
+                 └─ creates proposal, approvalCount = 1, hasPendingRequest[ticker] = true
+
+Custodian B/C →  approveMint(proposalId)
+                 └─ increments approvalCount
+
+Custodian A  →  executeMint(proposalId)   ← only requester, only after approvalCount >= 3
+                 └─ _ensureStock → deploy PulsarStock if first mint
+                 └─ _mint → PulsarStock.mint(to, amount)
+                 └─ if LiquidityPool → _provideToPool → IDRX.mint + addLiquidity
+```
+
+---
+
+## 5. Database Tables
+
+| Table | Purpose |
+|---|---|
+| `custodians` | 5 multisig participants (wallet_address, name, email for notifications) |
+| `stocks` | Listed tokens; `contract_address` null until first executeMint |
+| `mint_proposals` | Mirror of on-chain proposals |
+| `mint_approvals` | One row per custodian approval event |
+| `wallet_verifications` | KYC records, type: retail/institution, PDF in Supabase Storage |
+| `stock_transactions` | Swap events: side buy/sell, idrx_amount, stock_amount (NUMERIC 78,0) |
+
+---
+
+## 6. Key Constraints
+
+- IDRX decimals = 2 (matches real IDRX on Base/other chains)
+- PulsarStock decimals = 18
+- Amounts stored in DB as `NUMERIC(78,0)` — raw on-chain uint256
+- `stocks(ticker)` is UNIQUE, not PK — all FK relations use `stocks(id)`
+- Nonce store is in-memory (sufficient for hackathon MVP)
+- IDRX not deployed on Arbitrum Sepolia by default — use `IDRX.sol` mock
+
+---
+
+## 7. Router Versioning
+
+- **MVP**: Uniswap V2, custom-deployed on Arbitrum Sepolia
+- **Production**: Uniswap V4 with `beforeSwap` KYC hooks via Horizon Labs Identity Registry

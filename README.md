@@ -1,164 +1,87 @@
-PulsarFi - Asset-Backed Indonesian Equity (IDX) Tokenization Infrastructure
-PulsarFi is an institutional-grade Real-World Asset (RWA) tokenization protocol built for the Arbitrum Buildathon. The platform unlocks global liquidity for the Indonesian Stock Exchange (IDX) by allowing public companies and institutions to tokenize traditional equities (e.g., `BUMIP`, `ENRGP`) into 1:1 asset-backed cryptographic receipts paired natively against `IDRX` liquidity pools.
+# PulsarFi
 
+Asset-Backed Tokenization Platform for Indonesian IDX equities on Arbitrum Sepolia.
 
-
----
-
-
-
-🏛️ The B2B Tokenization Architecture & Narration
-PulsarFi operates on a B2B Tokenization-as-a-Service (TaaS) framework, ensuring complete regulatory alignment and mitigating asset-owner liability:
-
-
-
-1. Asset Custody & Locking: Pitted directly into the Indonesian traditional finance infrastructure, issuers (emiten) legally transfer and lock physical stock certificates into the Horizon Labs Custodian Account at KSEI (Kustodian Sentral Efek Indonesia).
-
-
-
-2. Fiat Settlement Leg: Large-scale primary issuance and off-chain market making settlements are processed securely via the dedicated Bank Mandiri IDR Settlement Vault.
-
-
-
-3. Primary Issuance: Once assets are audited in custody, the platform mints 1:1 backed tokens (`BUMIP`, `ENRGP`) directly to the issuer's or institutional market maker's secure Web3 wallet.
-
-
+Tokenizes stocks like BUMIP, ENRGP into 1:1 on-chain receipts paired against IDRX liquidity pools via Uniswap V2. Built for the Arbitrum Open House London Hackathon.
 
 ---
 
-
-
-⚖️ The Guardrail Framework (USDC Compliance Model)
-To bridge strict Indonesian regulatory bodies (OJK/BI) with permissionless DeFi rails, PulsarFi utilizes a Chokepoint Enforcement Architecture:
-
-
-
-• Trading Layer (Permissionless Exposure): Modeled exactly after Circle's USDC, anyone globally can hold, transfer, and swap tokens on Arbitrum DEXs without upfront platform-level KYC. This grants international investors frictionless price exposure and economic utility sharing to high-performing Indonesian equities.
-
-
-
-• Redemption Gateway (Strict Guardrails): The loop closes at the `/custodian` portal. To realize physical delivery (mutating digital tokens back into underlying stocks in TradFi brokerages like Stockbit or Ajaib), users must pass rigorous AML/KYC checks, providing valid SID (Single Investor Identification) numbers. The Golang backend validates identity parity, programmatically rejecting mismatched accounts to prevent fraud or illicit asset leakage.
-
-
-
----
-
-
-
-🛠️ Tech Stack & Core Mechanisms
-• Frontend: Next.js (TailwindCSS, Radix UI, managed with Sonner for robust transaction status reporting). Code validation and error messaging are written strictly in English for global validator standards.
-
-
-
-• Backend Engine: Golang REST API acting as the central processing unit interfacing with a PostgreSQL state ledger.
-
-
-
-• Smart Contracts: Solidity contracts engineered via Foundry, deployed on Arbitrum Sepolia.
-
-
-
-• Automated Market Stabilization: Rather than deploying external third-party market makers, PulsarFi runs internal Golang Arbitrage Bot Workers that programmatically monitor order-book disparities between the IDX live feed and Uniswap pools, maintaining a strict peg through automatic rebalancing.
-
-
-
----
-
-
-
-🚀 Execution Quick Start
-1. Smart Contract Deployment (Foundry)
-
-
+## Architecture
 
 ```
-
-
-
-cd foundry
-
-
-
-forge script script/DeployPulsarFi.s.sol --rpc-url $ARBITRUM_SEPOLIA_RPC --broadcast --verify
-
-
-
+smart-contract/   Solidity (Foundry) — PulsarProtocol, PulsarStock, IDRX mock
+backend/          Go + Gin + GORM + PostgreSQL
+frontend/         Next.js + RainbowKit + TailwindCSS
 ```
 
+**Smart Contracts**
+- `PulsarProtocol` — UUPS upgradeable proxy, 3/5 on-chain multisig mint pipeline
+- `PulsarStock` — ERC20 per stock, owned by PulsarProtocol, deployed lazily
+- `IDRX` — Mock stablecoin (2 decimals), ownership transferred to protocol at deploy
 
+**Auth** — SIWE (EIP-4361) for everyone. Wallet connects via RainbowKit → signs message → JWT issued with `role: custodian|user`.
 
-2. Backend Rest Engine (Golang)
+---
 
+## Quick Start
 
+### Smart Contracts
 
+```bash
+cd smart-contract
+cp .env.example .env   # fill PRIVATE_KEY, UNISWAP_V2_ROUTER, CUSTODIAN_1..5
+
+forge build
+forge test
+
+forge script script/Deploy.s.sol --rpc-url $ARB_SEPOLIA_RPC --broadcast --verify
 ```
 
+### Backend
 
-
+```bash
 cd backend
+cp .env.example .env   # fill DATABASE_URL, JWT_SECRET, etc.
 
+# run migration
+psql $DATABASE_URL -f migrations/001_initial_schema.sql
 
-
-go mod tidy
-
-
-
-go run cmd/migrate/main.go
-
-
-
-go run cmd/api/main.go
-
-
-
+go run main.go
 ```
 
+### Frontend
 
-
-3. Frontend App (Next.js)
-
-
-
-```
-
-
-
+```bash
 cd frontend
-
-
-
 npm install
-
-
-
 npm run dev
-
-
-
 ```
 
+---
 
+## API
+
+All responses follow:
+```json
+{ "status_code": 200, "message": "...", "data": {} }
+```
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/v1/auth/nonce?address=0x...` | — | Issue SIWE nonce |
+| POST | `/api/v1/auth/verify` | — | Verify signature, get JWT |
+| GET | `/api/v1/public/stocks` | — | List all listed stocks |
+| POST | `/api/v1/custodian/...` | JWT (custodian) | Mint proposals, KYC management |
 
 ---
 
+## Token Naming
 
-
-📋 Protocol Core Endpoints
-• `POST /api/custodian/mint` : Handles B2B corporate primary issuance into target institution vaults upon off-chain KSEI verification.
-
-
-
-• `POST /api/amm/initialize` : Triggers platform-driven seed liquidity allocation (`Token + IDRX`) onto the Automated Market Maker router.
-
-
+All tokens: ALL-CAPS + `P` suffix — `BUMIP`, `ENRGP`, `KIJAP`, `TLKMP`, `BBRIP`, `GOTOP`, `ASIIP`, `UNVRP`.
 
 ---
 
+## Roadmap
 
-
-🚀 Technical Roadmap: Uniswap V2 to V4 Hooks
-• Phase 1 (Buildathon MVP): Powered by a streamlined Uniswap V2 implementation to prove backend orchestration, T+0 settlement speeds, and zero-oracle internal arbitrage bot stability.
-
-
-
-• Phase 2 (Production Launch): Graduating to Uniswap V4. Harnessing a customized `beforeSwap` compliance hook hooked directly to the Horizon Labs Identity Registry to programmatically block unverified or blacklisted wallets at the pool level.
+- **MVP** — Uniswap V2, SIWE auth, 3/5 multisig, KYC at redemption
+- **v2** — Uniswap V4 with `beforeSwap` KYC hooks, mainnet IDRX bridge

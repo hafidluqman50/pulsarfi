@@ -2,36 +2,43 @@
 pragma solidity ^0.8.25;
 
 import {Script, console} from "forge-std/Script.sol";
-import {PStockFactory} from "../src/PStockFactory.sol";
+import {IDRX} from "../src/IDRX.sol";
+import {PulsarProtocol} from "../src/PulsarProtocol.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract DeployScript is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer    = vm.addr(deployerKey);
+        address router      = vm.envAddress("UNISWAP_V2_ROUTER");
+
+        address[] memory custodians = new address[](5);
+        custodians[0] = vm.envAddress("CUSTODIAN_1");
+        custodians[1] = vm.envAddress("CUSTODIAN_2");
+        custodians[2] = vm.envAddress("CUSTODIAN_3");
+        custodians[3] = vm.envAddress("CUSTODIAN_4");
+        custodians[4] = vm.envAddress("CUSTODIAN_5");
 
         vm.startBroadcast(deployerKey);
 
-        PStockFactory factory = new PStockFactory(deployer);
-        console.log("PStockFactory deployed at:", address(factory));
+        // Deploy mock IDRX — deployer is temporary owner, transferred to protocol below
+        IDRX idrxToken = new IDRX(deployer);
 
-        // Deploy all 8 pStocks
-        address pBUMI = factory.deploy("Pulsar Bumi Resources",         "pBUMI", "BUMI");
-        address pENRG = factory.deploy("Pulsar Energi Mega",             "pENRG", "ENRG");
-        address pKIJA = factory.deploy("Pulsar Kawasan Industri",        "pKIJA", "KIJA");
-        address pTLKM = factory.deploy("Pulsar Telkom Indonesia",        "pTLKM", "TLKM");
-        address pBBRI = factory.deploy("Pulsar Bank Rakyat",             "pBBRI", "BBRI");
-        address pGOTO = factory.deploy("Pulsar GoTo Gojek Tokopedia",    "pGOTO", "GOTO");
-        address pASII = factory.deploy("Pulsar Astra International",     "pASII", "ASII");
-        address pUNVR = factory.deploy("Pulsar Unilever Indonesia",      "pUNVR", "UNVR");
+        PulsarProtocol implementation = new PulsarProtocol();
 
-        console.log("pBUMI:", pBUMI);
-        console.log("pENRG:", pENRG);
-        console.log("pKIJA:", pKIJA);
-        console.log("pTLKM:", pTLKM);
-        console.log("pBBRI:", pBBRI);
-        console.log("pGOTO:", pGOTO);
-        console.log("pASII:", pASII);
-        console.log("pUNVR:", pUNVR);
+        bytes memory initData = abi.encodeCall(
+            PulsarProtocol.initialize,
+            (deployer, router, address(idrxToken), custodians)
+        );
+
+        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
+
+        // Transfer IDRX mint rights to PulsarProtocol so _provideToPool can mint
+        idrxToken.transferOwnership(address(proxy));
+
+        console.log("IDRX mock:                    ", address(idrxToken));
+        console.log("PulsarProtocol implementation:", address(implementation));
+        console.log("PulsarProtocol proxy:         ", address(proxy));
 
         vm.stopBroadcast();
     }

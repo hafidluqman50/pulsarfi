@@ -1,66 +1,79 @@
-## Foundry
+# PulsarFi Smart Contracts
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+Solidity contracts for the PulsarFi RWA tokenization protocol, built with Foundry.
 
-Foundry consists of:
+---
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+## Contracts
 
-## Documentation
+### `PulsarProtocol.sol`
+UUPS upgradeable proxy. Single entry point for all protocol operations.
 
-https://book.getfoundry.sh/
+- **Roles**: `DEFAULT_ADMIN_ROLE` (admin), `CUSTODIAN_ROLE` (5 custodians)
+- **Multisig mint** (threshold 3/5):
+  - `requestMint(...)` — custodian submits proposal, auto-approves as first signer
+  - `approveMint(proposalId)` — other custodians approve
+  - `executeMint(proposalId)` — requester executes after threshold met
+- **`swap(ticker, amountIn, amountOutMin, buyStock)`** — permissionless IDRX ↔ PulsarStock
+- **`redeem(ticker, user, amount, attestationHash)`** — custodian burns tokens on physical settlement
+- **`approveKYC` / `revokeKYC`** — admin gates redemption
 
-## Usage
+### `PulsarStock.sol`
+ERC20 token per IDX equity. Owned by `PulsarProtocol`. Deployed lazily on first `executeMint`.
+- 18 decimals
+- `mint` / `burn` restricted to owner (PulsarProtocol)
 
-### Build
+### `IDRX.sol`
+Mock IDR stablecoin for Arbitrum Sepolia testnet (real IDRX not deployed on Arbitrum).
+- 2 decimals (matches real IDRX on Base/other chains)
+- Ownership transferred to PulsarProtocol at deploy so `_provideToPool` can mint
 
-```shell
-$ forge build
+---
+
+## Setup
+
+```bash
+# Install dependencies
+forge install
+
+# Build
+forge build
+
+# Test
+forge test -vvv
+
+# Format
+forge fmt
 ```
 
-### Test
+## Deploy
 
-```shell
-$ forge test
+```bash
+cp .env.example .env
+# Fill: PRIVATE_KEY, UNISWAP_V2_ROUTER, CUSTODIAN_1..5
+
+forge script script/Deploy.s.sol \
+  --rpc-url $ARB_SEPOLIA_RPC \
+  --broadcast \
+  --verify
 ```
 
-### Format
+Deploy script:
+1. Deploys `IDRX` mock with deployer as owner
+2. Deploys `PulsarProtocol` implementation + ERC1967 proxy
+3. Transfers `IDRX` ownership to the proxy
 
-```shell
-$ forge fmt
-```
+`PulsarStock` contracts are deployed lazily — first `executeMint` for a given ticker triggers `_ensureStock`.
 
-### Gas Snapshots
+## Environment Variables
 
-```shell
-$ forge snapshot
-```
+| Variable | Description |
+|---|---|
+| `PRIVATE_KEY` | Deployer private key |
+| `UNISWAP_V2_ROUTER` | V2 Router address (custom deploy on Arbitrum Sepolia) |
+| `CUSTODIAN_1` .. `CUSTODIAN_5` | Custodian wallet addresses |
 
-### Anvil
+## Notes
 
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+- Uniswap V2 is not available by default on Arbitrum Sepolia — deploy Factory + Router manually
+- UUPS proxy enables future migration to Uniswap V4 hooks without redeploying stocks
