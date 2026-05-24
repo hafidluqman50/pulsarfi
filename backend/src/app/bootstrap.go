@@ -82,8 +82,10 @@ func buildHandler() (*gin.Engine, func(), error) {
 
 	authhandler.Configure(svcs.Auth)
 	custodianHandler.ConfigureServices(custodianHandler.Services{
+		Repos:   repos,
 		Email:   svcs.Email,
 		Storage: svcs.Storage,
+		Stream:  svcs.Stream,
 	})
 	publicHandler.ConfigureRepos(repos)
 

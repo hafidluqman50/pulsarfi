@@ -11,6 +11,7 @@ contract DeployScript is Script {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer    = vm.addr(deployerKey);
         address router      = vm.envAddress("UNISWAP_V2_ROUTER");
+        address treasury    = vm.envAddress("TREASURY");
 
         address[] memory custodians = new address[](5);
         custodians[0] = vm.envAddress("CUSTODIAN_1");
@@ -28,7 +29,7 @@ contract DeployScript is Script {
 
         bytes memory initData = abi.encodeCall(
             PulsarProtocol.initialize,
-            (deployer, router, address(idrxToken), custodians)
+            (deployer, router, address(idrxToken), custodians, treasury)
         );
 
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);

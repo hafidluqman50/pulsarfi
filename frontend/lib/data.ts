@@ -149,6 +149,15 @@ export function shortAddr(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+export function fmtIDRCompact(raw: string | number): string {
+  const value = typeof raw === "string" ? parseFloat(raw) : raw;
+  if (isNaN(value)) return "—";
+  if (value >= 1e12) return `Rp ${(value / 1e12).toFixed(1)} T`;
+  if (value >= 1e9)  return `Rp ${(value / 1e9).toFixed(1)} M`;
+  if (value >= 1e6)  return `Rp ${(value / 1e6).toFixed(0)} Jt`;
+  return `Rp ${Math.round(value).toLocaleString("id-ID")}`;
+}
+
 export function fmtIDR(value: number): string {
   if (value == null || isNaN(value)) return "—";
   return "Rp " + Math.round(value).toLocaleString("id-ID");

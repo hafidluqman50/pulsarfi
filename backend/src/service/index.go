@@ -11,6 +11,7 @@ type Registry struct {
 	Auth    *authsvc.AuthService
 	Email   *external.EmailService
 	Storage *external.StorageService
+	Stream  *external.StreamService
 }
 
 type Config struct {
@@ -30,5 +31,6 @@ func NewRegistry(cfg Config) *Registry {
 		},
 		Email:   cfg.EmailService,
 		Storage: cfg.StorageService,
+		Stream:  external.NewStreamService(),
 	}
 }

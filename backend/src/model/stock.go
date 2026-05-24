@@ -7,6 +7,7 @@ type Stock struct {
 	Ticker          string    `gorm:"column:ticker"`
 	StockName       string    `gorm:"column:stock_name"`
 	IdxTicker       string    `gorm:"column:idx_ticker"`
+	Sector          *string   `gorm:"column:sector"`
 	ContractAddress *string   `gorm:"column:contract_address"`
 	CreatedAt       time.Time `gorm:"column:created_at;autoCreateTime"`
 }

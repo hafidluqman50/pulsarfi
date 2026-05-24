@@ -48,13 +48,13 @@ func RecordSwapHandler(c *gin.Context) {
 	}
 
 	tx, err := repos.StockTransaction.Create(c.Request.Context(), repository.StockTransactionCreateInput{
-		StockID:        stock.ID,
-		WalletAddress:  req.WalletAddress,
-		Side:           req.Side,
-		IdrxAmountRaw:  req.IdrxAmount,
-		StockAmountRaw: req.StockAmount,
-		TxHash:         req.TxHash,
-		BlockNumber:    req.BlockNumber,
+		StockID:       stock.ID,
+		WalletAddress: req.WalletAddress,
+		Side:          req.Side,
+		IdrxAmount:    req.IdrxAmount,
+		StockAmount:   req.StockAmount,
+		TxHash:        req.TxHash,
+		BlockNumber:   req.BlockNumber,
 	})
 	if err != nil {
 		response.InternalError(c, "failed to record transaction")

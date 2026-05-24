@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { toast } from 'sonner';
-import { PSTOCKS, fmtUSD, fmtNum, fmtIDR, shortAddr, Balances } from '@/lib/data';
+import { PSTOCKS, fmtUSD, fmtNum, fmtIDR, fmtIDRCompact, shortAddr, Balances } from '@/lib/data';
+import { useCustodianStats } from '@/http/custodian/hooks';
 import { Icon } from '@/components/ui/Icon';
 import { PStockMark } from '@/components/ui/PStockMark';
 import { DetailRow } from '@/components/swap/SwapView';
@@ -37,6 +38,7 @@ interface CustodianViewProps {
 
 export function CustodianView({ balances, setBalances }: CustodianViewProps) {
   const { address, isConnected } = useAccount();
+  const { data: stats } = useCustodianStats();
   const [selectedIpoTicker, setSelectedIpoTicker] = useState("BUMI");
   const [quantity,          setQuantity]          = useState("50000");
   const [destination,       setDestination]       = useState("liquidity");
@@ -112,10 +114,24 @@ export function CustodianView({ balances, setBalances }: CustodianViewProps) {
 
       {/* TOP METRICS */}
       <div className="grid-4col" style={{ marginTop: 24 }}>
-        <Metric label="Assets Under Custody"   value="$28.4M"    sub="Rp 458.4 B equivalent"    tone="ink" />
-        <Metric label="24h Mint Volume"         value="$1.24M"    sub="6 mints · 0 burns"         tone="merah" />
-        <Metric label="Pending requests"        value="4"         sub="2 mint · 2 redeem" />
-        <Metric label="IDR settlement vault"    value="Rp 12.8 B" sub="@ Bank Mandiri 1900" />
+        <Metric
+          label="Assets Under Custody"
+          value={stats ? fmtIDRCompact(stats.assets_under_custody_idr) : "—"}
+          sub="total custodian holdings"
+          tone="ink"
+        />
+        <Metric
+          label="24h Mint Volume"
+          value={stats ? fmtIDRCompact(String(parseFloat(stats.mint_volume_24h_idrx) / 100)) : "—"}
+          sub={stats ? `${stats.mint_count_24h} mints · ${stats.burn_count_24h} burns` : "—"}
+          tone="merah"
+        />
+        <Metric
+          label="Pending requests"
+          value={stats ? String(stats.pending_requests.total) : "—"}
+          sub={stats ? `${stats.pending_requests.mints} mint · ${stats.pending_requests.redeems} redeem` : "—"}
+        />
+        <Metric label="IDR settlement vault" value="Rp 12.8 M" sub="@ Bank Mandiri 1900" />
       </div>
 
       {/* MAIN: form + console */}

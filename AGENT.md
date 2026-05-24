@@ -46,7 +46,7 @@ All asset tokens use ALL-CAPS with a `P` suffix indicating Pulsar origin.
   ```json
   { "status_code": 200, "message": "...", "data": {...} }
   ```
-- **Event indexing**: WebSocket subscription (not polling) to Alchemy to sync on-chain events into DB. Avoids burning Alchemy CU budget.
+- **Swap recording**: Frontend hits SC via wagmi → after tx confirmed (`useWaitForTransactionReceipt`) → frontend hits `POST /api/v1/public/stock-transactions`. No indexer, no WebSocket, no polling. Idempotent via `tx_hash` UNIQUE constraint.
 
 ### Frontend (`/frontend`)
 - Next.js + TailwindCSS + RainbowKit (wallet connection + SIWE)

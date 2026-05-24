@@ -26,7 +26,7 @@ func (r *StockTransactionRepository) FindByWallet(ctx context.Context, walletAdd
 	var txs []model.StockTransaction
 	err := r.DB.WithContext(ctx).
 		Preload("Stock").
-		Where("wallet_address = ?", walletAddress).
+		Where("LOWER(wallet_address) = LOWER(?)", walletAddress).
 		Order("block_number DESC").
 		Find(&txs).Error
 	return txs, err
@@ -45,8 +45,8 @@ type StockTransactionCreateInput struct {
 	StockID       int64
 	WalletAddress string
 	Side          string
-	IdrxAmountRaw string
-	StockAmountRaw string
+	IdrxAmount    string
+	StockAmount   string
 	TxHash        string
 	BlockNumber   int64
 }
@@ -56,6 +56,8 @@ func (r *StockTransactionRepository) Create(ctx context.Context, input StockTran
 		StockID:       input.StockID,
 		WalletAddress: input.WalletAddress,
 		Side:          input.Side,
+		IdrxAmount:    input.IdrxAmount,
+		StockAmount:   input.StockAmount,
 		TxHash:        input.TxHash,
 		BlockNumber:   input.BlockNumber,
 	}

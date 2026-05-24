@@ -12,6 +12,17 @@ type MintProposalRepository struct {
 	DB *gorm.DB
 }
 
+func (r *MintProposalRepository) FindPending(ctx context.Context) ([]model.MintProposal, error) {
+	var proposals []model.MintProposal
+	err := r.DB.WithContext(ctx).
+		Preload("Stock").
+		Preload("Requester").
+		Where("executed = false").
+		Order("created_at ASC").
+		Find(&proposals).Error
+	return proposals, err
+}
+
 func (r *MintProposalRepository) FindAll(ctx context.Context) ([]model.MintProposal, error) {
 	var proposals []model.MintProposal
 	err := r.DB.WithContext(ctx).
@@ -35,8 +46,8 @@ type MintProposalCreateInput struct {
 	OnChainID       int64
 	StockID         int64
 	RequesterID     *int64
-	TokenAmountRaw  string
-	IdrxAmountRaw   *string
+	TokenAmount     string
+	IdrxAmount      *string
 	AttestationHash string
 	Destination     string
 	RequestTxHash   *string
@@ -47,26 +58,46 @@ func (r *MintProposalRepository) Create(ctx context.Context, input MintProposalC
 		OnChainID:       input.OnChainID,
 		StockID:         input.StockID,
 		RequesterID:     input.RequesterID,
+		TokenAmount:     input.TokenAmount,
+		IdrxAmount:      input.IdrxAmount,
 		AttestationHash: input.AttestationHash,
 		Destination:     input.Destination,
 		ApprovalCount:   1,
 		RequestTxHash:   input.RequestTxHash,
 	}
-	if err := r.DB.WithContext(ctx).Create(&proposal).Error; err != nil {
-		return model.MintProposal{}, err
-	}
-	return proposal, nil
+	return proposal, r.DB.WithContext(ctx).Create(&proposal).Error
 }
 
-func (r *MintProposalRepository) IncrementApprovalCount(ctx context.Context, id int64) error {
+func (r *MintProposalRepository) IncrementApprovalCount(ctx context.Context, onChainID int64) error {
 	return r.DB.WithContext(ctx).Model(&model.MintProposal{}).
-		Where("id = ?", id).
+		Where("on_chain_id = ?", onChainID).
 		UpdateColumn("approval_count", gorm.Expr("approval_count + 1")).Error
 }
 
-func (r *MintProposalRepository) MarkExecuted(ctx context.Context, id int64, txHash string) error {
+func (r *MintProposalRepository) CountExecutedLast24h(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.DB.WithContext(ctx).Model(&model.MintProposal{}).
+		Where("executed = true AND executed_at >= NOW() - INTERVAL '24 hours'").
+		Count(&count).Error
+	return count, err
+}
+
+func (r *MintProposalRepository) SumIdrxLast24h(ctx context.Context) (string, error) {
+	type result struct{ Total *string }
+	var res result
+	err := r.DB.WithContext(ctx).Model(&model.MintProposal{}).
+		Select("COALESCE(SUM(idrx_amount)::text, '0') AS total").
+		Where("executed = true AND idrx_amount IS NOT NULL AND executed_at >= NOW() - INTERVAL '24 hours'").
+		Scan(&res).Error
+	if res.Total == nil {
+		return "0", err
+	}
+	return *res.Total, err
+}
+
+func (r *MintProposalRepository) MarkExecuted(ctx context.Context, onChainID int64, txHash string) error {
 	return r.DB.WithContext(ctx).Model(&model.MintProposal{}).
-		Where("id = ?", id).
+		Where("on_chain_id = ?", onChainID).
 		Updates(map[string]any{
 			"executed":        true,
 			"execute_tx_hash": txHash,

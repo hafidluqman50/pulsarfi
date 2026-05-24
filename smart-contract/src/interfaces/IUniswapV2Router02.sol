@@ -22,4 +22,9 @@ interface IUniswapV2Router02 {
     ) external returns (uint256[] memory amounts);
 
     function factory() external pure returns (address);
+
+    function getAmountsOut(uint256 amountIn, address[] calldata path)
+        external
+        view
+        returns (uint256[] memory amounts);
 }

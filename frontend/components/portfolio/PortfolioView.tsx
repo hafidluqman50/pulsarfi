@@ -238,7 +238,7 @@ function PositionsList({ positions, stables, expanded, setExpanded, onTrade, onT
 }) {
   return (
     <div>
-      <div className="hairline table-head-desktop" style={{ display: "grid", gridTemplateColumns: "auto 2fr 1fr 1fr 1fr 1fr 1fr 0.6fr", gap: 16, padding: "14px 0" }}>
+      <div className="hairline table-head-desktop" style={{ display: "grid", gridTemplateColumns: "auto 2fr 1fr 1fr 1fr 1fr 1fr 156px", gap: 16, padding: "14px 0" }}>
         {["", "Stock", "Lot", "Avg buy", "Last", "Market value", "Unrealized P&L", ""].map((h, i) => (
           <div key={i} className="eyebrow" style={{ color: "var(--body)", textAlign: i >= 2 && i <= 6 ? "right" : "left" }}>{h}</div>
         ))}

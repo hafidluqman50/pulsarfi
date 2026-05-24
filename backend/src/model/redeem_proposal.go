@@ -2,15 +2,14 @@ package model
 
 import "time"
 
-type MintProposal struct {
+type RedeemProposal struct {
 	ID              int64      `gorm:"column:id;primaryKey"`
 	OnChainID       int64      `gorm:"column:on_chain_id"`
 	StockID         int64      `gorm:"column:stock_id"`
 	TokenAmount     string     `gorm:"column:token_amount;type:numeric"`
 	IdrxAmount      *string    `gorm:"column:idrx_amount;type:numeric"`
 	AttestationHash string     `gorm:"column:attestation_hash"`
-	Destination     string     `gorm:"column:destination"`
-	Source          *string    `gorm:"column:source"` // retail | institutional
+	Source          string     `gorm:"column:source"` // retail | institutional
 	RequesterID     *int64     `gorm:"column:requester_id"`
 	ApprovalCount   int16      `gorm:"column:approval_count"`
 	Executed        bool       `gorm:"column:executed"`
@@ -23,4 +22,4 @@ type MintProposal struct {
 	Requester *Custodian `gorm:"foreignKey:RequesterID"`
 }
 
-func (MintProposal) TableName() string { return "mint_proposals" }
+func (RedeemProposal) TableName() string { return "redeem_proposals" }
