@@ -1,3 +1,5 @@
+@import "tailwindcss/utilities";
+
 :root {
   --canvas: #fbfaf7;
   --canvas-soft: #f3f0ea;
@@ -208,6 +210,11 @@ img, svg, video { max-width: 100%; }
   .stock-supply-info  { display: none !important; }
   .stock-chart-header { flex-direction: column !important; align-items: flex-start !important; gap: 10px !important; }
 }
+
+/* NavBar logo */
+.nav-logo-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+.nav-logo-img    { height: 70px; }
+.nav-logo-mobile { height: 40px; }
 
 /* Stock market pages — base (desktop) */
 .stock-list-row    { display: grid; grid-template-columns: 2fr 1.2fr 1fr 1fr 80px; gap: 16px; padding: 16px; align-items: center; cursor: pointer; transition: background .12s ease; }

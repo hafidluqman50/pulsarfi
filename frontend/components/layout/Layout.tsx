@@ -8,10 +8,10 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div className="min-h-screen flex flex-col">
       <NavBar />
       <PriceTicker />
-      <main style={{ flex: 1 }}>
+      <main className="flex-1">
         {children}
       </main>
       <Footer />
