@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { shortAddr } from '@/lib/data';
+import { useSiweAuth } from '@/contexts/SiweAuthContext';
 
 const NAVIGATION_ITEMS = [
   { href: '/home',      label: 'Home'      },
@@ -18,6 +19,7 @@ const NAVIGATION_ITEMS = [
 export function NavBar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const pathname = usePathname();
+  const { isAuthenticated, role, signOut } = useSiweAuth();
 
   const isRouteActive = (href: string) =>
     href === '/stocks' ? pathname.startsWith('/stocks') : pathname === href;
@@ -76,14 +78,21 @@ export function NavBar() {
                 );
               }
               return (
-                <button
-                  type="button"
-                  className="btn btn-outline inline-flex items-center gap-[10px] px-[14px] py-[10px]"
-                  onClick={openAccountModal}
-                >
-                  <span className="w-[8px] h-[8px] bg-[#1f7a4b] inline-block" />
-                  <span className="mono text-[12px]">{shortAddr(account.address)}</span>
-                </button>
+                <div className="inline-flex items-center gap-[8px]">
+                  {role === 'custodian' && (
+                    <span className="eyebrow text-[10px] px-[8px] py-[4px] bg-[var(--merah)] text-white">
+                      CUSTODIAN
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-outline inline-flex items-center gap-[10px] px-[14px] py-[10px]"
+                    onClick={isAuthenticated ? signOut : openAccountModal}
+                  >
+                    <span className={`w-[8px] h-[8px] inline-block ${isAuthenticated ? 'bg-[#1f7a4b]' : 'bg-[var(--body)]'}`} />
+                    <span className="mono text-[12px]">{shortAddr(account.address)}</span>
+                  </button>
+                </div>
               );
             }}
           </ConnectButton.Custom>

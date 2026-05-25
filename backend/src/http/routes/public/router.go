@@ -10,4 +10,5 @@ func RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/stock-transactions", publicHandler.RecordSwapHandler)
 	rg.POST("/wallet-verifications", publicHandler.SubmitWalletVerificationHandler)
 	rg.GET("/reserves", publicHandler.GetReservesHandler)
+	rg.GET("/prices/:ticker", publicHandler.GetStockPriceHandler)
 }

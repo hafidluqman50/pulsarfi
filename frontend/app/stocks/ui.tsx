@@ -6,6 +6,8 @@ import { Layout } from '@/components/layout/Layout';
 import { PStockMark } from '@/components/ui/PStockMark';
 import { Sparkline } from '@/components/ui/Sparkline';
 import { AreaChart } from '@/components/charts/AreaChart';
+import { useMarketStocks, useStockPrice } from '@/http/market/hooks';
+import type { MarketStock } from '@/http/market/priceApi';
 import {
   PSTOCKS, seriesFor, sliceRange,
   fmtIDRX, fmtPct, fmtAxisDate,
@@ -37,27 +39,81 @@ function ihsgTimeSeries(days = 365): TimePoint[] {
   return outputPoints;
 }
 
-const IHSG_FULL_SERIES   = ihsgTimeSeries(365);
-const IHSG_LAST          = IHSG_FULL_SERIES[IHSG_FULL_SERIES.length - 1].value;
-const IHSG_PREVIOUS      = IHSG_FULL_SERIES[IHSG_FULL_SERIES.length - 2].value;
-const IHSG_CHANGE_PCT    = ((IHSG_LAST - IHSG_PREVIOUS) / IHSG_PREVIOUS) * 100;
+const IHSG_FULL_SERIES = ihsgTimeSeries(365);
 
 const TIMEFRAME_OPTIONS = ['1D', '1W', '1M', '3M', '1Y'] as const;
 
-export function StocksListPage() {
+function StockRow({ stock, sparkline }: { stock: MarketStock; sparkline: number[] }): React.ReactNode {
   const router = useRouter();
+  const fallback = PSTOCKS.find(item => item.ticker === stock.ticker);
+
+  const price = stock.price ?? fallback?.price ?? 0;
+  const change24h = stock.change_24h ?? fallback?.change24h ?? 0;
+  const isPositive = change24h >= 0;
+  const sector = stock.sector ?? fallback?.sector ?? 'Unclassified';
+
+  return (
+    <div
+      className="hairline stock-list-row"
+      onClick={() => router.push(`/stocks/${stock.ticker}`)}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+        <PStockMark ticker={stock.ticker} size={34} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>{stock.ticker}</div>
+          <div style={{ fontSize: 12, color: 'var(--body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {stock.stock_name}
+          </div>
+          <div className="only-mobile eyebrow" style={{ fontSize: 10, color: 'var(--body)', marginTop: 3 }}>
+            {sector}
+          </div>
+        </div>
+      </div>
+
+      <div className="stock-sector">
+        <span style={{ fontSize: 12, color: 'var(--body)', border: '1px solid var(--hairline)', padding: '2px 8px' }}>
+          {sector}
+        </span>
+      </div>
+
+      <div className="mono" style={{ textAlign: 'right', fontSize: 14, fontWeight: 600 }}>
+        {fmtIDRX(price)}
+      </div>
+
+      <div
+        className="mono"
+        style={{ textAlign: 'right', fontSize: 13, color: isPositive ? 'var(--positive)' : 'var(--negative)' }}
+      >
+        {fmtPct(change24h)}
+      </div>
+
+      <div className="stock-sparkline" style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Sparkline data={sparkline} positive={isPositive} width={72} height={28} />
+      </div>
+    </div>
+  );
+}
+
+export function StocksListPage(): React.ReactNode {
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('1M');
+  const { data: marketStocksData = [], isLoading } = useMarketStocks();
+  const marketStocks = Array.isArray(marketStocksData) ? marketStocksData : [];
 
   const chartData = useMemo(() => sliceRange(IHSG_FULL_SERIES, selectedTimeframe), [selectedTimeframe]);
 
   const sparklineData = useMemo(() =>
-    PSTOCKS.reduce<Record<string, number[]>>((accumulator, stock) => {
-      accumulator[stock.ticker] = seriesFor(stock.ticker, 28);
-      return accumulator;
+    marketStocks.reduce<Record<string, number[]>>((acc, stock) => {
+      if (stock.ticker) {
+        acc[stock.ticker] = stock.sparkline_7d?.length ? stock.sparkline_7d : seriesFor(stock.ticker, 28);
+      }
+      return acc;
     }, {}),
-  []);
+  [marketStocks]);
 
-  const isIhsgPositive = IHSG_CHANGE_PCT >= 0;
+  const { data: ihsgData } = useStockPrice('IHSG');
+  const ihsgValue = ihsgData?.price ?? IHSG_FULL_SERIES[IHSG_FULL_SERIES.length - 1].value;
+  const ihsgChange = ihsgData?.change_24h ?? 0;
+  const isIhsgPositive = ihsgChange >= 0;
 
   return (
     <Layout>
@@ -71,10 +127,10 @@ export function StocksListPage() {
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 20, flexWrap: 'wrap' }}>
               <span className="display" style={{ fontSize: 42, letterSpacing: '-0.02em' }}>
-                {IHSG_LAST.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                {ihsgValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </span>
               <span className="mono" style={{ fontSize: 18, color: isIhsgPositive ? 'var(--positive)' : 'var(--negative)' }}>
-                {fmtPct(IHSG_CHANGE_PCT)} 24h
+                {fmtPct(ihsgChange)} 24h
               </span>
               <span className="mono" style={{ fontSize: 13, color: 'var(--body)' }}>
                 IDR/USD {IDR_PER_USD.toLocaleString()}
@@ -111,10 +167,11 @@ export function StocksListPage() {
         <div>
           <div className="hairline-strong" style={{ paddingBottom: 12, marginBottom: 0 }}>
             <span className="display" style={{ fontSize: 26 }}>pStocks</span>
-            <div className="eyebrow" style={{ color: 'var(--body)', marginTop: 4 }}>8 tokenized equities · Arbitrum</div>
+            <div className="eyebrow" style={{ color: 'var(--body)', marginTop: 4 }}>
+              {isLoading ? 'Loading market-ready equities' : `${marketStocks.length} market-ready equities · Arbitrum`}
+            </div>
           </div>
 
-          {/* Table header */}
           <div
             className="table-head-desktop hairline"
             style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr 1fr 80px', gap: 16, padding: '12px 16px', alignItems: 'center' }}
@@ -130,50 +187,19 @@ export function StocksListPage() {
             ))}
           </div>
 
-          {PSTOCKS.map(stock => {
-            const isPositive = stock.change24h >= 0;
-            return (
-              <div
-                key={stock.ticker}
-                className="hairline stock-list-row"
-                onClick={() => router.push(`/stocks/${stock.ticker}`)}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                  <PStockMark ticker={stock.ticker} size={34} />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>{stock.ticker}</div>
-                    <div style={{ fontSize: 12, color: 'var(--body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {stock.name}
-                    </div>
-                    <div className="only-mobile eyebrow" style={{ fontSize: 10, color: 'var(--body)', marginTop: 3 }}>
-                      {stock.sector}
-                    </div>
-                  </div>
-                </div>
+          {!isLoading && marketStocks.length === 0 ? (
+            <div className="hairline" style={{ padding: '18px 16px', color: 'var(--body)' }}>
+              No pStocks have an active liquidity pool yet.
+            </div>
+          ) : null}
 
-                <div className="stock-sector">
-                  <span style={{ fontSize: 12, color: 'var(--body)', border: '1px solid var(--hairline)', padding: '2px 8px' }}>
-                    {stock.sector}
-                  </span>
-                </div>
-
-                <div className="mono" style={{ textAlign: 'right', fontSize: 14, fontWeight: 600 }}>
-                  {fmtIDRX(stock.price)}
-                </div>
-
-                <div
-                  className="mono"
-                  style={{ textAlign: 'right', fontSize: 13, color: isPositive ? 'var(--positive)' : 'var(--negative)' }}
-                >
-                  {fmtPct(stock.change24h)}
-                </div>
-
-                <div className="stock-sparkline" style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <Sparkline data={sparklineData[stock.ticker]} positive={isPositive} width={72} height={28} />
-                </div>
-              </div>
-            );
-          })}
+          {marketStocks.map(stock => (
+            <StockRow
+              key={stock.ticker}
+              stock={stock}
+              sparkline={sparklineData[stock.ticker] ?? []}
+            />
+          ))}
         </div>
 
       </div>

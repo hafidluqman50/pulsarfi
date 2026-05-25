@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
 	"github.com/horizonlabs/pulsarfi-backend/src/auth"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	authhandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/auth"
@@ -16,6 +15,7 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
+	"github.com/joho/godotenv"
 )
 
 func buildHandler() (*gin.Engine, func(), error) {
@@ -82,12 +82,14 @@ func buildHandler() (*gin.Engine, func(), error) {
 
 	authhandler.Configure(svcs.Auth)
 	custodianHandler.ConfigureServices(custodianHandler.Services{
-		Repos:   repos,
-		Email:   svcs.Email,
-		Storage: svcs.Storage,
-		Stream:  svcs.Stream,
+		Repos:     repos,
+		Custodian: svcs.Custodian,
+		Email:     svcs.Email,
+		Storage:   svcs.Storage,
+		Stream:    svcs.Stream,
 	})
 	publicHandler.ConfigureRepos(repos)
+	publicHandler.ConfigureServices(svcs)
 
 	return routes.SetupRouter(db, jwtConfig), cleanup, nil
 }

@@ -8,17 +8,17 @@ import (
 	custodianMiddleware "github.com/horizonlabs/pulsarfi-backend/src/http/middleware/custodian"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
+	custodiansvc "github.com/horizonlabs/pulsarfi-backend/src/service/custodian"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
 )
 
 type recordRedeemRequestBody struct {
-	OnChainID       int64   `json:"on_chain_id"      binding:"required"`
-	Ticker          string  `json:"ticker"           binding:"required"`
-	TokenAmount     string  `json:"token_amount"     binding:"required"`
-	IdrxAmount      *string `json:"idrx_amount"`
-	AttestationHash string  `json:"attestation_hash" binding:"required"`
-	Source          string  `json:"source"           binding:"required,oneof=retail institutional"`
-	TxHash          string  `json:"tx_hash"          binding:"required"`
+	OnChainID   *int64 `json:"on_chain_id"      binding:"required"`
+	Ticker      string `json:"ticker"           binding:"required"`
+	TokenAmount string `json:"token_amount"     binding:"required"`
+	FeeIdrx     string `json:"fee_idrx"`
+	UserAddress string `json:"user_address"     binding:"required"`
+	TxHash      string `json:"tx_hash"          binding:"required"`
 }
 
 func RecordRedeemRequestHandler(c *gin.Context) {
@@ -33,6 +33,7 @@ func RecordRedeemRequestHandler(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	onChainID := *req.OnChainID
 
 	stock, found, err := repos.Stock.FindByTicker(c.Request.Context(), req.Ticker)
 	if err != nil {
@@ -50,42 +51,43 @@ func RecordRedeemRequestHandler(c *gin.Context) {
 		return
 	}
 
-	_, exists, _ := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), req.OnChainID)
+	_, exists, _ := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), onChainID)
 	if exists {
 		response.OK(c, "proposal already recorded", nil)
 		return
 	}
 
-	requesterID := custodian.ID
 	txHash := req.TxHash
+	feeIdrx := req.FeeIdrx
+	if feeIdrx == "" {
+		feeIdrx = "0"
+	}
 	proposal, err := repos.RedeemProposal.Create(c.Request.Context(), repository.RedeemProposalCreateInput{
-		OnChainID:       req.OnChainID,
-		StockID:         stock.ID,
-		RequesterID:     &requesterID,
-		TokenAmount:     req.TokenAmount,
-		IdrxAmount:      req.IdrxAmount,
-		AttestationHash: req.AttestationHash,
-		Source:          req.Source,
-		RequestTxHash:   &txHash,
+		OnChainID:     onChainID,
+		StockID:       stock.ID,
+		TokenAmount:   req.TokenAmount,
+		FeeIdrx:       feeIdrx,
+		UserAddress:   req.UserAddress,
+		RequestTxHash: &txHash,
 	})
 	if err != nil {
 		response.InternalError(c, "failed to record proposal")
 		return
 	}
 
-	repos.RedeemApproval.Create(c.Request.Context(), proposal.ID, custodian.ID, &txHash)
+	repos.RedeemApproval.Create(c.Request.Context(), proposal.ID, custodian.ID, "approve", &txHash)
 
 	if streamService != nil {
 		streamService.Emit(external.LevelInfo, "[redeem]",
 			fmt.Sprintf("requestRedeem recorded · ticker=%s · proposal=%d · requester=%s",
-				req.Ticker, req.OnChainID, custodian.WalletAddress[:10]+"..."))
+				req.Ticker, onChainID, custodian.WalletAddress[:10]+"..."))
 	}
 
 	response.Created(c, "redeem proposal recorded", proposal)
 }
 
 type recordRedeemApprovalBody struct {
-	OnChainID int64  `json:"on_chain_id" binding:"required"`
+	OnChainID *int64 `json:"on_chain_id" binding:"required"`
 	TxHash    string `json:"tx_hash"     binding:"required"`
 }
 
@@ -101,8 +103,9 @@ func RecordRedeemApprovalHandler(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	onChainID := *req.OnChainID
 
-	proposal, found, err := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), req.OnChainID)
+	proposal, found, err := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), onChainID)
 	if err != nil || !found {
 		response.NotFound(c, "proposal not found")
 		return
@@ -115,45 +118,122 @@ func RecordRedeemApprovalHandler(c *gin.Context) {
 	}
 
 	txHash := req.TxHash
-	repos.RedeemApproval.Create(c.Request.Context(), proposal.ID, custodian.ID, &txHash)
-	repos.RedeemProposal.IncrementApprovalCount(c.Request.Context(), req.OnChainID)
+	if err := repos.RedeemApproval.Create(c.Request.Context(), proposal.ID, custodian.ID, "approve", &txHash); err != nil {
+		response.BadRequest(c, "approval already recorded")
+		return
+	}
 
 	if streamService != nil {
 		streamService.Emit(external.LevelOK, "[redeem]",
 			fmt.Sprintf("approveRedeem · proposal=%d · approver=%s",
-				req.OnChainID, custodian.WalletAddress[:10]+"..."))
+				onChainID, custodian.WalletAddress[:10]+"..."))
 	}
 
 	response.OK(c, "approval recorded", nil)
 }
 
-type recordRedeemExecutionBody struct {
-	OnChainID int64  `json:"on_chain_id" binding:"required"`
-	TxHash    string `json:"tx_hash"     binding:"required"`
-}
+func RecordRedeemRejectionHandler(c *gin.Context) {
+	claims, ok := custodianMiddleware.Get(c)
+	if !ok {
+		response.Unauthorized(c, "unauthorized")
+		return
+	}
 
-func RecordRedeemExecutionHandler(c *gin.Context) {
-	var req recordRedeemExecutionBody
+	var req recordRedeemApprovalBody
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	onChainID := *req.OnChainID
 
-	_, found, err := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), req.OnChainID)
+	proposal, found, err := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), onChainID)
 	if err != nil || !found {
 		response.NotFound(c, "proposal not found")
 		return
 	}
 
-	repos.RedeemProposal.MarkExecuted(c.Request.Context(), req.OnChainID, req.TxHash)
+	custodian, found, err := repos.Custodian.FindByWalletAddress(c.Request.Context(), claims.WalletAddress)
+	if err != nil || !found {
+		response.InternalError(c, "failed to lookup custodian")
+		return
+	}
+
+	txHash := req.TxHash
+	if err := repos.RedeemApproval.Create(c.Request.Context(), proposal.ID, custodian.ID, "reject", &txHash); err != nil {
+		response.BadRequest(c, "rejection already recorded")
+		return
+	}
+
+	if streamService != nil {
+		streamService.Emit(external.LevelInfo, "[redeem]",
+			fmt.Sprintf("rejectRedeem · proposal=%d · rejecter=%s",
+				onChainID, custodian.WalletAddress[:10]+"..."))
+	}
+
+	response.OK(c, "rejection recorded", nil)
+}
+
+type recordRedeemExecutionBody struct {
+	OnChainID *int64 `json:"on_chain_id" binding:"required"`
+	TxHash    string `json:"tx_hash"     binding:"required"`
+}
+
+func RecordRedeemExecutionHandler(c *gin.Context) {
+	if !ensureService(c, custodianSvc) {
+		return
+	}
+
+	var req recordRedeemExecutionBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	onChainID := *req.OnChainID
+
+	if err := custodianSvc.RecordRedeemExecution(c.Request.Context(), custodiansvc.RecordRedeemExecutionRequest{
+		OnChainID: onChainID,
+		TxHash:    req.TxHash,
+	}); err != nil {
+		if err == custodiansvc.ErrProposalNotFound {
+			response.NotFound(c, "proposal not found")
+			return
+		}
+		response.InternalError(c, "failed to record execution")
+		return
+	}
 
 	if streamService != nil {
 		streamService.Emit(external.LevelOK, "[evm]",
 			fmt.Sprintf("executeRedeem confirmed · proposal=%d · tx=%s",
-				req.OnChainID, req.TxHash[:10]+"..."))
+				onChainID, req.TxHash[:10]+"..."))
 	}
 
 	response.OK(c, "execution recorded", nil)
+}
+
+func RecordRedeemRejectExecutionHandler(c *gin.Context) {
+	var req recordRedeemExecutionBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	onChainID := *req.OnChainID
+
+	_, found, err := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), onChainID)
+	if err != nil || !found {
+		response.NotFound(c, "proposal not found")
+		return
+	}
+
+	repos.RedeemProposal.MarkRejected(c.Request.Context(), onChainID, req.TxHash)
+
+	if streamService != nil {
+		streamService.Emit(external.LevelOK, "[evm]",
+			fmt.Sprintf("executeReject confirmed · proposal=%d · tx=%s",
+				onChainID, req.TxHash[:10]+"..."))
+	}
+
+	response.OK(c, "rejection execution recorded", nil)
 }
 
 func ListRedeemProposalsHandler(c *gin.Context) {

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"gorm.io/gorm"
@@ -13,7 +14,6 @@ type StockAttestationRepository struct {
 
 type StockAttestationCreateInput struct {
 	StockID           int64
-	CustodianID       int64
 	CustodianHoldings string
 	OnChainSupply     string
 	AttestationHash   *string
@@ -22,7 +22,6 @@ type StockAttestationCreateInput struct {
 func (r *StockAttestationRepository) Create(ctx context.Context, input StockAttestationCreateInput) (model.StockAttestation, error) {
 	record := model.StockAttestation{
 		StockID:           input.StockID,
-		CustodianID:       input.CustodianID,
 		CustodianHoldings: input.CustodianHoldings,
 		OnChainSupply:     input.OnChainSupply,
 		AttestationHash:   input.AttestationHash,
@@ -53,6 +52,27 @@ func (r *StockAttestationRepository) FindLatestPerStock(ctx context.Context) ([]
 		Where("id IN ?", ids).
 		Find(&records).Error
 	return records, err
+}
+
+func (r *StockAttestationRepository) FindLatestByStockID(ctx context.Context, stockID int64) (model.StockAttestation, bool, error) {
+	var record model.StockAttestation
+	err := r.DB.WithContext(ctx).
+		Where("stock_id = ?", stockID).
+		Order("id DESC").
+		First(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.StockAttestation{}, false, nil
+	}
+	return record, err == nil, err
+}
+
+func (r *StockAttestationRepository) ExistsByAttestationHash(ctx context.Context, hash string) (bool, error) {
+	var count int64
+	err := r.DB.WithContext(ctx).
+		Model(&model.StockAttestation{}).
+		Where("attestation_hash = ?", hash).
+		Count(&count).Error
+	return count > 0, err
 }
 
 func (r *StockAttestationRepository) SumLatestHoldings(ctx context.Context) (string, error) {

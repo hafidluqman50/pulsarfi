@@ -20,9 +20,31 @@ func (r *StockRepository) FindAll(ctx context.Context) ([]model.Stock, error) {
 	return stocks, nil
 }
 
+func (r *StockRepository) FindMarketReady(ctx context.Context) ([]model.Stock, error) {
+	var stocks []model.Stock
+	if err := r.DB.WithContext(ctx).
+		Where("contract_address IS NOT NULL AND contract_address <> ''").
+		Order("id ASC").
+		Find(&stocks).Error; err != nil {
+		return nil, err
+	}
+	return stocks, nil
+}
+
 func (r *StockRepository) FindByTicker(ctx context.Context, ticker string) (model.Stock, bool, error) {
 	var stock model.Stock
 	err := r.DB.WithContext(ctx).Where("ticker = ?", ticker).First(&stock).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.Stock{}, false, nil
+	}
+	return stock, err == nil, err
+}
+
+func (r *StockRepository) FindByTickerOrIdxTicker(ctx context.Context, ticker string) (model.Stock, bool, error) {
+	var stock model.Stock
+	err := r.DB.WithContext(ctx).
+		Where("ticker = ? OR idx_ticker = ?", ticker, ticker).
+		First(&stock).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return model.Stock{}, false, nil
 	}

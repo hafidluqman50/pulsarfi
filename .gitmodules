@@ -1,0 +1,9 @@
+[submodule "smart-contract/lib/v2-core"]
+	path = smart-contract/lib/v2-core
+	url = https://github.com/Uniswap/v2-core
+[submodule "smart-contract/lib/v2-periphery"]
+	path = smart-contract/lib/v2-periphery
+	url = https://github.com/Uniswap/v2-periphery
+[submodule "smart-contract/lib/solidity-lib"]
+	path = smart-contract/lib/solidity-lib
+	url = https://github.com/Uniswap/solidity-lib

@@ -2,16 +2,24 @@ package service
 
 import (
 	"github.com/horizonlabs/pulsarfi-backend/src/auth"
-	authsvc "github.com/horizonlabs/pulsarfi-backend/src/service/auth"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
+	authsvc "github.com/horizonlabs/pulsarfi-backend/src/service/auth"
+	custodiansvc "github.com/horizonlabs/pulsarfi-backend/src/service/custodian"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
+	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
 
 type Registry struct {
-	Auth    *authsvc.AuthService
-	Email   *external.EmailService
-	Storage *external.StorageService
-	Stream  *external.StreamService
+	Repos          *repository.Registry
+	Auth           *authsvc.AuthService
+	Custodian      *custodiansvc.CustodianService
+	PublicStocks   *publicsvc.StocksService
+	PublicPrice    *publicsvc.PriceService
+	PublicReserves *publicsvc.ReservesService
+	Email          *external.EmailService
+	Storage        *external.StorageService
+	Stream         *external.StreamService
+	Price          *external.PriceService
 }
 
 type Config struct {
@@ -23,14 +31,34 @@ type Config struct {
 }
 
 func NewRegistry(cfg Config) *Registry {
+	stream := external.NewStreamService()
+	price := external.NewPriceService()
 	return &Registry{
+		Repos: cfg.Repos,
 		Auth: &authsvc.AuthService{
 			Custodians: cfg.Repos.Custodian,
 			Nonces:     cfg.NonceStore,
 			JwtConfig:  cfg.JwtConfig,
 		},
+		Custodian: &custodiansvc.CustodianService{
+			Repos:  cfg.Repos,
+			Stream: stream,
+			Price:  price,
+		},
+		PublicStocks: &publicsvc.StocksService{
+			Stocks: cfg.Repos.Stock,
+			Price:  price,
+		},
+		PublicPrice: &publicsvc.PriceService{
+			Stocks: cfg.Repos.Stock,
+			Price:  price,
+		},
+		PublicReserves: &publicsvc.ReservesService{
+			Attestations: cfg.Repos.StockAttestation,
+		},
 		Email:   cfg.EmailService,
 		Storage: cfg.StorageService,
-		Stream:  external.NewStreamService(),
+		Stream:  stream,
+		Price:   price,
 	}
 }

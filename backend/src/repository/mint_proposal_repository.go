@@ -17,7 +17,7 @@ func (r *MintProposalRepository) FindPending(ctx context.Context) ([]model.MintP
 	err := r.DB.WithContext(ctx).
 		Preload("Stock").
 		Preload("Requester").
-		Where("executed = false").
+		Where("status = ?", "pending").
 		Order("created_at ASC").
 		Find(&proposals).Error
 	return proposals, err
@@ -62,22 +62,26 @@ func (r *MintProposalRepository) Create(ctx context.Context, input MintProposalC
 		IdrxAmount:      input.IdrxAmount,
 		AttestationHash: input.AttestationHash,
 		Destination:     input.Destination,
-		ApprovalCount:   1,
+		Status:          "pending",
 		RequestTxHash:   input.RequestTxHash,
 	}
 	return proposal, r.DB.WithContext(ctx).Create(&proposal).Error
 }
 
-func (r *MintProposalRepository) IncrementApprovalCount(ctx context.Context, onChainID int64) error {
+func (r *MintProposalRepository) MarkRejected(ctx context.Context, onChainID int64, txHash string) error {
 	return r.DB.WithContext(ctx).Model(&model.MintProposal{}).
 		Where("on_chain_id = ?", onChainID).
-		UpdateColumn("approval_count", gorm.Expr("approval_count + 1")).Error
+		Updates(map[string]any{
+			"status":          "rejected",
+			"execute_tx_hash": txHash,
+			"executed_at":     gorm.Expr("NOW()"),
+		}).Error
 }
 
 func (r *MintProposalRepository) CountExecutedLast24h(ctx context.Context) (int64, error) {
 	var count int64
 	err := r.DB.WithContext(ctx).Model(&model.MintProposal{}).
-		Where("executed = true AND executed_at >= NOW() - INTERVAL '24 hours'").
+		Where("status = ? AND executed_at >= NOW() - INTERVAL '24 hours'", "executed").
 		Count(&count).Error
 	return count, err
 }
@@ -87,7 +91,7 @@ func (r *MintProposalRepository) SumIdrxLast24h(ctx context.Context) (string, er
 	var res result
 	err := r.DB.WithContext(ctx).Model(&model.MintProposal{}).
 		Select("COALESCE(SUM(idrx_amount)::text, '0') AS total").
-		Where("executed = true AND idrx_amount IS NOT NULL AND executed_at >= NOW() - INTERVAL '24 hours'").
+		Where("status = ? AND idrx_amount IS NOT NULL AND executed_at >= NOW() - INTERVAL '24 hours'", "executed").
 		Scan(&res).Error
 	if res.Total == nil {
 		return "0", err
@@ -99,7 +103,7 @@ func (r *MintProposalRepository) MarkExecuted(ctx context.Context, onChainID int
 	return r.DB.WithContext(ctx).Model(&model.MintProposal{}).
 		Where("on_chain_id = ?", onChainID).
 		Updates(map[string]any{
-			"executed":        true,
+			"status":          "executed",
 			"execute_tx_hash": txHash,
 			"executed_at":     gorm.Expr("NOW()"),
 		}).Error
