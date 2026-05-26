@@ -1,10 +1,11 @@
 'use client';
 
-import { RainbowKitProvider, darkTheme, lightTheme } from '@rainbow-me/rainbowkit';
+import { RainbowKitProvider, lightTheme } from '@rainbow-me/rainbowkit';
 import { WagmiProvider } from 'wagmi';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { config } from '@/lib/wagmi';
 import { Toaster } from 'sonner';
+import { SiweAuthProvider } from '@/contexts/SiweAuthContext';
 
 import '@rainbow-me/rainbowkit/styles.css';
 
@@ -23,7 +24,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
           })}
           locale="en-US"
         >
-          {children}
+          <SiweAuthProvider>
+            {children}
+          </SiweAuthProvider>
           <Toaster
             position="bottom-right"
             toastOptions={{

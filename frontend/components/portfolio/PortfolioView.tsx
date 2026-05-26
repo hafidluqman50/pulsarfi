@@ -4,7 +4,21 @@ import { useState, useMemo } from 'react';
 import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { toast } from 'sonner';
-import { PSTOCKS, tokenByTicker, portfolioTimeSeries, sliceRange, fmtIDRX, fmtNum, fmtPct, fmtAxisDate, shortAddr, Balances } from '@/lib/data';
+import { type Address } from 'viem';
+import { tokenByTicker, sliceRange, fmtIDRX, fmtNum, fmtPct, shortAddr } from '@/lib/data';
+import { useMarketStocks, useStockTransactions } from '@/http/market/hooks';
+import { useWalletTokenBalances } from '@/http/market/tokenHooks';
+import { useTransferToken } from '@/http/market/transferHooks';
+import { toMarketToken, unitsFromDecimalInput } from '@/lib/swap';
+import {
+  ActivityRow,
+  PortfolioPosition,
+  StablePosition,
+  buildActivityRows,
+  buildPortfolioSeries,
+  buildPositions,
+  buildStables,
+} from '@/lib/portfolio';
 import { Icon } from '@/components/ui/Icon';
 import { PStockMark } from '@/components/ui/PStockMark';
 import { AreaChart } from '@/components/charts/AreaChart';
@@ -13,21 +27,43 @@ import { SwapModal } from '@/components/ui/SwapModal';
 import { DetailRow } from '@/components/swap/SwapView';
 
 const PALETTE = ["#c8102e", "#16110e", "#1f4d8a", "#5a4a3a", "#9a0c24", "#2a231e", "#6f2da8", "#2c5e2e"];
+const POSITION_CHART_ANCHOR = new Date('2026-05-26T14:00:00+08:00').getTime();
 
-interface PortfolioViewProps {
-  balances: Balances;
-  setBalances: React.Dispatch<React.SetStateAction<Balances>>;
-  costBasis: Record<string, number>;
-}
+type TransferToken = {
+  ticker: string;
+  name: string;
+  price: number;
+  address: Address;
+  isStable: boolean;
+};
 
-export function PortfolioView({ balances, setBalances, costBasis }: PortfolioViewProps) {
+export function PortfolioView() {
   const { address, isConnected } = useAccount();
-  const [range, setRange]         = useState("1M");
-  const [expanded, setExpanded]   = useState<string | null>(null);
-  const [transferOpen, setTransferOpen] = useState<{ ticker: string; name: string; price: number } | null>(null);
-  const [tradeToken, setTradeToken] = useState<{ ticker: string; name: string; price: number } | null>(null);
+  const idrxAddress = process.env.NEXT_PUBLIC_IDRX_ADDRESS as Address | undefined;
+  const { data: marketStocks = [] } = useMarketStocks();
+  const marketTokens = useMemo(() => marketStocks.map(toMarketToken), [marketStocks]);
+  const balances = useWalletTokenBalances(marketTokens);
+  const { data: transactions = [] } = useStockTransactions(address);
+  const transferToken = useTransferToken();
 
-  const series = useMemo(() => portfolioTimeSeries("PFV", 365, 18400 * 16142, 26840 * 16142), []);
+  const [range, setRange]         = useState("1D");
+  const [expanded, setExpanded]   = useState<string | null>(null);
+  const [transferOpen, setTransferOpen] = useState<TransferToken | null>(null);
+  const [tradeToken, setTradeToken] = useState<PortfolioPosition | null>(null);
+
+  const positions = useMemo(() => buildPositions(balances, marketStocks, transactions), [balances, marketStocks, transactions]);
+  const stables = useMemo(() => buildStables(balances), [balances]);
+  const stockValue = positions.reduce((sum, position) => sum + position.value, 0);
+  const stockCost = positions.reduce((sum, position) => sum + position.cost, 0);
+  const stableValue = stables.reduce((sum, stable) => sum + stable.value, 0);
+  const totalValue = stockValue + stableValue;
+  const allTimePnl = stockValue - stockCost;
+  const allTimePnlPct = stockCost ? (allTimePnl / stockCost) * 100 : 0;
+  const dayPnl = positions.reduce((sum, position) => sum + position.dayPnl, 0);
+  const dayPnlPct = stockValue - dayPnl ? (dayPnl / (stockValue - dayPnl)) * 100 : 0;
+  const donutData = positions.map(position => ({ label: position.ticker, value: position.value }));
+  const activityRows = useMemo(() => buildActivityRows(transactions), [transactions]);
+  const series = useMemo(() => buildPortfolioSeries(totalValue, transactions), [totalValue, transactions]);
   const ranged = useMemo(() => sliceRange(series, range), [series, range]);
 
   if (!isConnected) {
@@ -49,42 +85,22 @@ export function PortfolioView({ balances, setBalances, costBasis }: PortfolioVie
     );
   }
 
-  const positions = Object.entries(balances)
-    .filter(([k, v]) => v > 0 && k !== "IDRX")
-    .map(([ticker, qty]) => {
-      const tok = tokenByTicker(ticker);
-      const avg   = costBasis[ticker] ?? tok.price;
-      const value = qty * tok.price;
-      const cost  = qty * avg;
-      const pnl   = value - cost;
-      const pnlPct = avg ? ((tok.price - avg) / avg) * 100 : 0;
-      const dayPrev = tok.price / (1 + ((tok as { change24h?: number }).change24h ?? 0) / 100);
-      const dayPnl  = qty * (tok.price - dayPrev);
-      return { ...tok, qty, avg, value, cost, pnl, pnlPct, dayPnl };
-    })
-    .sort((a, b) => b.value - a.value);
-
-  const stables = Object.entries(balances)
-    .filter(([k]) => k === "IDRX")
-    .map(([ticker, qty]) => ({ ...tokenByTicker(ticker), qty, value: qty }));
-
-  const stockValue   = positions.reduce((s, p) => s + p.value, 0);
-  const stockCost    = positions.reduce((s, p) => s + p.cost,  0);
-  const stableValue  = stables.reduce((s, p) => s + p.value,   0);
-  const totalValue   = stockValue + stableValue;
-  const allTimePnl   = stockValue - stockCost;
-  const allTimePnlPct = stockCost ? (allTimePnl / stockCost) * 100 : 0;
-  const dayPnl       = positions.reduce((s, p) => s + p.dayPnl, 0);
-  const dayPnlPct    = stockValue - dayPnl ? (dayPnl / (stockValue - dayPnl)) * 100 : 0;
-
-  const donutData = positions.map(position => ({ label: position.ticker, value: position.value }));
-
-  function handleTransfer(opts: { token: { ticker: string }; to: string; amt: number }) {
-    setTransferOpen(null);
-    const toastId = toast.loading("Broadcasting transfer…");
-    setTimeout(() => {
-      toast.success("Transfer sent", { id: toastId, description: `${fmtNum(opts.amt, 2)} ${opts.token.ticker} → ${shortAddr(opts.to)}`, duration: 4500 });
-    }, 1200);
+  async function handleTransfer(opts: { token: TransferToken; to: Address; amount: string }) {
+    const toastId = toast.loading("Broadcasting transfer...");
+    try {
+      const txHash = await transferToken.mutateAsync({
+        token_address: opts.token.address,
+        from: address!,
+        to: opts.to,
+        amount: unitsFromDecimalInput(opts.amount, opts.token.isStable ? 2 : 18),
+        is_stable: Boolean(opts.token.isStable),
+      });
+      toast.success("Transfer sent", { id: toastId, description: `Tx ${txHash.slice(0, 10)}...${txHash.slice(-6)}`, duration: 4500 });
+      setTransferOpen(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Transfer failed";
+      toast.error("Transfer failed", { id: toastId, description: message.slice(0, 120), duration: 7000 });
+    }
   }
 
   return (
@@ -119,7 +135,7 @@ export function PortfolioView({ balances, setBalances, costBasis }: PortfolioVie
             ))}
           </div>
         </div>
-        <AreaChart data={ranged} height={280} valueFormatter={value => `${(value / 1_000_000).toFixed(1)}M IDRX`} labelFormatter={fmtAxisDate} range={range} />
+        <AreaChart data={ranged} height={280} valueFormatter={value => `${(value / 1_000_000).toFixed(1)}M IDRX`} />
       </div>
 
       {/* ALLOCATION */}
@@ -147,16 +163,16 @@ export function PortfolioView({ balances, setBalances, costBasis }: PortfolioVie
           <h2 className="display section-title" style={{ fontSize: 32, margin: 0, letterSpacing: "-0.02em" }}>Positions</h2>
           <div className="eyebrow" style={{ color: "var(--body)" }}>{positions.length} stocks · {stables.length} stable</div>
         </div>
-        <PositionsList positions={positions} stables={stables} expanded={expanded} setExpanded={setExpanded} onTrade={t => setTradeToken(t)} onTransfer={t => setTransferOpen(t)} />
+        <PositionsList positions={positions} stables={stables} idrxAddress={idrxAddress} expanded={expanded} setExpanded={setExpanded} onTrade={t => setTradeToken(t)} onTransfer={t => setTransferOpen(t)} />
       </div>
 
       {/* ACTIVITY */}
       <div style={{ marginTop: 56 }}>
         <div className="hairline-strong" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", paddingBottom: 10, flexWrap: "wrap" }}>
           <h2 className="display section-title" style={{ fontSize: 32, margin: 0, letterSpacing: "-0.02em" }}>Recent activity</h2>
-          <span className="eyebrow" style={{ color: "var(--body)" }}>last 7 days</span>
+          <span className="eyebrow" style={{ color: "var(--body)" }}>wallet swaps</span>
         </div>
-        <ActivityList />
+        <ActivityList rows={activityRows} />
       </div>
 
       {transferOpen && (
@@ -165,14 +181,13 @@ export function PortfolioView({ balances, setBalances, costBasis }: PortfolioVie
           balance={balances[transferOpen.ticker] ?? 0}
           onClose={() => setTransferOpen(null)}
           onSubmit={handleTransfer}
+          busy={transferToken.isPending}
         />
       )}
 
       {tradeToken && (
         <SwapModal
           defaultOut={tokenByTicker(tradeToken.ticker)}
-          balances={balances}
-          setBalances={setBalances}
           onClose={() => setTradeToken(null)}
         />
       )}
@@ -223,23 +238,19 @@ function SplitRow({ stockValue, stableValue }: { stockValue: number; stableValue
   );
 }
 
-type Position = {
-  ticker: string; name: string; price: number; change24h?: number; sector?: string; ipo?: string; supply?: number;
-  qty: number; avg: number; value: number; cost: number; pnl: number; pnlPct: number; dayPnl: number;
-};
-
-function PositionsList({ positions, stables, expanded, setExpanded, onTrade, onTransfer }: {
-  positions: Position[];
-  stables: { ticker: string; name: string; price: number; qty: number; value: number }[];
+function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded, onTrade, onTransfer }: {
+  positions: PortfolioPosition[];
+  stables: StablePosition[];
+  idrxAddress?: Address;
   expanded: string | null;
   setExpanded: (t: string | null) => void;
-  onTrade: (t: { ticker: string; name: string; price: number }) => void;
-  onTransfer: (t: { ticker: string; name: string; price: number }) => void;
+  onTrade: (t: PortfolioPosition) => void;
+  onTransfer: (t: TransferToken) => void;
 }) {
   return (
     <div>
-      <div className="hairline table-head-desktop" style={{ display: "grid", gridTemplateColumns: "auto 2fr 1fr 1fr 1fr 1fr 1fr 0.6fr", gap: 16, padding: "14px 0" }}>
-        {["", "Stock", "Lot", "Avg buy", "Last", "Market value", "Unrealized P&L", ""].map((h, i) => (
+      <div className="hairline table-head-desktop" style={{ display: "grid", gridTemplateColumns: "auto 2fr 1fr 1fr 1fr 1fr 1fr 156px", gap: 16, padding: "14px 0" }}>
+        {["", "Stock", "Lot", "Avg buy", "IDX lot", "Market value", "Unrealized P&L", ""].map((h, i) => (
           <div key={i} className="eyebrow" style={{ color: "var(--body)", textAlign: i >= 2 && i <= 6 ? "right" : "left" }}>{h}</div>
         ))}
       </div>
@@ -276,7 +287,17 @@ function PositionsList({ positions, stables, expanded, setExpanded, onTrade, onT
               </div>
               <div className="pos-actions">
                 <button className="btn btn-ghost" onClick={e => { e.stopPropagation(); onTrade(p); }} style={{ padding: "6px 12px", fontSize: 13, border: "1px solid var(--ink)" }}>Trade</button>
-                <button className="btn btn-ghost" onClick={e => { e.stopPropagation(); onTransfer(p); }} style={{ padding: "6px 12px", fontSize: 13, border: "1px solid var(--ink)" }}>Send</button>
+                <button
+                  className="btn btn-ghost"
+                  disabled={!p.contractAddress}
+                  onClick={e => {
+                    e.stopPropagation();
+                    if (p.contractAddress) onTransfer({ ticker: p.ticker, name: p.name, price: p.price, address: p.contractAddress, isStable: false });
+                  }}
+                  style={{ padding: "6px 12px", fontSize: 13, border: "1px solid var(--ink)" }}
+                >
+                  Send
+                </button>
               </div>
             </div>
             {isOpen && <PositionDetail position={p} />}
@@ -304,8 +325,17 @@ function PositionsList({ positions, stables, expanded, setExpanded, onTrade, onT
             <RowCell label="Unrealized P&L" align="right"><span className="mono" style={{ fontSize: 13, color: "var(--body)" }}>—</span></RowCell>
           </div>
           <div className="pos-actions">
-            <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 13, border: "1px solid var(--ink)" }}>Trade</button>
-            <button className="btn btn-ghost" style={{ padding: "6px 12px", fontSize: 13, border: "1px solid var(--ink)" }}>Send</button>
+            <button className="btn btn-ghost" disabled style={{ padding: "6px 12px", fontSize: 13, border: "1px solid var(--ink)" }}>Trade</button>
+            <button
+              className="btn btn-ghost"
+              disabled={!idrxAddress}
+              onClick={() => {
+                if (idrxAddress) onTransfer({ ticker: s.ticker, name: s.name, price: 1, address: idrxAddress, isStable: true });
+              }}
+              style={{ padding: "6px 12px", fontSize: 13, border: "1px solid var(--ink)" }}
+            >
+              Send
+            </button>
           </div>
         </div>
       ))}
@@ -322,13 +352,14 @@ function RowCell({ label, align = "left", children }: { label: string; align?: "
   );
 }
 
-function PositionDetail({ position }: { position: Position }) {
+function PositionDetail({ position }: { position: PortfolioPosition }) {
   const [range, setRange] = useState("1M");
   const series = useMemo(() => {
-    const raw = portfolioTimeSeries(position.ticker, 365, position.price * 600, position.price * 1100);
-    const lastValue = raw[raw.length - 1].value;
-    return raw.map(dataPoint => ({ timestamp: dataPoint.timestamp, value: (dataPoint.value / lastValue) * position.price }));
-  }, [position.ticker, position.price]);
+    return [
+      { timestamp: POSITION_CHART_ANCHOR - 60 * 60_000, value: position.price },
+      { timestamp: POSITION_CHART_ANCHOR, value: position.price },
+    ];
+  }, [position.price]);
   const ranged = useMemo(() => sliceRange(series, range), [series, range]);
 
   return (
@@ -346,12 +377,13 @@ function PositionDetail({ position }: { position: Position }) {
               ))}
             </div>
           </div>
-          <AreaChart data={ranged} height={200} valueFormatter={v => fmtIDRX(v)} labelFormatter={fmtAxisDate} range={range} />
+          <AreaChart data={ranged} height={200} valueFormatter={v => fmtIDRX(v)} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 4 }}>
           <KV k="Lot owned"     v={`${fmtNum(position.qty, 2)}`} />
           <KV k="Avg buy price" v={fmtIDRX(position.avg)} />
-          <KV k="Current price" v={fmtIDRX(position.price)} />
+          <KV k="IDX lot price" v={fmtIDRX(position.price)} />
+          <KV k="Pool price" v={fmtIDRX(position.poolPrice)} />
           <KV k="Total cost"    v={fmtIDRX(position.cost)} />
           <KV k="Market value"  v={fmtIDRX(position.value)} highlight />
           <KV k="Unrealized P&L" v={
@@ -361,7 +393,6 @@ function PositionDetail({ position }: { position: Position }) {
           } />
           {position.sector && <KV k="Sector" v={position.sector} />}
           {position.ipo    && <KV k="IDX ticker" v={position.ipo} />}
-          {position.supply && <KV k="Token supply" v={fmtNum(position.supply)} />}
         </div>
       </div>
     </div>
@@ -377,22 +408,21 @@ function KV({ k, v, highlight }: { k: string; v: React.ReactNode; highlight?: bo
   );
 }
 
-const ACTIVITY = [
-  { kind: "swap", when: "2h ago",  text: "Buy",    a: "78.400 IDRX",   b: "320 BUMIP",    fee: "$0.21", status: "Confirmed", hash: "0x7f3a…b821" },
-  { kind: "mint", when: "8h ago",  text: "Mint",   a: "—",             b: "5.000 TLKMP",  fee: "$0.14", status: "Confirmed", hash: "0x4c2e…91a7" },
-  { kind: "swap", when: "1d ago",  text: "Sell",   a: "84 ENRGP",      b: "31.752 IDRX",  fee: "$0.18", status: "Confirmed", hash: "0xa991…f0c4" },
-  { kind: "send", when: "2d ago",  text: "Send",   a: "12.400 GOTOP",  b: "0x9c1f…ae42",  fee: "$0.12", status: "Confirmed", hash: "0xd44b…02f1" },
-  { kind: "fail", when: "3d ago",  text: "Failed", a: "6.455.000 IDRX",b: "BBRIP swap",   fee: "$0.05", status: "Reverted",  hash: "0x6e1c…71b3" },
-  { kind: "swap", when: "5d ago",  text: "Buy",    a: "3.234.000 IDRX",b: "32.980 GOTOP", fee: "$0.16", status: "Confirmed", hash: "0xfe21…44ab" },
-];
+function ActivityList({ rows }: { rows: ActivityRow[] }) {
+  if (rows.length === 0) {
+    return (
+      <div className="hairline" style={{ padding: "18px 0", color: "var(--body)" }}>
+        No swap activity recorded for this wallet yet.
+      </div>
+    );
+  }
 
-function ActivityList() {
   return (
     <div>
-      {ACTIVITY.map((row, i) => (
-        <div key={i} className="hairline row-hover activity-row" style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto auto", gap: 20, padding: "16px 0", alignItems: "center" }}>
-          <div style={{ width: 36, height: 36, border: "1px solid var(--ink)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: row.kind === "fail" ? "var(--merah-soft)" : "var(--canvas)" }}>
-            <Icon name={row.kind === "send" ? "send" : row.kind === "fail" ? "x" : "swap"} size={14} />
+      {rows.map((row) => (
+        <div key={row.txHash} className="hairline row-hover activity-row" style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto", gap: 20, padding: "16px 0", alignItems: "center" }}>
+          <div style={{ width: 36, height: 36, border: "1px solid var(--ink)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "var(--canvas)" }}>
+            <Icon name="swap" size={14} />
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 600 }}>{row.text} <span style={{ fontWeight: 400, color: "var(--body)" }}>· {row.a}{row.b && " → "}{row.b}</span></div>
@@ -400,9 +430,8 @@ function ActivityList() {
               <span className="mono">{row.hash}</span> · {row.when}
             </div>
           </div>
-          <div style={{ fontSize: 11, color: row.status === "Reverted" ? "var(--negative)" : "var(--positive)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>{row.status}</div>
-          <div className="mono only-desktop" style={{ fontSize: 12, color: "var(--body)" }}>{row.fee}</div>
-          <a className="btn-ghost btn only-desktop" href="#" onClick={e => e.preventDefault()} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: 4 }}>
+          <div style={{ fontSize: 11, color: "var(--positive)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>{row.status}</div>
+          <a className="btn-ghost btn only-desktop" href={`https://sepolia.arbiscan.io/tx/${row.txHash}`} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: 4 }}>
             <Icon name="external" size={13} />
           </a>
         </div>
@@ -411,16 +440,17 @@ function ActivityList() {
   );
 }
 
-function TransferModal({ token, balance, onClose, onSubmit }: {
-  token: { ticker: string; name: string; price: number };
+function TransferModal({ token, balance, onClose, onSubmit, busy }: {
+  token: TransferToken;
   balance: number;
   onClose: () => void;
-  onSubmit: (opts: { token: { ticker: string }; to: string; amt: number }) => void;
+  onSubmit: (opts: { token: TransferToken; to: Address; amount: string }) => void;
+  busy: boolean;
 }) {
   const [to, setTo]   = useState("");
   const [amt, setAmt] = useState("");
   const num = parseFloat(amt) || 0;
-  const ok  = to.length >= 6 && num > 0 && num <= balance;
+  const ok  = /^0x[a-fA-F0-9]{40}$/.test(to) && num > 0 && num <= balance && !busy;
 
   return (
     <div className="overlay" style={{ position: "fixed", inset: 0, background: "rgba(22,17,14,0.45)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
@@ -449,8 +479,8 @@ function TransferModal({ token, balance, onClose, onSubmit }: {
             <DetailRow k="Network"     v="Arbitrum Sepolia" />
             <DetailRow k="Network fee" v="~$0.12" />
           </div>
-          <button className="btn btn-primary" disabled={!ok} onClick={() => onSubmit({ token, to, amt: num })} style={{ width: "100%", padding: 14 }}>
-            Send {token.ticker}
+          <button className="btn btn-primary" disabled={!ok} onClick={() => onSubmit({ token, to: to as Address, amount: amt })} style={{ width: "100%", padding: 14 }}>
+            {busy ? "Sending..." : `Send ${token.ticker}`}
           </button>
         </div>
       </div>

@@ -7,17 +7,21 @@ import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { shortAddr } from '@/lib/data';
-
-const NAVIGATION_ITEMS = [
-  { href: '/home',      label: 'Home'      },
-  { href: '/portfolio', label: 'Portfolio' },
-  { href: '/custodian', label: 'Custodian' },
-  { href: '/stocks',    label: 'Markets'   },
-] as const;
+import { useSiweAuth } from '@/contexts/SiweAuthContext';
 
 export function NavBar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const pathname = usePathname();
+  const { isAuthenticated, role, signOut } = useSiweAuth();
+
+  const navItems = [
+    { href: '/home',      label: 'Home',      visible: true },
+    { href: '/stocks',    label: 'Markets',   visible: role !== 'custodian' },
+    { href: '/portfolio', label: 'Portfolio', visible: isAuthenticated && role !== 'custodian' },
+    { href: '/custodian', label: 'Custodian', visible: isAuthenticated && role === 'custodian' },
+  ];
+
+  const visibleItems = navItems.filter(item => item.visible);
 
   const isRouteActive = (href: string) =>
     href === '/stocks' ? pathname.startsWith('/stocks') : pathname === href;
@@ -42,7 +46,7 @@ export function NavBar() {
           </Link>
 
           <nav className="nav-tabs-desktop flex gap-[28px]">
-            {NAVIGATION_ITEMS.map(item => (
+            {visibleItems.map(item => (
               <Link
                 key={item.href}
                 href={item.href}
@@ -76,14 +80,21 @@ export function NavBar() {
                 );
               }
               return (
-                <button
-                  type="button"
-                  className="btn btn-outline inline-flex items-center gap-[10px] px-[14px] py-[10px]"
-                  onClick={openAccountModal}
-                >
-                  <span className="w-[8px] h-[8px] bg-[#1f7a4b] inline-block" />
-                  <span className="mono text-[12px]">{shortAddr(account.address)}</span>
-                </button>
+                <div className="inline-flex items-center gap-[8px]">
+                  {role === 'custodian' && (
+                    <span className="eyebrow text-[10px] px-[8px] py-[4px] bg-[var(--merah)] text-white">
+                      CUSTODIAN
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-outline inline-flex items-center gap-[10px] px-[14px] py-[10px]"
+                    onClick={isAuthenticated ? signOut : openAccountModal}
+                  >
+                    <span className={`w-[8px] h-[8px] inline-block ${isAuthenticated ? 'bg-[#1f7a4b]' : 'bg-[var(--body)]'}`} />
+                    <span className="mono text-[12px]">{shortAddr(account.address)}</span>
+                  </button>
+                </div>
               );
             }}
           </ConnectButton.Custom>
@@ -93,7 +104,7 @@ export function NavBar() {
       {/* Mobile slide-down menu */}
       {isMobileMenuOpen && (
         <div className="mobile-menu only-mobile">
-          {NAVIGATION_ITEMS.map(item => (
+          {visibleItems.map(item => (
             <Link
               key={item.href}
               href={item.href}

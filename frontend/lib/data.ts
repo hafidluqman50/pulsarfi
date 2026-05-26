@@ -103,21 +103,35 @@ export function portfolioTimeSeries(seedTicker = "PORTFOLIO", days = 365, start 
 export function sliceRange(series: TimePoint[], range: string): TimePoint[] {
   const daysByRange: Record<string, number> = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365, "ALL": series.length };
   const pointCount = Math.min(series.length, daysByRange[range] || 30);
+
   if (range === "1D") {
-    const lastValue = series[series.length - 1].value;
-    const previousValue = series[series.length - 2]?.value ?? lastValue;
-    const today = new Date(2026, 4, 23);
-    const hourlyPoints: TimePoint[] = [];
-    for (let hourIndex = 0; hourIndex < 24; hourIndex++) {
-      const hourFraction = hourIndex / 23;
-      const drift = previousValue + (lastValue - previousValue) * hourFraction;
-      const noise = Math.sin(hourIndex * 0.6) * lastValue * 0.004 + (Math.random() - 0.5) * lastValue * 0.003;
-      const date = new Date(today);
-      date.setHours(hourIndex, 0, 0, 0);
-      hourlyPoints.push({ timestamp: date.getTime(), value: drift + noise });
+    const endValue = series[series.length - 1].value;
+    if (endValue <= 0) return [{ timestamp: Date.now() - 60_000, value: 0 }, { timestamp: Date.now(), value: 0 }];
+
+    const now      = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const minutesElapsed = Math.max(2, Math.floor((now.getTime() - midnight.getTime()) / 60_000));
+
+    const points: TimePoint[] = [];
+    for (let min = 0; min <= minutesElapsed; min++) {
+      // fraction 0→1 keeps wave-count fixed regardless of how many minutes are in the session
+      const f = min / minutesElapsed;
+      // arch: gentle morning-rise / afternoon-drift shape
+      // wave1–3: 2, 5, 11 visible swings over the session
+      const noise =
+        Math.sin(f * Math.PI)       * 0.012 +
+        Math.sin(f * Math.PI *  4)  * 0.005 +
+        Math.sin(f * Math.PI *  10) * 0.003 +
+        Math.sin(f * Math.PI *  22) * 0.001;
+      points.push({
+        timestamp: midnight.getTime() + min * 60_000,
+        value:     endValue * (1 - noise),
+      });
     }
-    return hourlyPoints;
+    points[points.length - 1] = { timestamp: midnight.getTime() + minutesElapsed * 60_000, value: endValue };
+    return points;
   }
+
   return series.slice(series.length - pointCount);
 }
 
@@ -147,6 +161,15 @@ export function fmtPct(value: number): string {
 export function shortAddr(address: string): string {
   if (!address) return "";
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+export function fmtIDRCompact(raw: string | number): string {
+  const value = typeof raw === "string" ? parseFloat(raw) : raw;
+  if (isNaN(value)) return "—";
+  if (value >= 1e12) return `Rp ${(value / 1e12).toFixed(1)} T`;
+  if (value >= 1e9)  return `Rp ${(value / 1e9).toFixed(1)} M`;
+  if (value >= 1e6)  return `Rp ${(value / 1e6).toFixed(0)} Jt`;
+  return `Rp ${Math.round(value).toLocaleString("id-ID")}`;
 }
 
 export function fmtIDR(value: number): string {

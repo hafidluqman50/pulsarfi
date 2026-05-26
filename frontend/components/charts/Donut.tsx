@@ -14,8 +14,11 @@ export function Donut({ data, size = 180, thickness = 22, palette = [] }: DonutP
   const radius = (size - thickness) / 2;
   const centerX = size / 2;
   const centerY = size / 2;
-  let startAngle = -Math.PI / 2;
   const segments = data.map((segment, segmentIndex) => {
+    const previousValue = data
+      .slice(0, segmentIndex)
+      .reduce((runningTotal, previousSegment) => runningTotal + previousSegment.value, 0);
+    const startAngle = -Math.PI / 2 + (previousValue / total) * Math.PI * 2;
     const endAngle = startAngle + (segment.value / total) * Math.PI * 2;
     const isLargeArc = endAngle - startAngle > Math.PI ? 1 : 0;
     const startX = centerX + Math.cos(startAngle) * radius;
@@ -30,7 +33,6 @@ export function Donut({ data, size = 180, thickness = 22, palette = [] }: DonutP
       value: segment.value,
       percentage: (segment.value / total) * 100,
     };
-    startAngle = endAngle;
     return renderedSegment;
   });
   return (
