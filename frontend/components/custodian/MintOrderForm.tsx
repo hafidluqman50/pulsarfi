@@ -10,6 +10,7 @@ import { currentTimestamp } from '@/lib/terminal';
 
 const IDR_PRICE_FALLBACK: Record<string, number> = { BUMI: 246, ENRG: 378, KIJA: 144, TLKM: 2976, BBRI: 4780, GOTO: 98, ASII: 5190, UNVR: 2402 };
 const USD_RATE = 16142;
+const LOT_SIZE = 100;
 
 function Field({ label, children }: { label: string; children: React.ReactNode }): React.ReactNode {
   return (
@@ -39,9 +40,9 @@ export function MintOrderForm(): React.ReactNode {
   const { run: runMint, running, isPending: isMintPending } = useMintPipeline(appendLog);
 
   const selectedStock = PSTOCKS.find(stock => stock.ipo === selectedIpoTicker);
-  const { data: priceData } = useStockPrice(selectedIpoTicker);
+  const { data: priceData } = useStockPrice(selectedIpoTicker, 'idx');
   const idrPrice = priceData?.price ?? IDR_PRICE_FALLBACK[selectedIpoTicker] ?? 250;
-  const idrTotal = idrPrice * (parseInt(quantity) || 0);
+  const idrTotal = idrPrice * (parseInt(quantity) || 0) * LOT_SIZE;
   const usdTotal = idrTotal / USD_RATE;
 
   async function handleRunPipeline(): Promise<void> {
@@ -109,7 +110,7 @@ export function MintOrderForm(): React.ReactNode {
             <DetailRow
               k={side === "mint" ? "Mint output" : "IDR returned"}
               v={side === "mint" ? `${parseInt(quantity || "0").toLocaleString()} ${selectedStock?.ticker ?? selectedIpoTicker}` : `Rp ${idrTotal.toLocaleString("id-ID")}`}
-              hint="1:1 peg"
+              hint={`1 token = ${LOT_SIZE} shares`}
             />
           </div>
         </div>

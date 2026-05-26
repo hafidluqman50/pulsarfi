@@ -20,7 +20,7 @@ func GetStockPriceHandler(c *gin.Context) {
 		return
 	}
 
-	entry, err := publicPriceSvc.GetStockPrice(c.Request.Context(), ticker)
+	entry, err := publicPriceSvc.GetStockPrice(c.Request.Context(), ticker, c.Query("source"))
 	if errors.Is(err, publicsvc.ErrStockNotFound) {
 		response.NotFound(c, "stock not found")
 		return

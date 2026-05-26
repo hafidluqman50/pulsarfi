@@ -1,9 +1,11 @@
 package public
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
-	"github.com/horizonlabs/pulsarfi-backend/src/repository"
+	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
 
 type recordSwapRequest struct {
@@ -16,8 +18,26 @@ type recordSwapRequest struct {
 	BlockNumber   int64  `json:"block_number"   binding:"required"`
 }
 
+func ListStockTransactionsHandler(c *gin.Context) {
+	if !ensureService(c, publicStockTransactionSvc) {
+		return
+	}
+
+	transactions, err := publicStockTransactionSvc.ListByWallet(c.Request.Context(), c.Query("wallet_address"))
+	if errors.Is(err, publicsvc.ErrWalletAddressRequired) {
+		response.BadRequest(c, "wallet_address is required")
+		return
+	}
+	if err != nil {
+		response.InternalError(c, "failed to fetch transactions")
+		return
+	}
+
+	response.OK(c, "transactions retrieved", transactions)
+}
+
 func RecordSwapHandler(c *gin.Context) {
-	if !ensureRepos(c) {
+	if !ensureService(c, publicStockTransactionSvc) {
 		return
 	}
 
@@ -27,37 +47,30 @@ func RecordSwapHandler(c *gin.Context) {
 		return
 	}
 
-	stock, found, err := repos.Stock.FindByTicker(c.Request.Context(), req.Ticker)
-	if err != nil {
-		response.InternalError(c, "failed to lookup stock")
-		return
-	}
-	if !found {
-		response.NotFound(c, "stock not found")
-		return
-	}
-
-	exists, err := repos.StockTransaction.ExistsByTxHash(c.Request.Context(), req.TxHash)
-	if err != nil {
-		response.InternalError(c, "failed to check transaction")
-		return
-	}
-	if exists {
-		response.OK(c, "transaction already recorded", nil)
-		return
-	}
-
-	tx, err := repos.StockTransaction.Create(c.Request.Context(), repository.StockTransactionCreateInput{
-		StockID:       stock.ID,
+	tx, created, err := publicStockTransactionSvc.Record(c.Request.Context(), publicsvc.RecordStockTransactionRequest{
+		Ticker:        req.Ticker,
+		TxHash:        req.TxHash,
 		WalletAddress: req.WalletAddress,
 		Side:          req.Side,
 		IdrxAmount:    req.IdrxAmount,
 		StockAmount:   req.StockAmount,
-		TxHash:        req.TxHash,
 		BlockNumber:   req.BlockNumber,
 	})
+	if errors.Is(err, publicsvc.ErrStockNotFound) {
+		response.NotFound(c, "stock not found")
+		return
+	}
+	if errors.Is(err, publicsvc.ErrInvalidTransactionSide) {
+		response.BadRequest(c, "invalid transaction side")
+		return
+	}
 	if err != nil {
 		response.InternalError(c, "failed to record transaction")
+		return
+	}
+
+	if !created {
+		response.OK(c, "transaction already recorded", tx)
 		return
 	}
 

@@ -202,10 +202,11 @@ img, svg, video { max-width: 100%; }
   .stock-list-row .stock-sector   { display: none !important; }
   .stock-list-row .stock-sparkline { display: none !important; }
 
-  .stock-stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  .stock-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   .stock-stats-grid .stock-stats-cell { border-left: none !important; }
   .stock-stats-grid .stock-stats-cell:nth-child(even) { border-left: 1px solid var(--hairline) !important; }
   .stock-stats-grid .stock-stats-cell:nth-child(n+3)  { border-top: 1px solid var(--hairline) !important; }
+  .stock-stats-grid .stock-stats-cell:last-child:nth-child(odd) { grid-column: 1 / -1; }
 
   .stock-supply-info  { display: none !important; }
   .stock-chart-header { flex-direction: column !important; align-items: flex-start !important; gap: 10px !important; }
@@ -219,6 +220,15 @@ img, svg, video { max-width: 100%; }
 /* Stock market pages — base (desktop) */
 .stock-list-row    { display: grid; grid-template-columns: 2fr 1.2fr 1fr 1fr 80px; gap: 16px; padding: 16px; align-items: center; cursor: pointer; transition: background .12s ease; }
 .stock-list-row:hover { background: var(--canvas-soft); }
-.stock-stats-grid  { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--hairline); background: var(--putih); margin-bottom: 36px; }
-.stock-stats-cell  { padding: 14px 20px; }
+.stock-stats-grid  { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--hairline); background: var(--putih); margin-bottom: 36px; }
+.stock-stats-cell  { min-width: 0; padding: 14px 20px; overflow: hidden; }
+.stock-stats-cell .mono { overflow-wrap: anywhere; }
 .stock-stats-cell + .stock-stats-cell { border-left: 1px solid var(--hairline); }
+
+@media (max-width: 980px) and (min-width: 701px) {
+  .stock-stats-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stock-stats-grid .stock-stats-cell { border-left: none; }
+  .stock-stats-grid .stock-stats-cell:nth-child(3n+2),
+  .stock-stats-grid .stock-stats-cell:nth-child(3n+3) { border-left: 1px solid var(--hairline); }
+  .stock-stats-grid .stock-stats-cell:nth-child(n+4) { border-top: 1px solid var(--hairline); }
+}

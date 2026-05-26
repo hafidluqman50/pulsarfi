@@ -9,17 +9,19 @@ import { Icon } from '@/components/ui/Icon';
 import { shortAddr } from '@/lib/data';
 import { useSiweAuth } from '@/contexts/SiweAuthContext';
 
-const NAVIGATION_ITEMS = [
-  { href: '/home',      label: 'Home'      },
-  { href: '/portfolio', label: 'Portfolio' },
-  { href: '/custodian', label: 'Custodian' },
-  { href: '/stocks',    label: 'Markets'   },
-] as const;
-
 export function NavBar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const pathname = usePathname();
   const { isAuthenticated, role, signOut } = useSiweAuth();
+
+  const navItems = [
+    { href: '/home',      label: 'Home',      visible: true },
+    { href: '/stocks',    label: 'Markets',   visible: role !== 'custodian' },
+    { href: '/portfolio', label: 'Portfolio', visible: isAuthenticated && role !== 'custodian' },
+    { href: '/custodian', label: 'Custodian', visible: isAuthenticated && role === 'custodian' },
+  ];
+
+  const visibleItems = navItems.filter(item => item.visible);
 
   const isRouteActive = (href: string) =>
     href === '/stocks' ? pathname.startsWith('/stocks') : pathname === href;
@@ -44,7 +46,7 @@ export function NavBar() {
           </Link>
 
           <nav className="nav-tabs-desktop flex gap-[28px]">
-            {NAVIGATION_ITEMS.map(item => (
+            {visibleItems.map(item => (
               <Link
                 key={item.href}
                 href={item.href}
@@ -102,7 +104,7 @@ export function NavBar() {
       {/* Mobile slide-down menu */}
       {isMobileMenuOpen && (
         <div className="mobile-menu only-mobile">
-          {NAVIGATION_ITEMS.map(item => (
+          {visibleItems.map(item => (
             <Link
               key={item.href}
               href={item.href}

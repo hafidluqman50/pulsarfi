@@ -35,7 +35,7 @@ frontend/         Next.js + RainbowKit + TailwindCSS
 | Contract | Address | Status |
 |---|---:|---|
 | PulsarProtocol proxy | `0x204488318C0E75978B3c851382Aa83f3065a8f5A` | Verified |
-| PulsarProtocol implementation | `0xB3185EB1d15D107915e6ecC019c519525545287A` | Verified |
+| PulsarProtocol implementation | `0x37b032989A095b882a25D2BFf36ca37d79f6Df6F` | Verified |
 | IDRX mock | `0x03b53A71C5517907006EAb512A31C1eD5a56Ae64` | Verified |
 | UniswapV2Factory | `0x4254378E95dBD9816a1a18428A81B4E1fBe5C296` | Verified |
 | UniswapV2Router02 | `0xFEf655B2A0742134242711b80899d0b543A74223` | Verified |
@@ -74,7 +74,7 @@ forge script script/Upgrade.s.sol:UpgradeScript \
   --priority-gas-price 10000000
 ```
 
-Liquidity pool minting requires IDRX allowance because the protocol pulls IDRX with `transferFrom`. For a new LP request, the frontend approves IDRX before `requestMint`. For an existing LP proposal, the requester approves IDRX, calls `fundMintLiquidity(proposalId, amount)`, then `executeMint(proposalId)`.
+Liquidity pool minting requires IDRX allowance because the protocol pulls IDRX with `transferFrom` at execution time. The flow is: `requestMint` (no IDRX needed) → 3/5 custodian approvals → requester approves IDRX → `executeMint` (protocol pulls IDRX and adds liquidity in one transaction). `fundMintLiquidity` exists for storage layout compatibility but is no longer part of the normal flow.
 
 ### Deploying The Uniswap V2 Router
 

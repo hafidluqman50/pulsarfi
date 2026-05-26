@@ -13,11 +13,12 @@ import (
 )
 
 type PriceEntry struct {
-	Price     float64   `json:"price"`
-	Change24h float64   `json:"change_24h"`
-	Currency  string    `json:"currency"`
-	Source    string    `json:"source"`
-	FetchedAt time.Time `json:"fetched_at"`
+	Price       float64   `json:"price"`
+	Change24h   float64   `json:"change_24h"`
+	Currency    string    `json:"currency"`
+	Source      string    `json:"source"`
+	FetchedAt   time.Time `json:"fetched_at"`
+	Sparkline1d []float64 `json:"sparkline_1d,omitempty"`
 }
 
 type yahooChartResponse struct {
@@ -80,7 +81,7 @@ func (s *PriceService) GetYahooIDX(idxTicker string) (PriceEntry, error) {
 }
 
 func (s *PriceService) GetYahooIDXMarket(idxTicker string) (PriceEntry, []float64, error) {
-	return s.fetchYahooMarket(idxTicker+".JK", "IDRX", "7d")
+	return s.fetchYahooMarket(idxTicker+".JK", "IDRX", "1d", "1m")
 }
 
 // GetOnchainPrice reads the AMM spot price from the Uniswap V2 pair for stockAddr/IDRX.
@@ -147,7 +148,7 @@ func (s *PriceService) fetchFromYahoo(symbol, currency string) (PriceEntry, erro
 		return cached, nil
 	}
 
-	entry, _, err := s.fetchYahooMarket(symbol, currency, "2d")
+	entry, _, err := s.fetchYahooMarket(symbol, currency, "2d", "1d")
 	if err != nil {
 		return PriceEntry{}, err
 	}
@@ -158,10 +159,11 @@ func (s *PriceService) fetchFromYahoo(symbol, currency string) (PriceEntry, erro
 	return entry, nil
 }
 
-func (s *PriceService) fetchYahooMarket(symbol, currency, rangeParam string) (PriceEntry, []float64, error) {
+func (s *PriceService) fetchYahooMarket(symbol, currency, rangeParam, interval string) (PriceEntry, []float64, error) {
 	url := fmt.Sprintf(
-		"https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=%s",
+		"https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=%s&range=%s",
 		symbol,
+		interval,
 		rangeParam,
 	)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -197,14 +199,20 @@ func (s *PriceService) fetchYahooMarket(symbol, currency, rangeParam string) (Pr
 		cur = meta.Currency
 	}
 
+	closes := yahooCloses(result.Indicators.Quote)
+	change24h := meta.RegularMarketChangePercent
+	if change24h == 0 {
+		change24h = derivedChangePercent(meta.RegularMarketPrice, closes)
+	}
+
 	entry := PriceEntry{
 		Price:     meta.RegularMarketPrice,
-		Change24h: meta.RegularMarketChangePercent,
+		Change24h: change24h,
 		Currency:  cur,
 		Source:    "yahoo",
 		FetchedAt: time.Now(),
 	}
-	return entry, yahooCloses(result.Indicators.Quote), nil
+	return entry, closes, nil
 }
 
 func yahooCloses(quotes []struct {
@@ -222,6 +230,22 @@ func yahooCloses(quotes []struct {
 		closes = append(closes, *closeValue)
 	}
 	return closes
+}
+
+func derivedChangePercent(currentPrice float64, closes []float64) float64 {
+	if len(closes) < 2 {
+		return 0
+	}
+
+	basePrice := closes[0]
+	if currentPrice <= 0 {
+		currentPrice = closes[len(closes)-1]
+	}
+	if basePrice <= 0 {
+		return 0
+	}
+
+	return ((currentPrice - basePrice) / basePrice) * 100
 }
 
 func (s *PriceService) getPairAddress(rpcURL, factoryAddr, tokenA, tokenB string) (string, error) {

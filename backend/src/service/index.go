@@ -10,16 +10,17 @@ import (
 )
 
 type Registry struct {
-	Repos          *repository.Registry
-	Auth           *authsvc.AuthService
-	Custodian      *custodiansvc.CustodianService
-	PublicStocks   *publicsvc.StocksService
-	PublicPrice    *publicsvc.PriceService
-	PublicReserves *publicsvc.ReservesService
-	Email          *external.EmailService
-	Storage        *external.StorageService
-	Stream         *external.StreamService
-	Price          *external.PriceService
+	Repos                  *repository.Registry
+	Auth                   *authsvc.AuthService
+	Custodian              *custodiansvc.CustodianService
+	PublicStock            *publicsvc.StockService
+	PublicPrice            *publicsvc.PriceService
+	PublicReserve          *publicsvc.ReserveService
+	PublicStockTransaction *publicsvc.StockTransactionService
+	Email                  *external.EmailService
+	Storage                *external.StorageService
+	Stream                 *external.StreamService
+	Price                  *external.PriceService
 }
 
 type Config struct {
@@ -45,7 +46,7 @@ func NewRegistry(cfg Config) *Registry {
 			Stream: stream,
 			Price:  price,
 		},
-		PublicStocks: &publicsvc.StocksService{
+		PublicStock: &publicsvc.StockService{
 			Stocks: cfg.Repos.Stock,
 			Price:  price,
 		},
@@ -53,8 +54,12 @@ func NewRegistry(cfg Config) *Registry {
 			Stocks: cfg.Repos.Stock,
 			Price:  price,
 		},
-		PublicReserves: &publicsvc.ReservesService{
+		PublicReserve: &publicsvc.ReserveService{
 			Attestations: cfg.Repos.StockAttestation,
+		},
+		PublicStockTransaction: &publicsvc.StockTransactionService{
+			Stocks:       cfg.Repos.Stock,
+			Transactions: cfg.Repos.StockTransaction,
 		},
 		Email:   cfg.EmailService,
 		Storage: cfg.StorageService,

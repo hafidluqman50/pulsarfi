@@ -41,6 +41,18 @@ func (r *StockTransactionRepository) ExistsByTxHash(ctx context.Context, txHash 
 	return err == nil, err
 }
 
+func (r *StockTransactionRepository) FindByTxHash(ctx context.Context, txHash string) (model.StockTransaction, bool, error) {
+	var tx model.StockTransaction
+	err := r.DB.WithContext(ctx).
+		Preload("Stock").
+		Where("tx_hash = ?", txHash).
+		First(&tx).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.StockTransaction{}, false, nil
+	}
+	return tx, err == nil, err
+}
+
 type StockTransactionCreateInput struct {
 	StockID       int64
 	WalletAddress string

@@ -104,6 +104,7 @@ func (r *MintProposalRepository) MarkExecuted(ctx context.Context, onChainID int
 		Where("on_chain_id = ?", onChainID).
 		Updates(map[string]any{
 			"status":          "executed",
+			"executed":        true,
 			"execute_tx_hash": txHash,
 			"executed_at":     gorm.Expr("NOW()"),
 		}).Error

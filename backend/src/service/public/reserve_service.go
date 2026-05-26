@@ -8,7 +8,7 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 )
 
-type ReservesService struct {
+type ReserveService struct {
 	Attestations *repository.StockAttestationRepository
 }
 
@@ -31,7 +31,7 @@ type ReserveEntryResponse struct {
 	AttestationHash   *string              `json:"attestation_hash"`
 }
 
-func (s *ReservesService) GetReserves(ctx context.Context) ([]ReserveEntryResponse, error) {
+func (s *ReserveService) GetReserves(ctx context.Context) ([]ReserveEntryResponse, error) {
 	attestations, err := s.Attestations.FindLatestPerStock(ctx)
 	if err != nil {
 		return nil, err

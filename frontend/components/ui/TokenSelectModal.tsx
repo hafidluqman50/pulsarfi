@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Token, Balances, fmtNum, fmtIDRX } from '@/lib/data';
 import { Icon } from './Icon';
 import { PStockMark } from './PStockMark';
@@ -17,8 +17,17 @@ interface TokenSelectModalProps {
 
 export function TokenSelectModal({ open, tokens, balances, onSelect, onClose, title = "Select a token", excludeTicker }: TokenSelectModalProps) {
   const [q, setQ] = useState("");
-  useEffect(() => { if (open) setQ(""); }, [open]);
   if (!open) return null;
+
+  function close() {
+    setQ("");
+    onClose();
+  }
+
+  function select(token: Token) {
+    setQ("");
+    onSelect(token);
+  }
 
   const list = tokens
     .filter(t => t.ticker !== excludeTicker)
@@ -40,7 +49,7 @@ export function TokenSelectModal({ open, tokens, balances, onSelect, onClose, ti
     <div className="overlay" style={{
       position: "fixed", inset: 0, background: "rgba(22,17,14,0.45)", zIndex: 400,
       display: "flex", alignItems: "center", justifyContent: "center",
-    }} onClick={onClose}>
+    }} onClick={close}>
       <div className="modal" onClick={e => e.stopPropagation()} style={{
         background: "var(--putih)", width: 460, maxWidth: "92vw", maxHeight: "82vh",
         display: "flex", flexDirection: "column",
@@ -49,7 +58,7 @@ export function TokenSelectModal({ open, tokens, balances, onSelect, onClose, ti
       }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 12px" }}>
           <div className="display" style={{ fontSize: 22 }}>{title}</div>
-          <button className="btn-ghost btn" onClick={onClose} aria-label="Close" style={{ padding: 4 }}><Icon name="x" /></button>
+          <button className="btn-ghost btn" onClick={close} aria-label="Close" style={{ padding: 4 }}><Icon name="x" /></button>
         </div>
         <div className="hairline-strong" style={{ padding: "0 20px 14px" }}>
           <div style={{ position: "relative" }}>
@@ -73,7 +82,7 @@ export function TokenSelectModal({ open, tokens, balances, onSelect, onClose, ti
               {groups[g].map(tok => {
                 const bal = balances?.[tok.ticker] ?? 0;
                 return (
-                  <div key={tok.ticker} className="row-hover" onClick={() => onSelect(tok)} style={{
+                  <div key={tok.ticker} className="row-hover" onClick={() => select(tok)} style={{
                     display: "flex", alignItems: "center", gap: 14,
                     padding: "12px 20px", cursor: "pointer", borderBottom: "1px solid var(--hairline)",
                   }}>

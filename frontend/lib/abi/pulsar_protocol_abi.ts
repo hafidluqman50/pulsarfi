@@ -1055,37 +1055,6 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "event",
-    "name": "MintLiquidityFunded",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "funder",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "totalFunded",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "MintRejected",
     "inputs": [
       {
@@ -1656,27 +1625,6 @@ export const PULSAR_PROTOCOL_ABI = [
         "name": "wallet",
         "type": "address",
         "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LiquidityFundingMissing",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "funded",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "required",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },

@@ -17,7 +17,11 @@ type PriceService struct {
 	Price  *external.PriceService
 }
 
-func (s *PriceService) GetStockPrice(ctx context.Context, ticker string) (external.PriceEntry, error) {
+func (s *PriceService) GetStockPrice(ctx context.Context, ticker string, source string) (external.PriceEntry, error) {
+	if strings.EqualFold(source, "idx") {
+		return s.GetIDXStockPrice(ctx, ticker)
+	}
+
 	ticker = strings.ToUpper(ticker)
 	if ticker == "IHSG" {
 		return s.Price.GetIHSG()
@@ -49,5 +53,27 @@ func (s *PriceService) GetStockPrice(ctx context.Context, ticker string) (extern
 		entry.Change24h = yahoo.Change24h
 	}
 
+	return entry, nil
+}
+
+func (s *PriceService) GetIDXStockPrice(ctx context.Context, ticker string) (external.PriceEntry, error) {
+	ticker = strings.ToUpper(ticker)
+	if ticker == "IHSG" {
+		return s.Price.GetIHSG()
+	}
+
+	stock, found, err := s.Stocks.FindByTickerOrIdxTicker(ctx, ticker)
+	if err != nil {
+		return external.PriceEntry{}, err
+	}
+	if !found {
+		return external.PriceEntry{}, ErrStockNotFound
+	}
+
+	entry, sparkline, err := s.Price.GetYahooIDXMarket(stock.IdxTicker)
+	if err != nil {
+		return external.PriceEntry{}, err
+	}
+	entry.Sparkline1d = sparkline
 	return entry, nil
 }

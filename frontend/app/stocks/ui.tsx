@@ -10,22 +10,21 @@ import { useMarketStocks, useStockPrice } from '@/http/market/hooks';
 import type { MarketStock } from '@/http/market/priceApi';
 import {
   PSTOCKS, seriesFor, sliceRange,
-  fmtIDRX, fmtPct, fmtAxisDate,
+  fmtIDRX, fmtPct,
   TimePoint,
 } from '@/lib/data';
 
 const IDR_PER_USD = 16142;
 
-function ihsgTimeSeries(days = 365): TimePoint[] {
+function ihsgTimeSeries(days: number, endValue: number): TimePoint[] {
   let seed = 0x4948_5347;
   const rng = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 0xffffffff;
 
-  const endValue   = 7_234.56;
-  const startValue = 6_510;
+  const startValue = endValue * 0.92;
   const outputPoints: TimePoint[] = [];
   const trend = (endValue - startValue) / days;
   let currentValue = startValue;
-  const today = new Date(2026, 4, 23);
+  const today = new Date();
 
   for (let dayIndex = 0; dayIndex < days; dayIndex++) {
     const noise = (rng() - 0.5) * currentValue * 0.012;
@@ -38,8 +37,6 @@ function ihsgTimeSeries(days = 365): TimePoint[] {
   outputPoints[outputPoints.length - 1].value = endValue;
   return outputPoints;
 }
-
-const IHSG_FULL_SERIES = ihsgTimeSeries(365);
 
 const TIMEFRAME_OPTIONS = ['1D', '1W', '1M', '3M', '1Y'] as const;
 
@@ -94,12 +91,21 @@ function StockRow({ stock, sparkline }: { stock: MarketStock; sparkline: number[
   );
 }
 
+const IHSG_FALLBACK = 6_170;
+
 export function StocksListPage(): React.ReactNode {
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('1M');
   const { data: marketStocksData = [], isLoading } = useMarketStocks();
   const marketStocks = Array.isArray(marketStocksData) ? marketStocksData : [];
 
-  const chartData = useMemo(() => sliceRange(IHSG_FULL_SERIES, selectedTimeframe), [selectedTimeframe]);
+  const { data: ihsgData } = useStockPrice('IHSG');
+  const ihsgValue  = ihsgData?.price ?? IHSG_FALLBACK;
+  const ihsgChange = ihsgData?.change_24h ?? 0;
+  const isIhsgPositive = ihsgChange >= 0;
+
+  // Series generated from the real fetched end value so chart and headline always match
+  const ihsgFullSeries = useMemo(() => ihsgTimeSeries(365, ihsgValue), [ihsgValue]);
+  const chartData      = useMemo(() => sliceRange(ihsgFullSeries, selectedTimeframe), [ihsgFullSeries, selectedTimeframe]);
 
   const sparklineData = useMemo(() =>
     marketStocks.reduce<Record<string, number[]>>((acc, stock) => {
@@ -109,11 +115,6 @@ export function StocksListPage(): React.ReactNode {
       return acc;
     }, {}),
   [marketStocks]);
-
-  const { data: ihsgData } = useStockPrice('IHSG');
-  const ihsgValue = ihsgData?.price ?? IHSG_FULL_SERIES[IHSG_FULL_SERIES.length - 1].value;
-  const ihsgChange = ihsgData?.change_24h ?? 0;
-  const isIhsgPositive = ihsgChange >= 0;
 
   return (
     <Layout>
@@ -157,8 +158,6 @@ export function StocksListPage(): React.ReactNode {
               data={chartData}
               height={220}
               valueFormatter={value => value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              labelFormatter={(timestamp, range) => fmtAxisDate(timestamp, range)}
-              range={selectedTimeframe}
             />
           </div>
         </div>

@@ -1,0 +1,10 @@
+.env
+.env.*
+fly.toml
+.git
+.gitignore
+tmp
+dist
+node_modules
+coverage
+*.log

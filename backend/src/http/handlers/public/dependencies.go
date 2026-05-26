@@ -10,9 +10,10 @@ import (
 
 var repos *repository.Registry
 var (
-	publicStocksSvc   *publicsvc.StocksService
-	publicPriceSvc    *publicsvc.PriceService
-	publicReservesSvc *publicsvc.ReservesService
+	publicStockSvc            *publicsvc.StockService
+	publicPriceSvc            *publicsvc.PriceService
+	publicReserveSvc          *publicsvc.ReserveService
+	publicStockTransactionSvc *publicsvc.StockTransactionService
 )
 
 func ConfigureRepos(r *repository.Registry) {
@@ -20,9 +21,10 @@ func ConfigureRepos(r *repository.Registry) {
 }
 
 func ConfigureServices(s *service.Registry) {
-	publicStocksSvc = s.PublicStocks
+	publicStockSvc = s.PublicStock
 	publicPriceSvc = s.PublicPrice
-	publicReservesSvc = s.PublicReserves
+	publicReserveSvc = s.PublicReserve
+	publicStockTransactionSvc = s.PublicStockTransaction
 }
 
 func ensureRepos(c *gin.Context) bool {

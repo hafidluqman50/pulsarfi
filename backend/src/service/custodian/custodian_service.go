@@ -13,6 +13,8 @@ import (
 
 var ErrCustodianNotFound = errors.New("custodian not found")
 
+const lotSize = 100
+
 type CustodianService struct {
 	Repos  *repository.Registry
 	Stream *external.StreamService
@@ -128,7 +130,7 @@ func (s *CustodianService) assetsUnderCustodyIDR(ctx context.Context) (string, e
 		}
 
 		holdings := new(big.Float).Quo(new(big.Float).SetInt(rawHoldings), tokenDecimals)
-		notional := new(big.Float).Mul(holdings, big.NewFloat(price.Price))
+		notional := new(big.Float).Mul(holdings, big.NewFloat(price.Price*lotSize))
 		total.Add(total, notional)
 	}
 

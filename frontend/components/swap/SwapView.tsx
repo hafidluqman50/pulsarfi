@@ -1,27 +1,33 @@
 "use client";
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useCallback, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { type Address } from "viem";
 import { useAccount } from "wagmi";
 import { Accordion } from "@/components/ui/Accordion";
 import { Icon } from "@/components/ui/Icon";
 import { PStockMark } from "@/components/ui/PStockMark";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { TokenSelectModal } from "@/components/ui/TokenSelectModal";
+import { useExecuteSwap } from "@/http/market/swapHooks";
+import { useMarketTokens, useWalletTokenBalances } from "@/http/market/tokenHooks";
+import { useMarketStocks } from "@/http/market/hooks";
 import {
-	ALL_TOKENS,
-	type Balances,
-	DEFAULT_PORTFOLIO,
+	STABLES,
 	fmtIDRX,
 	fmtNum,
 	fmtPct,
-	PSTOCKS,
 	seriesFor,
-	shortAddr,
 	type Token,
-	tokenByTicker,
 } from "@/lib/data";
+import {
+	buildSwapQuote,
+	stockTickerForSwap,
+	swapToastDescription,
+	tokenAddress,
+	type MarketToken,
+} from "@/lib/swap";
 
 interface HeadlineConfig {
 	eyebrow: string;
@@ -31,128 +37,137 @@ interface HeadlineConfig {
 }
 
 interface SwapViewProps {
-	balances: Balances;
-	setBalances: React.Dispatch<React.SetStateAction<Balances>>;
-	buyAdjustCostBasis: (
-		ticker: string,
-		qtyAdded: number,
-		pricePaid: number,
-	) => void;
 	headline: HeadlineConfig;
 }
 
-export function SwapView({
-	balances,
-	setBalances,
-	buyAdjustCostBasis,
-	headline,
-}: SwapViewProps) {
+export function SwapView({ headline }: SwapViewProps) {
 	const { address, isConnected } = useAccount();
+	const executeSwap = useExecuteSwap();
+	const marketTokens = useMarketTokens();
+	const walletBalances = useWalletTokenBalances(marketTokens);
 
-	const [inTok, setInTok] = useState<Token>(tokenByTicker("IDRX"));
-	const [outTok, setOutTok] = useState<Token>(tokenByTicker("BUMIP"));
+	const [inputTicker, setInputTicker] = useState("IDRX");
+	const [outputTicker, setOutputTicker] = useState("BUMIP");
 	const [amount, setAmount] = useState("");
 	const [pickerFor, setPickerFor] = useState<"in" | "out" | null>(null);
 	const [detailsOpen, setDetailsOpen] = useState(true);
 	const [slippage, setSlippage] = useState(0.5);
-	const [approved, setApproved] = useState(false);
-	const [busy, setBusy] = useState(false);
 	const [showSettings, setShowSettings] = useState(false);
 
-	const num = parseFloat(amount) || 0;
-	const inPrice = inTok.price;
-	const outPrice = outTok.price;
-	const rate = inPrice / outPrice;
-	const outAmt = num * rate * (1 - 0.003);
-	const minReceived = outAmt * (1 - slippage / 100);
-	const inBal = balances[inTok.ticker] ?? 0;
-	const insufficient = isConnected && num > inBal;
-	const networkFee = 0.21;
+	const inputToken = useMemo(
+		() =>
+			STABLES.find((token) => token.ticker === inputTicker) ??
+			marketTokens.find((token) => token.ticker === inputTicker) ??
+			STABLES[0],
+		[inputTicker, marketTokens],
+	);
+	const outputToken = useMemo(
+		() =>
+			marketTokens.find((token) => token.ticker === outputTicker) ??
+			STABLES.find((token) => token.ticker === outputTicker) ??
+			marketTokens[0],
+		[outputTicker, marketTokens],
+	);
 
-	let ctaText: string,
-		ctaAction: (() => void) | undefined,
-		ctaDisabled = false,
-		ctaKind = "merah";
-	if (!isConnected) {
-		ctaText = "Connect Wallet";
-		ctaAction = undefined;
-	} else if (!num) {
-		ctaText = "Enter an amount";
-		ctaDisabled = true;
-	} else if (insufficient) {
-		ctaText = `Insufficient ${inTok.ticker} balance`;
-		ctaDisabled = true;
-	} else if (!approved && inTok.isStable) {
-		ctaText = busy ? "Approving…" : `Approve ${inTok.ticker}`;
-		ctaAction = handleApprove;
-		ctaKind = "primary";
-	} else {
-		ctaText = busy ? "Swapping…" : "Execute Swap";
-		ctaAction = handleSwap;
-	}
-	if (busy) ctaDisabled = true;
+	const inputTokensForPicker = outputToken?.isStable ? marketTokens : STABLES;
+	const outputTokensForPicker = inputToken.isStable ? marketTokens : STABLES;
 
-	function handleApprove() {
-		setBusy(true);
-		const toastId = toast.loading(`Approving ${inTok.ticker}…`, {
-			description: "Awaiting wallet signature",
-		});
-		setTimeout(() => {
-			toast.success("Approval confirmed", {
-				id: toastId,
-				description: `${inTok.ticker} spending enabled · 0x7f3a…b821`,
-				duration: 4000,
-			});
-			setApproved(true);
-			setBusy(false);
-		}, 1400);
-	}
+	const idrxAddress = process.env.NEXT_PUBLIC_IDRX_ADDRESS as Address | undefined;
+	const protocolAddress = process.env.NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS as Address | undefined;
+	const inputAddress = tokenAddress(inputToken, idrxAddress);
 
-	function handleSwap() {
-		setBusy(true);
-		const toastId = toast.loading("Transaction pending…", {
-			description: `Swapping ${fmtNum(num)} ${inTok.ticker} → ${fmtNum(outAmt, 2)} ${outTok.ticker}`,
-		});
-		setTimeout(() => {
-			const ok = Math.random() < 0.92;
-			if (ok) {
-				setBalances((prev) => ({
-					...prev,
-					[inTok.ticker]: (prev[inTok.ticker] || 0) - num,
-					[outTok.ticker]: (prev[outTok.ticker] || 0) + outAmt,
-				}));
-				if (!outTok.isStable)
-					buyAdjustCostBasis(outTok.ticker, outAmt, outTok.price);
-				toast.success("Swap executed", {
-					id: toastId,
-					description: `Received ${fmtNum(outAmt, 2)} ${outTok.ticker} · View on Arbiscan`,
-					duration: 5000,
-				});
-				setAmount("");
-			} else {
-				toast.error("Swap execution failed", {
-					id: toastId,
-					description:
-						"Insufficient liquidity for this trade size. Try a smaller amount or adjust slippage.",
-					duration: 6000,
-				});
-			}
-			setBusy(false);
-		}, 1800);
+	const quote = useMemo(
+		() => buildSwapQuote(inputToken, outputToken ?? STABLES[0], amount, slippage),
+		[amount, inputToken, outputToken, slippage],
+	);
+
+	const inputBalance = walletBalances[inputToken.ticker] ?? 0;
+	const outputBalance = walletBalances[outputToken?.ticker ?? ""] ?? 0;
+	const busy = executeSwap.isPending;
+	const insufficient = isConnected && quote.inputAmount > inputBalance;
+
+	function setTradeAmount(value: string) {
+		const [whole, ...fractions] = value.split(".");
+		setAmount(fractions.length > 0 ? `${whole}.${fractions.join("")}` : whole);
 	}
 
 	function flip() {
-		setInTok(outTok);
-		setOutTok(inTok);
+		if (!outputToken) return;
+		setInputTicker(outputToken.ticker);
+		setOutputTicker(inputToken.ticker);
 		setAmount("");
-		setApproved(false);
 	}
 
-	const pctButton = (pct: number) => (
-    <button
-      type="button"
+	function selectToken(token: Token) {
+		if (pickerFor === "in") setInputTicker(token.ticker);
+		if (pickerFor === "out") setOutputTicker(token.ticker);
+		setPickerFor(null);
+	}
+
+	async function swap() {
+		if (!address || !inputAddress || !outputToken) return;
+
+		const toastId = toast.loading("Executing swap pipeline…", {
+			description: swapToastDescription(inputToken, outputToken, quote),
+		});
+		try {
+			const txHash = await executeSwap.mutateAsync({
+				ticker: stockTickerForSwap(inputToken, outputToken),
+				wallet_address: address,
+				token_address: inputAddress,
+				amount_in: quote.amountIn,
+				amount_out_min: quote.amountOutMin,
+				buy_stock: Boolean(inputToken.isStable),
+				input_is_stable: Boolean(inputToken.isStable),
+			});
+			toast.success("Swap executed", {
+				id: toastId,
+				description: `Tx ${txHash.slice(0, 10)}...${txHash.slice(-6)}`,
+				duration: 6000,
+			});
+			setAmount("");
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Swap failed";
+			toast.error("Swap failed", {
+				id: toastId,
+				description: message.slice(0, 120),
+				duration: 7000,
+			});
+		}
+	}
+
+	let ctaText: string;
+	let ctaAction: (() => void) | undefined;
+	let ctaDisabled = false;
+	if (!isConnected) {
+		ctaText = "Connect Wallet";
+	} else if (!quote.inputAmount) {
+		ctaText = "Enter an amount";
+		ctaDisabled = true;
+	} else if (!quote.rate) {
+		ctaText = "Pool unavailable";
+		ctaDisabled = true;
+	} else if (insufficient) {
+		ctaText = `Insufficient ${inputToken.ticker}`;
+		ctaDisabled = true;
+	} else if (!protocolAddress || !inputAddress) {
+		ctaText = "Protocol unavailable";
+		ctaDisabled = true;
+	} else {
+		ctaText = busy ? "Executing…" : "Execute Swap";
+		ctaAction = swap;
+	}
+	if (busy) ctaDisabled = true;
+
+	const percentButton = (pct: number) => (
+		<button
+			type="button"
 			key={pct}
-			onClick={() => setAmount((inBal * pct || 0).toString())}
+			onClick={() =>
+				setTradeAmount(
+					(inputBalance * pct || 0).toFixed(inputToken.isStable ? 2 : 4),
+				)
+			}
 			style={{
 				appearance: "none",
 				border: "1px solid var(--hairline-strong)",
@@ -174,12 +189,6 @@ export function SwapView({
 		<div className="grid-2col pad-x" style={{ padding: "40px 24px" }}>
 			{/* LEFT — Editorial */}
 			<div>
-				{/*<div
-					className="eyebrow"
-					style={{ color: "var(--merah)", marginBottom: 16 }}
-				>
-					{headline.eyebrow}
-				</div>*/}
 				<h1
 					className="display hero-display"
 					style={{
@@ -234,7 +243,7 @@ export function SwapView({
 					>
 						Top movers · 24h
 					</div>
-					<MoversList />
+					<MoversList tokens={marketTokens} />
 				</div>
 			</div>
 
@@ -260,8 +269,8 @@ export function SwapView({
 							<div className="eyebrow" style={{ color: "var(--body)" }}>
 								v2 ROUTER
 							</div>
-              <button
-                type="button"
+							<button
+								type="button"
 								className="btn btn-ghost"
 								style={{ padding: 4 }}
 								onClick={() => setShowSettings((s) => !s)}
@@ -285,8 +294,8 @@ export function SwapView({
 							</div>
 							<div style={{ display: "flex", gap: 8 }}>
 								{[0.1, 0.5, 1.0].map((s) => (
-                  <button
-                    type="button"
+									<button
+										type="button"
 										key={s}
 										onClick={() => setSlippage(s)}
 										style={{
@@ -309,7 +318,9 @@ export function SwapView({
 									type="number"
 									step="0.1"
 									value={slippage}
-									onChange={(e) => setSlippage(parseFloat(e.target.value) || 0)}
+									onChange={(e) =>
+										setSlippage(parseFloat(e.target.value) || 0)
+									}
 									className="input mono"
 									style={{ width: 90, textAlign: "right" }}
 								/>
@@ -319,23 +330,23 @@ export function SwapView({
 
 					<SwapField
 						label="You pay"
-						token={inTok}
-						balance={balances[inTok.ticker]}
+						token={inputToken}
+						balance={inputBalance}
 						amount={amount}
-						onAmount={setAmount}
+						onAmount={setTradeAmount}
 						onSelect={() => setPickerFor("in")}
 						actions={
 							isConnected ? (
 								<div style={{ display: "flex", gap: 6 }}>
-									{[0.25, 0.5, 1].map(pctButton)}
+									{[0.25, 0.5, 1].map(percentButton)}
 								</div>
 							) : undefined
 						}
 					/>
 
 					<div style={{ position: "relative", height: 0 }}>
-            <button
-              type="button"
+						<button
+							type="button"
 							onClick={flip}
 							aria-label="Flip"
 							style={{
@@ -361,17 +372,18 @@ export function SwapView({
 
 					<SwapField
 						label="You receive"
-						token={outTok}
-						balance={balances[outTok.ticker]}
-						amount={outAmt ? outAmt.toFixed(outTok.isStable ? 2 : 4) : ""}
+						token={outputToken ?? STABLES[0]}
+						balance={outputBalance}
+						amount={
+							quote.outputAmount
+								? quote.outputAmount.toFixed(outputToken?.isStable ? 2 : 4)
+								: ""
+						}
 						readOnly
 						onSelect={() => setPickerFor("out")}
 						actions={
-							<div
-								className="mono"
-								style={{ fontSize: 11, color: "var(--body)" }}
-							>
-								≈ {fmtIDRX(num * inPrice)}
+							<div className="mono" style={{ fontSize: 11, color: "var(--body)" }}>
+								≈ {fmtIDRX(quote.inputAmount * inputToken.price)}
 							</div>
 						}
 					/>
@@ -379,40 +391,24 @@ export function SwapView({
 					<div style={{ padding: "4px 20px 16px" }}>
 						<Accordion
 							open={detailsOpen}
-							onToggle={() => setDetailsOpen((o) => !o)}
-							summary={
-								<span>
-									1 {inTok.ticker} ={" "}
-									<span className="mono">{rate.toFixed(4)}</span>{" "}
-									{outTok.ticker}
-									<span style={{ color: "var(--body)", marginLeft: 8 }}>
-										· {fmtIDRX(inPrice)}
-									</span>
-								</span>
-							}
+							onToggle={() => setDetailsOpen((open) => !open)}
+							summary={<span>{quote.rateSummary}</span>}
 						>
 							<DetailRow
 								k="Expected output"
-								v={`${fmtNum(outAmt, 4)} ${outTok.ticker}`}
+								v={`${fmtNum(quote.outputAmount, 4)} ${outputToken?.ticker ?? ""}`}
 							/>
 							<DetailRow
 								k="Minimum received"
-								v={`${fmtNum(minReceived, 4)} ${outTok.ticker}`}
+								v={`${fmtNum(quote.minReceived, 4)} ${outputToken?.ticker ?? ""}`}
 								hint={`slippage ${slippage}%`}
 							/>
 							<DetailRow
 								k="LP fee"
-								v={`${fmtNum(num * 0.003, 4)} ${inTok.ticker}`}
+								v={`${fmtNum(quote.inputAmount * 0.003, 4)} ${inputToken.ticker}`}
 								hint="0.30%"
 							/>
-							<DetailRow
-								k="Price impact"
-								v={
-									<span style={{ color: "var(--positive)" }}>{`< 0.01%`}</span>
-								}
-							/>
-							<DetailRow k="Network fee" v="~$0.21" hint="Arbitrum Sepolia" />
-							<DetailRow
+<DetailRow
 								k="Route"
 								v={
 									<span
@@ -422,10 +418,10 @@ export function SwapView({
 											gap: 6,
 										}}
 									>
-										<span className="mono">{inTok.ticker}</span>
+										<span className="mono">{inputToken.ticker}</span>
 										<Icon name="chevron-right" size={11} />
 										<span className="mono" style={{ color: "var(--merah)" }}>
-											{outTok.ticker}
+											{outputToken?.ticker ?? ""}
 										</span>
 										<span style={{ color: "var(--body)", marginLeft: 6 }}>
 											· Uniswap V2
@@ -440,8 +436,8 @@ export function SwapView({
 						{!isConnected ? (
 							<ConnectButton.Custom>
 								{({ openConnectModal }) => (
-                  <button
-                    type="button"
+									<button
+										type="button"
 										onClick={openConnectModal}
 										className="btn btn-merah"
 										style={{
@@ -456,11 +452,11 @@ export function SwapView({
 								)}
 							</ConnectButton.Custom>
 						) : (
-              <button
-                type="button"
+							<button
+								type="button"
 								onClick={ctaAction}
 								disabled={ctaDisabled}
-								className={`btn ${ctaKind === "merah" ? "btn-merah" : "btn-primary"}`}
+								className="btn btn-merah"
 								style={{
 									width: "100%",
 									padding: "16px 20px",
@@ -482,7 +478,7 @@ export function SwapView({
 								{ctaText}
 							</button>
 						)}
-						{isConnected && !insufficient && num > 0 && (
+						{isConnected && !insufficient && quote.inputAmount > 0 && (
 							<div
 								style={{
 									marginTop: 12,
@@ -516,17 +512,13 @@ export function SwapView({
 
 			<TokenSelectModal
 				open={!!pickerFor}
-				tokens={pickerFor === "in" ? ALL_TOKENS : PSTOCKS}
-				balances={balances}
+				tokens={pickerFor === "in" ? inputTokensForPicker : outputTokensForPicker}
+				balances={walletBalances}
 				title={pickerFor === "in" ? "Pay with" : "Receive"}
-				excludeTicker={pickerFor === "in" ? outTok.ticker : inTok.ticker}
-				onSelect={(t) => {
-					if (pickerFor === "in") {
-						setInTok(t);
-						setApproved(false);
-					} else setOutTok(t);
-					setPickerFor(null);
-				}}
+				excludeTicker={
+					pickerFor === "in" ? outputToken?.ticker : inputToken.ticker
+				}
+				onSelect={selectToken}
 				onClose={() => setPickerFor(null)}
 			/>
 		</div>
@@ -547,7 +539,7 @@ function SwapField({
 	token: Token;
 	balance?: number;
 	amount: string;
-	onAmount?: (v: string) => void;
+	onAmount?: (value: string) => void;
 	onSelect: () => void;
 	readOnly?: boolean;
 	actions?: React.ReactNode;
@@ -600,8 +592,8 @@ function SwapField({
 						width: "100%",
 					}}
 				/>
-        <button
-          type="button"
+				<button
+					type="button"
 					onClick={onSelect}
 					style={{
 						appearance: "none",
@@ -715,17 +707,33 @@ function Stat({
 	);
 }
 
-function MoversList() {
-	const movers = [...PSTOCKS]
-		.sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h))
-		.slice(0, 5);
+function MoversList({ tokens }: { tokens: MarketToken[] }) {
+	const { data: marketStocks = [] } = useMarketStocks();
+
+	const movers = useMemo(() => {
+		const liveTokens = tokens.length > 0 ? tokens : [];
+		return [...liveTokens]
+			.sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h))
+			.slice(0, 5);
+	}, [tokens]);
+
+	const sparklineData = useMemo(() => {
+		const stockMap = new Map(marketStocks.map((stock) => [stock.ticker, stock]));
+		return movers.reduce<Record<string, number[]>>((accumulator, token) => {
+			const stock = stockMap.get(token.ticker);
+			accumulator[token.ticker] =
+				stock?.sparkline_7d?.length ? stock.sparkline_7d : seriesFor(token.ticker, 28);
+			return accumulator;
+		}, {});
+	}, [marketStocks, movers]);
+
 	return (
 		<div className="hairline-top">
-			{movers.map((s) => {
-				const pos = s.change24h >= 0;
+			{movers.map((token) => {
+				const isPositive = token.change24h >= 0;
 				return (
 					<div
-						key={s.ticker}
+						key={token.ticker}
 						className="hairline row-hover mover-row"
 						style={{
 							display: "grid",
@@ -735,9 +743,9 @@ function MoversList() {
 							padding: "14px 0",
 						}}
 					>
-						<PStockMark ticker={s.ticker} size={32} />
+						<PStockMark ticker={token.ticker} size={32} />
 						<div style={{ minWidth: 0 }}>
-							<div style={{ fontWeight: 600, fontSize: 14 }}>{s.ticker}</div>
+							<div style={{ fontWeight: 600, fontSize: 14 }}>{token.ticker}</div>
 							<div
 								style={{
 									fontSize: 12,
@@ -747,17 +755,20 @@ function MoversList() {
 									textOverflow: "ellipsis",
 								}}
 							>
-								{s.name} · {s.sector}
+								{token.name} · {token.sector}
 							</div>
 						</div>
 						<div className="mover-spark">
-							<Sparkline data={seriesFor(s.ticker)} positive={pos} />
+							<Sparkline
+								data={sparklineData[token.ticker] ?? []}
+								positive={isPositive}
+							/>
 						</div>
 						<div
 							className="mono"
 							style={{ minWidth: 80, textAlign: "right", fontSize: 14 }}
 						>
-							{fmtIDRX(s.price)}
+							{fmtIDRX(token.price)}
 						</div>
 						<div
 							className="mono"
@@ -765,10 +776,10 @@ function MoversList() {
 								minWidth: 76,
 								textAlign: "right",
 								fontSize: 13,
-								color: pos ? "var(--positive)" : "var(--negative)",
+								color: isPositive ? "var(--positive)" : "var(--negative)",
 							}}
 						>
-							{fmtPct(s.change24h)}
+							{fmtPct(token.change24h)}
 						</div>
 					</div>
 				);

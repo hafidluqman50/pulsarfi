@@ -93,7 +93,6 @@ function formatExecuteMintError(err: unknown, context: ExecuteMintContext): stri
       if (name === 'ProposalAlreadyExecuted') return `Proposal #${context.proposalId.toString()} is already executed.`;
       if (name === 'NotRequester') return `Only requester can execute mint. Switch wallet to ${shortAddress(String(args[1] ?? context.requester))}.`;
       if (name === 'ThresholdNotMet') return `Need ${String(args[2] ?? MINT_THRESHOLD)} approvals before execute. Current ${String(args[1] ?? context.approvalCount)}/${String(args[2] ?? MINT_THRESHOLD)}.`;
-      if (name === 'LiquidityFundingMissing') return `Fund IDRX liquidity before execute. Current ${String(args[1] ?? 0)}/${String(args[2] ?? 0)}.`;
     }
 
     if (context.requester === ZERO_ADDRESS) return `Proposal #${context.proposalId.toString()} not found on-chain.`;
@@ -124,22 +123,6 @@ export function useRequestMint() {
     mutationFn: async (params: RequestMintParams) => {
       if (!publicClient) throw new Error('Public client not ready');
       if (!address) throw new Error('Wallet not connected');
-
-      if (params.destination === 1 && params.idrxAmount > BigInt(0)) {
-        const idrxAddress = await publicClient.readContract({
-          address: PROTOCOL_ADDRESS,
-          abi: PULSAR_PROTOCOL_ABI,
-          functionName: 'idrx',
-        }) as `0x${string}`;
-
-        await ensureIdrxAllowance({
-          publicClient,
-          writeContractAsync,
-          idrxAddress,
-          owner: address,
-          amount: params.idrxAmount,
-        });
-      }
 
       return writeContractAsync({
         address: PROTOCOL_ADDRESS,
@@ -246,37 +229,19 @@ export function useExecuteMint() {
 
       try {
         if (destination === 1 && idrxAmount > BigInt(0)) {
-          const funded = await publicClient.readContract({
+          const idrxAddress = await publicClient.readContract({
             address: PROTOCOL_ADDRESS,
             abi: PULSAR_PROTOCOL_ABI,
-            functionName: 'mintLiquidityFunding',
-            args: [proposalId],
-          }) as bigint;
-          const fundingNeeded = idrxAmount > funded ? idrxAmount - funded : BigInt(0);
+            functionName: 'idrx',
+          }) as `0x${string}`;
 
-          if (fundingNeeded > BigInt(0)) {
-            const idrxAddress = await publicClient.readContract({
-              address: PROTOCOL_ADDRESS,
-              abi: PULSAR_PROTOCOL_ABI,
-              functionName: 'idrx',
-            }) as `0x${string}`;
-
-            await ensureIdrxAllowance({
-              publicClient,
-              writeContractAsync,
-              idrxAddress,
-              owner: address,
-              amount: fundingNeeded,
-            });
-
-            const fundHash = await writeContractAsync({
-              address: PROTOCOL_ADDRESS,
-              abi: PULSAR_PROTOCOL_ABI,
-              functionName: 'fundMintLiquidity',
-              args: [proposalId, fundingNeeded],
-            });
-            await publicClient.waitForTransactionReceipt({ hash: fundHash });
-          }
+          await ensureIdrxAllowance({
+            publicClient,
+            writeContractAsync,
+            idrxAddress,
+            owner: address,
+            amount: idrxAmount,
+          });
         }
 
         const { request } = await publicClient.simulateContract({

@@ -6,11 +6,11 @@ import (
 )
 
 func GetReservesHandler(c *gin.Context) {
-	if !ensureService(c, publicReservesSvc) {
+	if !ensureService(c, publicReserveSvc) {
 		return
 	}
 
-	entries, err := publicReservesSvc.GetReserves(c.Request.Context())
+	entries, err := publicReserveSvc.GetReserves(c.Request.Context())
 	if err != nil {
 		response.InternalError(c, "failed to fetch reserves")
 		return

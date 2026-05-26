@@ -6,10 +6,10 @@ import (
 )
 
 func ListStocksHandler(c *gin.Context) {
-	if !ensureService(c, publicStocksSvc) {
+	if !ensureService(c, publicStockSvc) {
 		return
 	}
-	stocks, err := publicStocksSvc.ListMarketStocks(c.Request.Context())
+	stocks, err := publicStockSvc.ListMarketStocks(c.Request.Context())
 	if err != nil {
 		response.InternalError(c, "failed to fetch stocks")
 		return

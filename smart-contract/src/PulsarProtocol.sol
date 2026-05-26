@@ -28,7 +28,6 @@ error RedeemThresholdNotMet(uint256 requestId, uint8 current, uint8 required);
 error NotRedeemInitiator(uint256 requestId, address caller);
 error InvalidAddress();
 error InvalidAmount();
-error LiquidityFundingMissing(uint256 proposalId, uint256 funded, uint256 required);
 
 /// @notice Single entry point for all PulsarFi protocol operations.
 ///         UUPS upgradeable to support future Uniswap V4 migration.
@@ -54,21 +53,19 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         address requester;
         uint8 approvalCount;
         bool executed;
-        address rejectInitiator; // first custodian to reject-vote
+        address rejectInitiator;
         uint8 rejectCount;
     }
 
-    // Redeem request: user locks tokens + IDRX fee upfront.
-    // Both approve and reject require 3/5 multisig. Each side's first voter becomes that side's initiator.
     struct RedeemRequest {
         string ticker;
         address user;
-        uint256 tokenAmount; // locked in contract
-        uint256 feeIdrx; // locked IDRX fee
+        uint256 tokenAmount;
+        uint256 feeIdrx;
         bool processed;
         bool approved;
-        address approveInitiator; // first custodian to approve-vote — executes approval
-        address rejectInitiator; // first custodian to reject-vote — executes rejection
+        address approveInitiator;
+        address rejectInitiator;
         uint8 approvalCount;
         uint8 rejectCount;
     }
@@ -76,7 +73,7 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     IUniswapV2Router02 public router;
     address public idrx;
     address public treasury;
-    uint256 public redeemFeeBps; // basis points, e.g. 50 = 0.5%
+    uint256 public redeemFeeBps;
 
     mapping(string => address) public stocks;
     string[] private _tickers;
@@ -93,6 +90,9 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     mapping(uint256 => mapping(address => bool)) public hasRejectedMint;
     mapping(uint256 => mapping(address => bool)) public hasApprovedRedeem;
     mapping(uint256 => mapping(address => bool)) public hasRejectedRedeem;
+
+    // Storage slot preserved for UUPS layout compatibility — used only for legacy
+    // proposals created before this upgrade. New proposals never write to this mapping.
     mapping(uint256 => uint256) public mintLiquidityFunding;
 
     event StockDeployed(string indexed ticker, address contractAddress);
@@ -121,7 +121,6 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     event RedeemFeeBpsUpdated(uint256 feeBps);
     event RouterUpdated(address indexed router);
     event IDRXUpdated(address indexed idrx);
-    event MintLiquidityFunded(uint256 indexed proposalId, address indexed funder, uint256 amount, uint256 totalFunded);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -143,6 +142,8 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
     // ─── Multisig Mint ────────────────────────────────────────────────────────
 
+    /// @notice Custodian submits a mint proposal. IDRX for LP is no longer locked here —
+    ///         it is pulled from the requester's wallet at executeMint time instead.
     function requestMint(
         string calldata ticker,
         string calldata stockName,
@@ -170,38 +171,29 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
         hasApproved[proposalId][msg.sender] = true;
 
-        if (destination == MintDestination.LiquidityPool && idrxAmount > 0) {
-            _fundMintLiquidity(proposalId, msg.sender, idrxAmount);
-        }
-
         emit MintRequested(proposalId, msg.sender, ticker);
         emit MintApproved(proposalId, msg.sender, 1);
     }
 
+    /// @notice Deprecated: retained for storage layout compatibility only.
+    ///         Do not call — IDRX is now pulled from the requester at executeMint.
     function fundMintLiquidity(uint256 proposalId, uint256 amount) external onlyRole(CUSTODIAN_ROLE) {
         MintProposal storage proposal = proposals[proposalId];
-        if (proposal.approvalCount == 0 && !proposal.executed) {
-            revert ProposalNotFound(proposalId);
-        }
+        if (proposal.approvalCount == 0 && !proposal.executed) revert ProposalNotFound(proposalId);
         if (proposal.executed) revert ProposalAlreadyExecuted(proposalId);
-        if (proposal.destination != MintDestination.LiquidityPool) {
-            revert InvalidAmount();
-        }
+        if (proposal.destination != MintDestination.LiquidityPool) revert InvalidAmount();
         if (amount == 0) revert InvalidAmount();
 
-        _fundMintLiquidity(proposalId, msg.sender, amount);
+        IERC20(idrx).safeTransferFrom(msg.sender, address(this), amount);
+        mintLiquidityFunding[proposalId] += amount;
     }
 
     function approveMint(uint256 proposalId) external onlyRole(CUSTODIAN_ROLE) {
         MintProposal storage proposal = proposals[proposalId];
 
-        if (proposal.approvalCount == 0 && !proposal.executed) {
-            revert ProposalNotFound(proposalId);
-        }
+        if (proposal.approvalCount == 0 && !proposal.executed) revert ProposalNotFound(proposalId);
         if (proposal.executed) revert ProposalAlreadyExecuted(proposalId);
-        if (hasApproved[proposalId][msg.sender]) {
-            revert AlreadyApproved(proposalId, msg.sender);
-        }
+        if (hasApproved[proposalId][msg.sender]) revert AlreadyApproved(proposalId, msg.sender);
 
         hasApproved[proposalId][msg.sender] = true;
         proposal.approvalCount++;
@@ -209,16 +201,15 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         emit MintApproved(proposalId, msg.sender, proposal.approvalCount);
     }
 
+    /// @notice Requester executes after 3/5 approvals.
+    ///         For LiquidityPool destination: pulls idrxAmount from msg.sender at this point.
+    ///         Caller must have approved this contract for idrxAmount IDRX beforehand.
     function executeMint(uint256 proposalId) external onlyRole(CUSTODIAN_ROLE) {
         MintProposal storage proposal = proposals[proposalId];
 
-        if (proposal.approvalCount == 0 && !proposal.executed) {
-            revert ProposalNotFound(proposalId);
-        }
+        if (proposal.approvalCount == 0 && !proposal.executed) revert ProposalNotFound(proposalId);
         if (proposal.executed) revert ProposalAlreadyExecuted(proposalId);
-        if (proposal.requester != msg.sender) {
-            revert NotRequester(proposalId, msg.sender);
-        }
+        if (proposal.requester != msg.sender) revert NotRequester(proposalId, msg.sender);
         if (proposal.approvalCount < THRESHOLD) {
             revert ThresholdNotMet(proposalId, proposal.approvalCount, THRESHOLD);
         }
@@ -237,17 +228,13 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         }
     }
 
-    /// @notice Custodian votes to reject a mint proposal. First caller becomes rejectInitiator.
+    /// @notice Custodian votes to reject a mint proposal.
     function rejectMint(uint256 proposalId) external onlyRole(CUSTODIAN_ROLE) {
         MintProposal storage proposal = proposals[proposalId];
 
-        if (proposal.approvalCount == 0 && !proposal.executed) {
-            revert ProposalNotFound(proposalId);
-        }
+        if (proposal.approvalCount == 0 && !proposal.executed) revert ProposalNotFound(proposalId);
         if (proposal.executed) revert ProposalAlreadyExecuted(proposalId);
-        if (hasRejectedMint[proposalId][msg.sender]) {
-            revert AlreadyRejectedMint(proposalId, msg.sender);
-        }
+        if (hasRejectedMint[proposalId][msg.sender]) revert AlreadyRejectedMint(proposalId, msg.sender);
 
         hasRejectedMint[proposalId][msg.sender] = true;
         proposal.rejectCount++;
@@ -260,16 +247,13 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     }
 
     /// @notice rejectInitiator closes the proposal after 3/5 rejection votes.
+    ///         Refunds any IDRX already locked via fundMintLiquidity (legacy pre-upgrade proposals).
     function executeRejectMint(uint256 proposalId) external onlyRole(CUSTODIAN_ROLE) {
         MintProposal storage proposal = proposals[proposalId];
 
-        if (proposal.approvalCount == 0 && !proposal.executed) {
-            revert ProposalNotFound(proposalId);
-        }
+        if (proposal.approvalCount == 0 && !proposal.executed) revert ProposalNotFound(proposalId);
         if (proposal.executed) revert ProposalAlreadyExecuted(proposalId);
-        if (proposal.rejectInitiator != msg.sender) {
-            revert NotMintRejectInitiator(proposalId, msg.sender);
-        }
+        if (proposal.rejectInitiator != msg.sender) revert NotMintRejectInitiator(proposalId, msg.sender);
         if (proposal.rejectCount < THRESHOLD) {
             revert ThresholdNotMet(proposalId, proposal.rejectCount, THRESHOLD);
         }
@@ -277,18 +261,22 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         proposal.executed = true;
         hasPendingRequest[proposal.ticker] = false;
 
+        // Refund any IDRX pre-locked for this proposal (handles legacy pre-upgrade proposals).
+        uint256 funded = mintLiquidityFunding[proposalId];
+        if (funded > 0) {
+            mintLiquidityFunding[proposalId] = 0;
+            IERC20(idrx).safeTransfer(proposal.requester, funded);
+        }
+
         emit MintRejected(proposalId, msg.sender);
     }
 
     // ─── Redeem Request ───────────────────────────────────────────────────────
 
-    /// @notice User locks tokens + IDRX fee to request physical share redemption.
-    ///         Requires KYC approval and prior ERC20 approval for both token and IDRX.
     function requestRedeem(string calldata ticker, uint256 tokenAmount) external {
         if (!kycApproved[msg.sender]) revert KYCRequired(msg.sender);
         address stockAddress = _requireStock(ticker);
 
-        // Calculate IDRX fee as percentage of token value at current pool price
         uint256 feeIdrx = 0;
         if (redeemFeeBps > 0) {
             address[] memory path = new address[](2);
@@ -298,10 +286,8 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
             feeIdrx = (amounts[1] * redeemFeeBps) / 10_000;
         }
 
-        // Lock tokens in this contract until custodian decision
         IERC20(stockAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
 
-        // Lock IDRX fee upfront
         if (feeIdrx > 0) {
             IERC20(idrx).safeTransferFrom(msg.sender, address(this), feeIdrx);
         }
@@ -316,14 +302,11 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         emit RedeemRequested(requestId, msg.sender, ticker, tokenAmount, feeIdrx);
     }
 
-    /// @notice Custodian adds approval. First caller becomes initiator.
     function approveRedeem(uint256 requestId) external onlyRole(CUSTODIAN_ROLE) {
         RedeemRequest storage req = redeemRequests[requestId];
         if (req.user == address(0)) revert RedeemRequestNotFound(requestId);
         if (req.processed) revert RedeemRequestAlreadyProcessed(requestId);
-        if (hasApprovedRedeem[requestId][msg.sender]) {
-            revert RedeemAlreadyApproved(requestId, msg.sender);
-        }
+        if (hasApprovedRedeem[requestId][msg.sender]) revert RedeemAlreadyApproved(requestId, msg.sender);
 
         hasApprovedRedeem[requestId][msg.sender] = true;
         req.approvalCount++;
@@ -335,15 +318,11 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         emit RedeemApproved(requestId, msg.sender, req.approvalCount);
     }
 
-    /// @notice Initiator executes after threshold: burn tokens, release fee to treasury.
-    ///         Off-chain: initiator then processes KSEI transfer to user's account.
     function executeRedeem(uint256 requestId) external onlyRole(CUSTODIAN_ROLE) {
         RedeemRequest storage req = redeemRequests[requestId];
         if (req.user == address(0)) revert RedeemRequestNotFound(requestId);
         if (req.processed) revert RedeemRequestAlreadyProcessed(requestId);
-        if (req.approveInitiator != msg.sender) {
-            revert NotRedeemInitiator(requestId, msg.sender);
-        }
+        if (req.approveInitiator != msg.sender) revert NotRedeemInitiator(requestId, msg.sender);
         if (req.approvalCount < THRESHOLD) {
             revert RedeemThresholdNotMet(requestId, req.approvalCount, THRESHOLD);
         }
@@ -362,14 +341,11 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         emit TokensRedeemed(req.ticker, req.user, req.tokenAmount);
     }
 
-    /// @notice Custodian adds rejection vote. First caller becomes rejectInitiator.
     function rejectRedeem(uint256 requestId) external onlyRole(CUSTODIAN_ROLE) {
         RedeemRequest storage req = redeemRequests[requestId];
         if (req.user == address(0)) revert RedeemRequestNotFound(requestId);
         if (req.processed) revert RedeemRequestAlreadyProcessed(requestId);
-        if (hasRejectedRedeem[requestId][msg.sender]) {
-            revert RedeemAlreadyRejected(requestId, msg.sender);
-        }
+        if (hasRejectedRedeem[requestId][msg.sender]) revert RedeemAlreadyRejected(requestId, msg.sender);
 
         hasRejectedRedeem[requestId][msg.sender] = true;
         req.rejectCount++;
@@ -379,14 +355,11 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         emit RedeemRejectionVoted(requestId, msg.sender, req.rejectCount);
     }
 
-    /// @notice rejectInitiator executes after threshold: return locked tokens + fee to user.
     function executeReject(uint256 requestId) external onlyRole(CUSTODIAN_ROLE) {
         RedeemRequest storage req = redeemRequests[requestId];
         if (req.user == address(0)) revert RedeemRequestNotFound(requestId);
         if (req.processed) revert RedeemRequestAlreadyProcessed(requestId);
-        if (req.rejectInitiator != msg.sender) {
-            revert NotRedeemInitiator(requestId, msg.sender);
-        }
+        if (req.rejectInitiator != msg.sender) revert NotRedeemInitiator(requestId, msg.sender);
         if (req.rejectCount < THRESHOLD) {
             revert RedeemThresholdNotMet(requestId, req.rejectCount, THRESHOLD);
         }
@@ -406,11 +379,10 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
     // ─── Swap ─────────────────────────────────────────────────────────────────
 
-    /// @notice Permissionless swap. buyStock=true: IDRX → PulsarStock, false: PulsarStock → IDRX.
     function swap(string calldata ticker, uint256 amountIn, uint256 amountOutMin, bool buyStock) external {
         address stockAddress = _requireStock(ticker);
 
-        address tokenIn = buyStock ? idrx : stockAddress;
+        address tokenIn  = buyStock ? idrx : stockAddress;
         address tokenOut = buyStock ? stockAddress : idrx;
 
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
@@ -492,12 +464,9 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         emit TokensMinted(ticker, to, amount, attestationHash);
     }
 
-    function _fundMintLiquidity(uint256 proposalId, address funder, uint256 amount) internal {
-        IERC20(idrx).safeTransferFrom(funder, address(this), amount);
-        mintLiquidityFunding[proposalId] += amount;
-        emit MintLiquidityFunded(proposalId, funder, amount, mintLiquidityFunding[proposalId]);
-    }
-
+    /// @notice Provides liquidity to the Uniswap V2 pool for a mint proposal.
+    ///         IDRX is pulled from msg.sender (= proposal.requester, enforced by executeMint).
+    ///         Any IDRX already funded via the legacy fundMintLiquidity path is used first.
     function _provideToPool(
         uint256 proposalId,
         address stockAddress,
@@ -507,10 +476,12 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     ) internal {
         bool poolExists = IUniswapV2Factory(router.factory()).getPair(stockAddress, idrx) != address(0);
 
-        uint256 funded = mintLiquidityFunding[proposalId];
-        if (funded < idrxAmount) {
-            revert LiquidityFundingMissing(proposalId, funded, idrxAmount);
+        // Use any pre-funded IDRX (legacy proposals), pull the remainder from msg.sender.
+        uint256 alreadyFunded = mintLiquidityFunding[proposalId];
+        if (alreadyFunded < idrxAmount) {
+            IERC20(idrx).safeTransferFrom(msg.sender, address(this), idrxAmount - alreadyFunded);
         }
+        mintLiquidityFunding[proposalId] = 0;
 
         IERC20(stockAddress).approve(address(router), tokenAmount);
         IERC20(idrx).approve(address(router), idrxAmount);
@@ -519,7 +490,11 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
             stockAddress, idrx, tokenAmount, idrxAmount, 0, 0, address(this), block.timestamp + 15 minutes
         );
 
-        mintLiquidityFunding[proposalId] = funded - actualIdrx;
+        // Refund any IDRX not consumed by addLiquidity (pool ratio may not need the full amount).
+        uint256 idrxExcess = idrxAmount - actualIdrx;
+        if (idrxExcess > 0) {
+            IERC20(idrx).safeTransfer(msg.sender, idrxExcess);
+        }
 
         if (poolExists) {
             emit LiquidityAdded(ticker, actualToken, actualIdrx, liquidity);
