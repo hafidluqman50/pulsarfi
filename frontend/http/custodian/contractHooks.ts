@@ -9,8 +9,6 @@ const PROTOCOL_ADDRESS = process.env.NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS as `0x$
 const MINT_THRESHOLD = 3;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
-export type MintDestination = 0 | 1; // 0 = OperatorWallet, 1 = LiquidityPool
-
 export interface RequestMintParams {
   ticker: string;
   stockName: string;
@@ -18,7 +16,6 @@ export interface RequestMintParams {
   tokenAmount: bigint;
   idrxAmount: bigint;
   attestationHash: `0x${string}`;
-  destination: MintDestination;
 }
 
 export function buildAttestationHash(ticker: string, quantity: string, idrxAmount: bigint): `0x${string}` {
@@ -73,7 +70,6 @@ async function ensureIdrxAllowance(params: {
 interface ExecuteMintContext {
   proposalId: bigint;
   ticker: string;
-  destination: number;
   requester: `0x${string}`;
   caller: `0x${string}`;
   approvalCount: number;
@@ -103,12 +99,9 @@ function formatExecuteMintError(err: unknown, context: ExecuteMintContext): stri
     if (context.approvalCount < MINT_THRESHOLD) {
       return `Need ${MINT_THRESHOLD} approvals before execute. Current ${context.approvalCount}/${MINT_THRESHOLD}.`;
     }
-    if (context.destination === 1) {
-      const poolStep = context.stockAddress === ZERO_ADDRESS ? `deploying ${context.ticker} pool` : `${context.ticker} liquidity`;
-      return `Liquidity provisioning failed while ${poolStep}. Requester and approvals are valid; router/addLiquidity reverted without a reason.`;
-    }
 
-    return err.shortMessage;
+    const poolStep = context.stockAddress === ZERO_ADDRESS ? `deploying ${context.ticker} pool` : `${context.ticker} liquidity`;
+    return `Liquidity provisioning failed while ${poolStep}. Requester and approvals are valid; router/addLiquidity reverted without a reason.`;
   }
 
   return err instanceof Error ? err.message : 'executeMint simulation failed';
@@ -135,7 +128,6 @@ export function useRequestMint() {
           params.tokenAmount,
           params.idrxAmount,
           params.attestationHash,
-          params.destination,
         ],
       });
     },
@@ -216,7 +208,6 @@ export function useExecuteMint() {
       });
       const ticker = proposal[0] as string;
       const idrxAmount = proposal[4] as bigint;
-      const destination = Number(proposal[6]);
       const requester = proposal[7] as `0x${string}`;
       const approvalCount = Number(proposal[8]);
       const executed = Boolean(proposal[9]);
@@ -228,7 +219,7 @@ export function useExecuteMint() {
       }) as `0x${string}`;
 
       try {
-        if (destination === 1 && idrxAmount > BigInt(0)) {
+        if (idrxAmount > BigInt(0)) {
           const idrxAddress = await publicClient.readContract({
             address: PROTOCOL_ADDRESS,
             abi: PULSAR_PROTOCOL_ABI,
@@ -269,7 +260,6 @@ export function useExecuteMint() {
         throw new Error(formatExecuteMintError(err, {
           proposalId,
           ticker,
-          destination,
           requester,
           caller: address,
           approvalCount,

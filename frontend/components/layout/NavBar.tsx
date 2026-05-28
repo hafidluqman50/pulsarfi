@@ -56,6 +56,11 @@ export function NavBar() {
               </Link>
             ))}
           </nav>
+          {isAuthenticated && role === 'custodian' && (
+            <span className="eyebrow only-desktop" style={{ fontSize: 10, padding: '4px 8px', background: 'var(--merah)', color: 'white' }}>
+              CUSTODIAN
+            </span>
+          )}
         </div>
 
         {/* Center: Logo desktop — absolute so it doesn't expand navbar height */}
@@ -80,21 +85,14 @@ export function NavBar() {
                 );
               }
               return (
-                <div className="inline-flex items-center gap-[8px]">
-                  {role === 'custodian' && (
-                    <span className="eyebrow text-[10px] px-[8px] py-[4px] bg-[var(--merah)] text-white">
-                      CUSTODIAN
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    className="btn btn-outline inline-flex items-center gap-[10px] px-[14px] py-[10px]"
-                    onClick={isAuthenticated ? signOut : openAccountModal}
-                  >
-                    <span className={`w-[8px] h-[8px] inline-block ${isAuthenticated ? 'bg-[#1f7a4b]' : 'bg-[var(--body)]'}`} />
-                    <span className="mono text-[12px]">{shortAddr(account.address)}</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline inline-flex items-center gap-[10px] px-[14px] py-[10px]"
+                  onClick={isAuthenticated ? signOut : openAccountModal}
+                >
+                  <span className={`w-[8px] h-[8px] inline-block ${isAuthenticated ? 'bg-[#1f7a4b]' : 'bg-[var(--body)]'}`} />
+                  <span className="mono text-[12px]">{shortAddr(account.address)}</span>
+                </button>
               );
             }}
           </ConnectButton.Custom>
@@ -104,6 +102,12 @@ export function NavBar() {
       {/* Mobile slide-down menu */}
       {isMobileMenuOpen && (
         <div className="mobile-menu only-mobile">
+          {isAuthenticated && role === 'custodian' && (
+            <div style={{ padding: '10px 24px', borderBottom: '1px solid var(--hairline)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ width: 7, height: 7, background: 'var(--merah)', borderRadius: 999 }} />
+              <span className="eyebrow" style={{ fontSize: 10, color: 'var(--merah)' }}>CUSTODIAN</span>
+            </div>
+          )}
           {visibleItems.map(item => (
             <Link
               key={item.href}

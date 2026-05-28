@@ -96,9 +96,9 @@ contract PulsarProtocolTest is Test {
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     /// Submit a requestMint from cust1 and return proposalId.
-    function _requestMint(PulsarProtocol.MintDestination dest) internal returns (uint256 proposalId) {
+    function _requestMint() internal returns (uint256 proposalId) {
         vm.prank(cust1);
-        proposalId = protocol.requestMint("BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, ATTEST, dest);
+        proposalId = protocol.requestMint("BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, ATTEST);
     }
 
     /// Reach threshold (cust2 + cust3 approve) so cust1 can executeMint.
@@ -109,7 +109,7 @@ contract PulsarProtocolTest is Test {
         protocol.approveMint(proposalId);
     }
 
-    /// Full mint flow to LiquidityPool: request → approve × 2 → executeMint.
+    /// Full mint flow: request → approve × 2 → executeMint.
     /// cust1 must have approved protocol for IDRX before calling this.
     function _fullMintToPool(uint256 existingProposalId) internal {
         _reachThreshold(existingProposalId);
@@ -119,24 +119,16 @@ contract PulsarProtocolTest is Test {
 
     // ─── requestMint ──────────────────────────────────────────────────────────
 
-    function test_requestMint_liquidityPool_doesNotPullIDRX() public {
+    function test_requestMint_doesNotPullIDRX() public {
         uint256 balanceBefore = idrxToken.balanceOf(cust1);
 
-        _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        _requestMint();
 
         assertEq(idrxToken.balanceOf(cust1), balanceBefore, "requestMint must not pull IDRX from requester");
     }
 
-    function test_requestMint_operatorWallet_doesNotPullIDRX() public {
-        uint256 balanceBefore = idrxToken.balanceOf(cust1);
-
-        _requestMint(PulsarProtocol.MintDestination.OperatorWallet);
-
-        assertEq(idrxToken.balanceOf(cust1), balanceBefore, "requestMint must not pull IDRX for wallet destination");
-    }
-
     function test_requestMint_setsProposalFields() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
 
         (
             string memory ticker,
@@ -145,45 +137,43 @@ contract PulsarProtocolTest is Test {
             uint256 tokenAmount,
             uint256 idrxAmount,
             ,
-            PulsarProtocol.MintDestination dest,
+            ,
             address requester,
             uint8 approvalCount,
             bool executed,
             ,
         ) = protocol.proposals(proposalId);
 
-        assertEq(ticker,              "BUMIP");
-        assertEq(tokenAmount,         TOKEN_AMOUNT);
-        assertEq(idrxAmount,          IDRX_AMOUNT);
-        assertEq(uint8(dest),         uint8(PulsarProtocol.MintDestination.LiquidityPool));
-        assertEq(requester,           cust1);
-        assertEq(approvalCount,       1);
+        assertEq(ticker,        "BUMIP");
+        assertEq(tokenAmount,   TOKEN_AMOUNT);
+        assertEq(idrxAmount,    IDRX_AMOUNT);
+        assertEq(requester,     cust1);
+        assertEq(approvalCount, 1);
         assertFalse(executed);
     }
 
     function test_requestMint_preventsDoublePending() public {
-        _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        _requestMint();
 
         vm.expectRevert(abi.encodeWithSelector(MintRequestPending.selector, "BUMIP"));
         vm.prank(cust1);
-        protocol.requestMint("BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, ATTEST,
-            PulsarProtocol.MintDestination.LiquidityPool);
+        protocol.requestMint("BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, ATTEST);
     }
 
     // ─── approveMint ──────────────────────────────────────────────────────────
 
     function test_approveMint_incrementsCount() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
 
         vm.prank(cust2);
         protocol.approveMint(proposalId);
 
-        (,,,,,,,, uint8 approvalCount,,, ) = protocol.proposals(proposalId);
+        (,,,,,,,, uint8 approvalCount,,,) = protocol.proposals(proposalId);
         assertEq(approvalCount, 2);
     }
 
     function test_approveMint_rejectsDouble() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
 
         vm.prank(cust2);
         protocol.approveMint(proposalId);
@@ -193,39 +183,12 @@ contract PulsarProtocolTest is Test {
         protocol.approveMint(proposalId);
     }
 
-    // ─── executeMint → OperatorWallet ─────────────────────────────────────────
+    // ─── executeMint ──────────────────────────────────────────────────────────
 
-    function test_executeMint_operatorWallet_mintsToRequester() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.OperatorWallet);
+    function test_executeMint_pullsIDRXAtExecution() public {
+        uint256 proposalId = _requestMint();
         _reachThreshold(proposalId);
 
-        vm.prank(cust1);
-        protocol.executeMint(proposalId);
-
-        address stockAddress = protocol.stocks("BUMIP");
-        assertFalse(stockAddress == address(0), "stock contract must be deployed");
-        assertEq(PulsarStock(stockAddress).balanceOf(cust1), TOKEN_AMOUNT, "tokens must go to requester");
-    }
-
-    function test_executeMint_operatorWallet_doesNotTouchPool() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.OperatorWallet);
-        _reachThreshold(proposalId);
-
-        vm.prank(cust1);
-        protocol.executeMint(proposalId);
-
-        address stockAddress = protocol.stocks("BUMIP");
-        address pair = IUniswapV2Factory(uniswapFactory).getPair(stockAddress, address(idrxToken));
-        assertEq(pair, address(0), "no pool must be created for wallet destination");
-    }
-
-    // ─── executeMint → LiquidityPool ──────────────────────────────────────────
-
-    function test_executeMint_liquidityPool_pullsIDRXAtExecution() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
-        _reachThreshold(proposalId);
-
-        // IDRX balance before execution must be unchanged from after requestMint
         uint256 balanceBeforeExec = idrxToken.balanceOf(cust1);
 
         vm.startPrank(cust1);
@@ -234,7 +197,6 @@ contract PulsarProtocolTest is Test {
         vm.stopPrank();
 
         uint256 balanceAfterExec = idrxToken.balanceOf(cust1);
-        // Uniswap may not consume the exact amount (ratio might differ); assert at most IDRX_AMOUNT was pulled
         assertLe(
             balanceBeforeExec - balanceAfterExec,
             IDRX_AMOUNT,
@@ -243,8 +205,8 @@ contract PulsarProtocolTest is Test {
         assertLt(balanceAfterExec, balanceBeforeExec, "executeMint must pull some IDRX from requester");
     }
 
-    function test_executeMint_liquidityPool_createsPool() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+    function test_executeMint_createsPool() public {
+        uint256 proposalId = _requestMint();
         _reachThreshold(proposalId);
 
         vm.startPrank(cust1);
@@ -254,11 +216,11 @@ contract PulsarProtocolTest is Test {
 
         address stockAddress = protocol.stocks("BUMIP");
         address pair = IUniswapV2Factory(uniswapFactory).getPair(stockAddress, address(idrxToken));
-        assertFalse(pair == address(0), "Uniswap V2 pool must exist after executeMint to LP");
+        assertFalse(pair == address(0), "Uniswap V2 pool must exist after executeMint");
     }
 
-    function test_executeMint_liquidityPool_emitsPoolCreated() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+    function test_executeMint_emitsPoolCreated() public {
+        uint256 proposalId = _requestMint();
         _reachThreshold(proposalId);
 
         vm.startPrank(cust1);
@@ -269,9 +231,9 @@ contract PulsarProtocolTest is Test {
         vm.stopPrank();
     }
 
-    function test_executeMint_liquidityPool_secondMintEmitsLiquidityAdded() public {
+    function test_executeMint_secondMintEmitsLiquidityAdded() public {
         // First mint creates the pool
-        uint256 firstId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 firstId = _requestMint();
         _reachThreshold(firstId);
         vm.startPrank(cust1);
         idrxToken.approve(address(protocol), IDRX_AMOUNT);
@@ -281,18 +243,13 @@ contract PulsarProtocolTest is Test {
         // Second mint adds to the existing pool
         vm.prank(cust2);
         uint256 secondId = protocol.requestMint(
-            "BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, ATTEST,
-            PulsarProtocol.MintDestination.LiquidityPool
+            "BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, ATTEST
         );
         vm.prank(cust1);
         protocol.approveMint(secondId);
         vm.prank(cust3);
         protocol.approveMint(secondId);
 
-        vm.startPrank(cust2);
-        idrxToken.approve(address(protocol), IDRX_AMOUNT);
-        // Ensure cust2 has enough IDRX
-        vm.stopPrank();
         vm.prank(admin);
         idrxToken.mint(cust2, IDRX_AMOUNT);
 
@@ -304,8 +261,8 @@ contract PulsarProtocolTest is Test {
         vm.stopPrank();
     }
 
-    function test_executeMint_liquidityPool_revertsWithoutIDRXApproval() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+    function test_executeMint_revertsWithoutIDRXApproval() public {
+        uint256 proposalId = _requestMint();
         _reachThreshold(proposalId);
 
         // No idrxToken.approve() — must revert
@@ -315,7 +272,7 @@ contract PulsarProtocolTest is Test {
     }
 
     function test_executeMint_revertsIfNotRequester() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
         _reachThreshold(proposalId);
 
         vm.expectRevert(abi.encodeWithSelector(NotRequester.selector, proposalId, cust2));
@@ -324,8 +281,7 @@ contract PulsarProtocolTest is Test {
     }
 
     function test_executeMint_revertsIfThresholdNotMet() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
-        // Only 1 approval (the requester's own) — threshold is 3
+        uint256 proposalId = _requestMint();
 
         vm.prank(cust1);
         vm.expectRevert(abi.encodeWithSelector(ThresholdNotMet.selector, proposalId, 1, 3));
@@ -333,11 +289,13 @@ contract PulsarProtocolTest is Test {
     }
 
     function test_executeMint_revertsIfAlreadyExecuted() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.OperatorWallet);
+        uint256 proposalId = _requestMint();
         _reachThreshold(proposalId);
 
-        vm.prank(cust1);
+        vm.startPrank(cust1);
+        idrxToken.approve(address(protocol), IDRX_AMOUNT);
         protocol.executeMint(proposalId);
+        vm.stopPrank();
 
         vm.expectRevert(abi.encodeWithSelector(ProposalAlreadyExecuted.selector, proposalId));
         vm.prank(cust1);
@@ -347,7 +305,7 @@ contract PulsarProtocolTest is Test {
     // ─── rejectMint / executeRejectMint ──────────────────────────────────────
 
     function test_executeRejectMint_noFunding_noRefund() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
 
         uint256 balanceBefore = idrxToken.balanceOf(cust1);
 
@@ -367,7 +325,7 @@ contract PulsarProtocolTest is Test {
 
     function test_executeRejectMint_legacyFunding_refundsRequester() public {
         // Simulate a legacy pre-upgrade proposal that had IDRX pre-funded via fundMintLiquidity.
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
 
         // Use the (now-deprecated) fundMintLiquidity to simulate legacy pre-upgrade state
         vm.startPrank(cust1);
@@ -394,7 +352,7 @@ contract PulsarProtocolTest is Test {
     }
 
     function test_executeRejectMint_clearsPendingRequest() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
         assertTrue(protocol.hasPendingRequest("BUMIP"));
 
         vm.prank(cust1);
@@ -411,7 +369,7 @@ contract PulsarProtocolTest is Test {
     }
 
     function test_executeRejectMint_revertsIfThresholdNotMet() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
 
         vm.prank(cust1);
         protocol.rejectMint(proposalId);
@@ -426,8 +384,8 @@ contract PulsarProtocolTest is Test {
 
     // ─── Legacy: executeMint with pre-funded IDRX ────────────────────────────
 
-    function test_executeMint_liquidityPool_legacyFunding_usesExistingIDRX() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+    function test_executeMint_legacyFunding_usesExistingIDRX() public {
+        uint256 proposalId = _requestMint();
 
         // Simulate legacy state: full amount already in mintLiquidityFunding
         vm.startPrank(cust1);
@@ -450,17 +408,14 @@ contract PulsarProtocolTest is Test {
             "legacy fully-funded proposal must not pull additional IDRX at executeMint"
         );
 
-        // Pool must exist
         address stockAddress = protocol.stocks("BUMIP");
         address pair = IUniswapV2Factory(uniswapFactory).getPair(stockAddress, address(idrxToken));
         assertFalse(pair == address(0), "pool must be created");
-
-        // Funding cleared
         assertEq(protocol.mintLiquidityFunding(proposalId), 0);
     }
 
-    function test_executeMint_liquidityPool_legacyPartialFunding_pullsShortfall() public {
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+    function test_executeMint_legacyPartialFunding_pullsShortfall() public {
+        uint256 proposalId = _requestMint();
 
         uint256 partialFund = IDRX_AMOUNT / 2;
 
@@ -479,7 +434,6 @@ contract PulsarProtocolTest is Test {
         vm.stopPrank();
 
         uint256 pulled = balanceBefore - idrxToken.balanceOf(cust1);
-        // Should only pull the shortfall (at most IDRX_AMOUNT - partialFund)
         assertLe(pulled, IDRX_AMOUNT - partialFund, "must not pull more than the shortfall");
 
         address stockAddress = protocol.stocks("BUMIP");
@@ -490,8 +444,7 @@ contract PulsarProtocolTest is Test {
     // ─── Swap ─────────────────────────────────────────────────────────────────
 
     function test_swap_buyStock_afterPoolCreated() public {
-        // First create the pool
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
         _reachThreshold(proposalId);
         vm.startPrank(cust1);
         idrxToken.approve(address(protocol), IDRX_AMOUNT);
@@ -510,15 +463,13 @@ contract PulsarProtocolTest is Test {
     }
 
     function test_swap_sellStock_afterPoolCreated() public {
-        // Create pool
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
         _reachThreshold(proposalId);
         vm.startPrank(cust1);
         idrxToken.approve(address(protocol), IDRX_AMOUNT);
         protocol.executeMint(proposalId);
         vm.stopPrank();
 
-        // Buy first
         uint256 swapIn = 250_000;
         vm.startPrank(trader);
         idrxToken.approve(address(protocol), swapIn);
@@ -529,7 +480,6 @@ contract PulsarProtocolTest is Test {
         uint256 stockBalance = PulsarStock(stockAddress).balanceOf(trader);
         assertGt(stockBalance, 0);
 
-        // Sell back
         uint256 idrxBefore = idrxToken.balanceOf(trader);
         vm.startPrank(trader);
         PulsarStock(stockAddress).approve(address(protocol), stockBalance);
@@ -548,8 +498,7 @@ contract PulsarProtocolTest is Test {
     // ─── KYC ──────────────────────────────────────────────────────────────────
 
     function test_requestRedeem_revertsWithoutKYC() public {
-        // Create pool + buy some stock so user has tokens
-        uint256 proposalId = _requestMint(PulsarProtocol.MintDestination.LiquidityPool);
+        uint256 proposalId = _requestMint();
         _reachThreshold(proposalId);
         vm.startPrank(cust1);
         idrxToken.approve(address(protocol), IDRX_AMOUNT);
@@ -561,13 +510,22 @@ contract PulsarProtocolTest is Test {
         idrxToken.mint(noKycUser, 100_000);
 
         address stockAddress = protocol.stocks("BUMIP");
-
-        vm.startPrank(noKycUser);
-        idrxToken.approve(address(protocol), 10_000);
+        vm.prank(noKycUser);
         PulsarStock(stockAddress).approve(address(protocol), 1e18);
+
+        vm.prank(cust1);
         vm.expectRevert(abi.encodeWithSelector(KYCRequired.selector, noKycUser));
-        protocol.requestRedeem("BUMIP", 1e18);
-        vm.stopPrank();
+        protocol.requestRedeem("BUMIP", 1e18, noKycUser);
+    }
+
+    function test_requestRedeem_revertsIfCallerNotCustodian() public {
+        address kycUser = makeAddr("kycUser");
+        vm.prank(admin);
+        protocol.approveKYC(kycUser);
+
+        vm.prank(kycUser);
+        vm.expectRevert();
+        protocol.requestRedeem("BUMIP", 1e18, kycUser);
     }
 
     // ─── Access control ───────────────────────────────────────────────────────
@@ -575,8 +533,7 @@ contract PulsarProtocolTest is Test {
     function test_nonCustodian_cannotRequestMint() public {
         vm.prank(trader);
         vm.expectRevert();
-        protocol.requestMint("BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, ATTEST,
-            PulsarProtocol.MintDestination.LiquidityPool);
+        protocol.requestMint("BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, ATTEST);
     }
 
     function test_nonAdmin_cannotApproveKYC() public {

@@ -3,13 +3,12 @@
 import { useState, useEffect } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { DetailRow } from '@/components/swap/SwapView';
-import { PSTOCKS, fmtUSD } from '@/lib/data';
+import { PSTOCKS } from '@/lib/data';
 import { useStockPrice } from '@/http/market/hooks';
 import { useTerminalLog, useMintPipeline } from '@/http/custodian/pipelineHooks';
 import { currentTimestamp } from '@/lib/terminal';
 
 const IDR_PRICE_FALLBACK: Record<string, number> = { BUMI: 246, ENRG: 378, KIJA: 144, TLKM: 2976, BBRI: 4780, GOTO: 98, ASII: 5190, UNVR: 2402 };
-const USD_RATE = 16142;
 const LOT_SIZE = 100;
 
 function Field({ label, children }: { label: string; children: React.ReactNode }): React.ReactNode {
@@ -33,9 +32,6 @@ function Cursor(): React.ReactNode {
 export function MintOrderForm(): React.ReactNode {
   const [selectedIpoTicker, setSelectedIpoTicker] = useState("BUMI");
   const [quantity, setQuantity] = useState("50000");
-  const [destination, setDestination] = useState("liquidity");
-  const [side, setSide] = useState<"mint" | "burn">("mint");
-
   const { log, appendLog } = useTerminalLog();
   const { run: runMint, running, isPending: isMintPending } = useMintPipeline(appendLog);
 
@@ -43,38 +39,25 @@ export function MintOrderForm(): React.ReactNode {
   const { data: priceData } = useStockPrice(selectedIpoTicker, 'idx');
   const idrPrice = priceData?.price ?? IDR_PRICE_FALLBACK[selectedIpoTicker] ?? 250;
   const idrTotal = idrPrice * (parseInt(quantity) || 0) * LOT_SIZE;
-  const usdTotal = idrTotal / USD_RATE;
 
   async function handleRunPipeline(): Promise<void> {
     if (!selectedStock || !parseInt(quantity)) return;
-    if (side === "mint") {
-      await runMint({
-        ticker: selectedStock.ticker,
-        stockName: selectedStock.name,
-        idxTicker: selectedIpoTicker,
-        quantity,
-        idrPrice,
-        idrTotal,
-        destination: destination as "liquidity" | "wallet",
-      });
-    }
+    await runMint({
+      ticker: selectedStock.ticker,
+      stockName: selectedStock.name,
+      idxTicker: selectedIpoTicker,
+      quantity,
+      idrPrice,
+      idrTotal,
+    });
   }
 
   return (
     <div className="grid-2col-form" style={{ marginTop: 32 }}>
       {/* FORM */}
       <div className="card" style={{ padding: 0 }}>
-        <div className="hairline" style={{ padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div className="hairline" style={{ padding: "16px 20px" }}>
           <div className="eyebrow" style={{ color: "var(--body)" }}>01 · New tokenization order</div>
-          <div style={{ display: "flex", border: "1px solid var(--ink)" }}>
-            {[{ id: "mint" as const, label: "Mint" }, { id: "burn" as const, label: "Redeem" }].map((option, optionIndex) => (
-              <button key={option.id} onClick={() => setSide(option.id)} style={{
-                appearance: "none", padding: "6px 14px", border: 0, borderLeft: optionIndex === 0 ? 0 : "1px solid var(--ink)",
-                background: side === option.id ? "var(--ink)" : "transparent", color: side === option.id ? "var(--putih)" : "var(--ink)",
-                fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "Inter", letterSpacing: "0.06em", textTransform: "uppercase",
-              }}>{option.label}</button>
-            ))}
-          </div>
         </div>
         <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 18 }}>
           <Field label="IDX Ticker">
@@ -82,34 +65,18 @@ export function MintOrderForm(): React.ReactNode {
               {PSTOCKS.map(stock => <option key={stock.ipo} value={stock.ipo}>{stock.ipo} · {stock.name.replace("Pulsar ", "")}</option>)}
             </select>
           </Field>
-          <Field label={side === "mint" ? "Order quantity (lots to buy on IDX)" : "Quantity to redeem (lots to sell on IDX)"}>
+          <Field label="Order quantity (lots to buy on IDX)">
             <input className="input mono" value={quantity} onChange={event => setQuantity(event.target.value.replace(/[^0-9]/g, ""))} />
           </Field>
-          {side === "mint" && (
-            <Field label="Destination of minted p-tokens">
-              <div style={{ display: "flex", gap: 0 }}>
-                {[{ id: "liquidity", label: "Liquidity Pool" }, { id: "wallet", label: "Operator Wallet" }].map((option, optionIndex) => (
-                  <button key={option.id} onClick={() => setDestination(option.id)} style={{
-                    flex: 1, padding: "12px", appearance: "none", border: "1px solid var(--ink)", borderLeftWidth: optionIndex === 0 ? 1 : 0,
-                    background: destination === option.id ? "var(--ink)" : "var(--canvas)", color: destination === option.id ? "var(--putih)" : "var(--ink)",
-                    fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "Inter",
-                  }}>{option.label}</button>
-                ))}
-              </div>
-            </Field>
-          )}
         </div>
 
         <div className="hairline" style={{ padding: "16px 20px", background: "var(--canvas-soft)" }}>
           <div className="eyebrow" style={{ color: "var(--body)", marginBottom: 10 }}>02 · Order preview</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <DetailRow k="IDR notional" v={`Rp ${idrTotal.toLocaleString("id-ID")}`} />
-            <DetailRow k="USD equivalent" v={fmtUSD(usdTotal)} hint={`@ ${USD_RATE.toLocaleString()} IDR/USD`} />
-            <DetailRow k={side === "mint" ? "Broker fee" : "Exit fee"} v={fmtUSD(usdTotal * 0.0015)} hint="0.15%" />
-            <DetailRow k="Gas (Arb Sepolia)" v="~$0.18" />
             <DetailRow
-              k={side === "mint" ? "Mint output" : "IDR returned"}
-              v={side === "mint" ? `${parseInt(quantity || "0").toLocaleString()} ${selectedStock?.ticker ?? selectedIpoTicker}` : `Rp ${idrTotal.toLocaleString("id-ID")}`}
+              k="Mint output"
+              v={`${parseInt(quantity || "0").toLocaleString()} ${selectedStock?.ticker ?? selectedIpoTicker}`}
               hint={`1 token = ${LOT_SIZE} shares`}
             />
           </div>
@@ -119,11 +86,11 @@ export function MintOrderForm(): React.ReactNode {
           <button
             onClick={handleRunPipeline}
             disabled={running || isMintPending || !quantity}
-            className={`btn ${side === "mint" ? "btn-merah" : "btn-primary"}`}
+            className="btn btn-merah"
             style={{ width: "100%", padding: 16, fontSize: 15, display: "inline-flex", justifyContent: "center", alignItems: "center", gap: 10 }}
           >
             {running ? <Icon name="loader" size={14} /> : <Icon name="play" size={14} />}
-            {isMintPending ? "Sign in wallet…" : running ? "Executing pipeline…" : `Execute ${side === "mint" ? "mint" : "redeem"} pipeline`}
+            {isMintPending ? "Sign in wallet…" : running ? "Executing pipeline…" : "Execute mint pipeline"}
           </button>
           <div style={{ marginTop: 10, fontSize: 11, color: "var(--body)", letterSpacing: "0.04em", textAlign: "center" }}>
             Operator role required · Multisig 3/5

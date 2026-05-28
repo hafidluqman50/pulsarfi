@@ -37,11 +37,6 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     bytes32 public constant CUSTODIAN_ROLE = keccak256("CUSTODIAN_ROLE");
     uint8 public constant THRESHOLD = 3;
 
-    enum MintDestination {
-        OperatorWallet,
-        LiquidityPool
-    }
-
     struct MintProposal {
         string ticker;
         string stockName;
@@ -49,7 +44,7 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         uint256 tokenAmount;
         uint256 idrxAmount;
         bytes32 attestationHash;
-        MintDestination destination;
+        uint8 __deprecatedDestination; // preserve slot — was MintDestination enum, removed in v3
         address requester;
         uint8 approvalCount;
         bool executed;
@@ -142,16 +137,15 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
     // ─── Multisig Mint ────────────────────────────────────────────────────────
 
-    /// @notice Custodian submits a mint proposal. IDRX for LP is no longer locked here —
-    ///         it is pulled from the requester's wallet at executeMint time instead.
+    /// @notice Custodian submits a mint proposal. All mints go to the liquidity pool.
+    ///         IDRX is pulled from the requester's wallet at executeMint time.
     function requestMint(
         string calldata ticker,
         string calldata stockName,
         string calldata idxTicker,
         uint256 tokenAmount,
         uint256 idrxAmount,
-        bytes32 attestationHash,
-        MintDestination destination
+        bytes32 attestationHash
     ) external onlyRole(CUSTODIAN_ROLE) returns (uint256 proposalId) {
         if (hasPendingRequest[ticker]) revert MintRequestPending(ticker);
 
@@ -165,7 +159,6 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         proposal.tokenAmount = tokenAmount;
         proposal.idrxAmount = idrxAmount;
         proposal.attestationHash = attestationHash;
-        proposal.destination = destination;
         proposal.requester = msg.sender;
         proposal.approvalCount = 1;
 
@@ -181,7 +174,6 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         MintProposal storage proposal = proposals[proposalId];
         if (proposal.approvalCount == 0 && !proposal.executed) revert ProposalNotFound(proposalId);
         if (proposal.executed) revert ProposalAlreadyExecuted(proposalId);
-        if (proposal.destination != MintDestination.LiquidityPool) revert InvalidAmount();
         if (amount == 0) revert InvalidAmount();
 
         IERC20(idrx).safeTransferFrom(msg.sender, address(this), amount);
@@ -202,7 +194,7 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     }
 
     /// @notice Requester executes after 3/5 approvals.
-    ///         For LiquidityPool destination: pulls idrxAmount from msg.sender at this point.
+    ///         Pulls idrxAmount from msg.sender at this point.
     ///         Caller must have approved this contract for idrxAmount IDRX beforehand.
     function executeMint(uint256 proposalId) external onlyRole(CUSTODIAN_ROLE) {
         MintProposal storage proposal = proposals[proposalId];
@@ -216,16 +208,11 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
         proposal.executed = true;
         hasPendingRequest[proposal.ticker] = false;
-        emit MintExecuted(proposalId);
 
         address stockAddress = _ensureStock(proposal.ticker, proposal.stockName, proposal.idxTicker);
-        address mintTarget = proposal.destination == MintDestination.LiquidityPool ? address(this) : msg.sender;
-
-        _mint(stockAddress, proposal.ticker, mintTarget, proposal.tokenAmount, proposal.attestationHash);
-
-        if (proposal.destination == MintDestination.LiquidityPool) {
-            _provideToPool(proposalId, stockAddress, proposal.ticker, proposal.tokenAmount, proposal.idrxAmount);
-        }
+        _mint(stockAddress, proposal.ticker, address(this), proposal.tokenAmount, proposal.attestationHash);
+        _provideToPool(proposalId, stockAddress, proposal.ticker, proposal.tokenAmount, proposal.idrxAmount);
+        emit MintExecuted(proposalId);
     }
 
     /// @notice Custodian votes to reject a mint proposal.
@@ -273,8 +260,8 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
     // ─── Redeem Request ───────────────────────────────────────────────────────
 
-    function requestRedeem(string calldata ticker, uint256 tokenAmount) external {
-        if (!kycApproved[msg.sender]) revert KYCRequired(msg.sender);
+    function requestRedeem(string calldata ticker, uint256 tokenAmount, address user) external onlyRole(CUSTODIAN_ROLE) {
+        if (!kycApproved[user]) revert KYCRequired(user);
         address stockAddress = _requireStock(ticker);
 
         uint256 feeIdrx = 0;
@@ -286,20 +273,20 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
             feeIdrx = (amounts[1] * redeemFeeBps) / 10_000;
         }
 
-        IERC20(stockAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
+        IERC20(stockAddress).safeTransferFrom(user, address(this), tokenAmount);
 
         if (feeIdrx > 0) {
-            IERC20(idrx).safeTransferFrom(msg.sender, address(this), feeIdrx);
+            IERC20(idrx).safeTransferFrom(user, address(this), feeIdrx);
         }
 
         uint256 requestId = redeemRequestCount++;
         RedeemRequest storage req = redeemRequests[requestId];
         req.ticker = ticker;
-        req.user = msg.sender;
+        req.user = user;
         req.tokenAmount = tokenAmount;
         req.feeIdrx = feeIdrx;
 
-        emit RedeemRequested(requestId, msg.sender, ticker, tokenAmount, feeIdrx);
+        emit RedeemRequested(requestId, user, ticker, tokenAmount, feeIdrx);
     }
 
     function approveRedeem(uint256 requestId) external onlyRole(CUSTODIAN_ROLE) {

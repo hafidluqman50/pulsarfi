@@ -191,12 +191,14 @@ img, svg, video { max-width: 100%; }
   .table-row-stack .row-cell .row-cell-label { display: inline-block !important; color: var(--body); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; font-family: var(--font-inter, "Inter"), sans-serif; }
 
   .activity-row { grid-template-columns: auto 1fr auto !important; column-gap: 12px !important; row-gap: 4px; }
-  .mover-row { grid-template-columns: auto 1fr auto !important; row-gap: 6px; }
+  .mover-row { grid-template-columns: auto 1fr auto auto !important; row-gap: 6px; }
   .mover-row .mover-spark { display: none; }
 
   .stat-card { padding: 16px !important; }
   .swap-input-amt { font-size: 28px !important; }
   .range-pills button { padding: 6px 10px !important; font-size: 10px !important; }
+
+  .reserves-table .table-row-stack { grid-template-columns: 1fr !important; row-gap: 2px !important; }
 
   .stock-list-row { grid-template-columns: 1fr auto auto !important; gap: 12px !important; }
   .stock-list-row .stock-sector   { display: none !important; }

@@ -14,17 +14,34 @@ function EmptyReserveRow(): React.ReactNode {
 
 interface ReservesTableProps {
   entries: ReserveEntry[];
+  isLoading?: boolean;
 }
 
-export function ReservesTable({ entries }: ReservesTableProps): React.ReactNode {
+export function ReservesTable({ entries, isLoading }: ReservesTableProps): React.ReactNode {
   return (
-    <div>
+    <div className="reserves-table">
       <div className="hairline table-head-desktop" style={{ display: "grid", gridTemplateColumns: "1.6fr 1.2fr 1.2fr 1fr 1fr 1fr", gap: 16, padding: "14px 0" }}>
         {["Asset", "Custodian holdings", "On-chain supply", "Peg ratio", "Last mint", "Status"].map((heading, columnIndex) => (
           <div key={columnIndex} className="eyebrow" style={{ color: "var(--body)", textAlign: columnIndex >= 1 && columnIndex <= 5 ? "right" : "left" }}>{heading}</div>
         ))}
       </div>
-      {entries.length === 0 && <EmptyReserveRow />}
+      {isLoading && Array.from({ length: 3 }, (_, skeletonIndex) => (
+        <div key={skeletonIndex} className="hairline table-row-stack" style={{ display: "grid", gridTemplateColumns: "1.6fr 1.2fr 1.2fr 1fr 1fr 1fr", gap: 16, padding: "16px 0", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div className="skeleton" style={{ width: 32, height: 32, flexShrink: 0 }} />
+            <div>
+              <div className="skeleton" style={{ height: 14, width: 60, marginBottom: 4 }} />
+              <div className="skeleton" style={{ height: 11, width: 90 }} />
+            </div>
+          </div>
+          {[100, 100, 60, 80, 60].map((cellWidth, cellIndex) => (
+            <div key={cellIndex} style={{ textAlign: "right" }}>
+              <div className="skeleton" style={{ height: 13, width: cellWidth, marginLeft: "auto" }} />
+            </div>
+          ))}
+        </div>
+      ))}
+      {!isLoading && entries.length === 0 && <EmptyReserveRow />}
       {entries.map(entry => {
         const stock = entry.stock;
         const custodyBalance = formatRawToken(entry.custodian_holdings);

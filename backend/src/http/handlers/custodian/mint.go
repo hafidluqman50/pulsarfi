@@ -2,6 +2,7 @@ package custodian
 
 import (
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -13,13 +14,13 @@ import (
 )
 
 type recordMintRequestBody struct {
-	OnChainID       *int64  `json:"on_chain_id"      binding:"required"`
-	Ticker          string  `json:"ticker"           binding:"required"`
-	TokenAmount     string  `json:"token_amount"     binding:"required"`
-	IdrxAmount      *string `json:"idrx_amount"`
-	AttestationHash string  `json:"attestation_hash" binding:"required"`
-	Destination     string  `json:"destination"      binding:"required,oneof=operator_wallet liquidity_pool"`
-	TxHash          string  `json:"tx_hash"          binding:"required"`
+	OnChainID          *int64  `json:"on_chain_id"          binding:"required"`
+	Ticker             string  `json:"ticker"               binding:"required"`
+	TokenAmount        string  `json:"token_amount"         binding:"required"`
+	IdrxAmount         *string `json:"idrx_amount"`
+	AttestationHash    string  `json:"attestation_hash"     binding:"required"`
+	Destination string `json:"destination" binding:"required,oneof=operator_wallet liquidity_pool"`
+	TxHash      string `json:"tx_hash"     binding:"required"`
 }
 
 func RecordMintRequestHandler(c *gin.Context) {
@@ -61,16 +62,17 @@ func RecordMintRequestHandler(c *gin.Context) {
 	requesterID := custodian.ID
 	txHash := req.TxHash
 	proposal, err := repos.MintProposal.Create(c.Request.Context(), repository.MintProposalCreateInput{
-		OnChainID:       onChainID,
-		StockID:         stock.ID,
-		RequesterID:     &requesterID,
-		TokenAmount:     req.TokenAmount,
-		IdrxAmount:      req.IdrxAmount,
+		OnChainID:          onChainID,
+		StockID:            stock.ID,
+		RequesterID:        &requesterID,
+		TokenAmount:        req.TokenAmount,
+		IdrxAmount:         req.IdrxAmount,
 		AttestationHash: req.AttestationHash,
 		Destination:     req.Destination,
 		RequestTxHash:   &txHash,
 	})
 	if err != nil {
+		slog.Error("failed to record proposal", "error", err)
 		response.InternalError(c, "failed to record proposal")
 		return
 	}
