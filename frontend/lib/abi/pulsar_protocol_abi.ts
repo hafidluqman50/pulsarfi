@@ -493,9 +493,9 @@ export const PULSAR_PROTOCOL_ABI = [
         "internalType": "bytes32"
       },
       {
-        "name": "destination",
+        "name": "__deprecatedDestination",
         "type": "uint8",
-        "internalType": "enum PulsarProtocol.MintDestination"
+        "internalType": "uint8"
       },
       {
         "name": "requester",
@@ -705,11 +705,6 @@ export const PULSAR_PROTOCOL_ABI = [
         "name": "attestationHash",
         "type": "bytes32",
         "internalType": "bytes32"
-      },
-      {
-        "name": "destination",
-        "type": "uint8",
-        "internalType": "enum PulsarProtocol.MintDestination"
       }
     ],
     "outputs": [
@@ -734,6 +729,11 @@ export const PULSAR_PROTOCOL_ABI = [
         "name": "tokenAmount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],

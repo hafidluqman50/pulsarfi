@@ -43,26 +43,26 @@ func (r *MintProposalRepository) FindByOnChainID(ctx context.Context, onChainID 
 }
 
 type MintProposalCreateInput struct {
-	OnChainID       int64
-	StockID         int64
-	RequesterID     *int64
-	TokenAmount     string
-	IdrxAmount      *string
-	AttestationHash string
-	Destination     string
-	RequestTxHash   *string
+	OnChainID          int64
+	StockID            int64
+	RequesterID        *int64
+	TokenAmount        string
+	IdrxAmount         *string
+	AttestationHash    string
+	Destination   string
+	RequestTxHash *string
 }
 
 func (r *MintProposalRepository) Create(ctx context.Context, input MintProposalCreateInput) (model.MintProposal, error) {
 	proposal := model.MintProposal{
-		OnChainID:       input.OnChainID,
-		StockID:         input.StockID,
-		RequesterID:     input.RequesterID,
-		TokenAmount:     input.TokenAmount,
-		IdrxAmount:      input.IdrxAmount,
-		AttestationHash: input.AttestationHash,
-		Destination:     input.Destination,
-		Status:          "pending",
+		OnChainID:          input.OnChainID,
+		StockID:            input.StockID,
+		RequesterID:        input.RequesterID,
+		TokenAmount:        input.TokenAmount,
+		IdrxAmount:         input.IdrxAmount,
+		AttestationHash:    input.AttestationHash,
+		Destination: input.Destination,
+		Status:      "pending",
 		RequestTxHash:   input.RequestTxHash,
 	}
 	return proposal, r.DB.WithContext(ctx).Create(&proposal).Error

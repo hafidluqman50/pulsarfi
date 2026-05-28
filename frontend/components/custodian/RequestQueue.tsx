@@ -131,7 +131,7 @@ export function RequestQueue({ requests, isLoading, currentAddress }: RequestQue
 
           return (
             <div key={requestKey(request)} className="hairline table-row-stack" style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr 1fr 1fr 1fr 1.6fr", gap: 12, padding: "16px 0", alignItems: "center", opacity: status ? 0.55 : 1 }}>
-              <div className="col-asset" style={{ width: 32, height: 32, border: "1px solid var(--ink)", display: "flex", alignItems: "center", justifyContent: "center", background: isMint ? "var(--merah)" : "var(--ink)", color: "var(--putih)" }}>
+              <div style={{ width: 32, height: 32, border: "1px solid var(--ink)", display: "flex", alignItems: "center", justifyContent: "center", background: isMint ? "var(--merah)" : "var(--ink)", color: "var(--putih)", flexShrink: 0 }}>
                 <Icon name={isMint ? "arrow-up" : "arrow-down"} size={14} />
               </div>
               <div className="row-cell"><span className="row-cell-label">ID</span><div className="row-cell-value"><span className="mono" style={{ fontSize: 13 }}>REQ-{request.on_chain_id}</span></div></div>

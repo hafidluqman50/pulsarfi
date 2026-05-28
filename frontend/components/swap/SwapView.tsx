@@ -708,7 +708,7 @@ function Stat({
 }
 
 function MoversList({ tokens }: { tokens: MarketToken[] }) {
-	const { data: marketStocks = [] } = useMarketStocks();
+	const { data: marketStocks = [], isLoading } = useMarketStocks();
 
 	const movers = useMemo(() => {
 		const liveTokens = tokens.length > 0 ? tokens : [];
@@ -726,6 +726,29 @@ function MoversList({ tokens }: { tokens: MarketToken[] }) {
 			return accumulator;
 		}, {});
 	}, [marketStocks, movers]);
+
+	if (isLoading && tokens.length === 0) {
+		return (
+			<div className="hairline-top">
+				{Array.from({ length: 5 }, (_, skeletonIndex) => (
+					<div
+						key={skeletonIndex}
+						className="hairline mover-row"
+						style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto auto", alignItems: "center", gap: 16, padding: "14px 0" }}
+					>
+						<div className="skeleton" style={{ width: 32, height: 32, flexShrink: 0 }} />
+						<div>
+							<div className="skeleton" style={{ height: 14, width: 60, marginBottom: 4 }} />
+							<div className="skeleton" style={{ height: 11, width: 110 }} />
+						</div>
+						<div className="mover-spark" />
+						<div className="skeleton" style={{ height: 14, width: 80, marginLeft: "auto" }} />
+						<div className="skeleton" style={{ height: 13, width: 56, marginLeft: "auto" }} />
+					</div>
+				))}
+			</div>
+		);
+	}
 
 	return (
 		<div className="hairline-top">
