@@ -89,6 +89,12 @@ The router's factory must equal `UNISWAP_V2_FACTORY`, the protocol router must e
 - `/custodian` — multisig mint dashboard, KYC management, pending proposals
 - Sonner for all toast/notification UI
 
+### Frontend Styling Rules
+
+- Use Tailwind utility classes for component styling. Do not add new React inline `style` props for normal layout, spacing, typography, color, borders, or shadows.
+- Preserve existing visuals 1:1 when refactoring styles. Prefer arbitrary Tailwind values such as `px-[24px]`, `mt-[28px]`, and `grid-cols-[...]` when exact pixel parity matters.
+- Existing global helper classes such as `display`, `mono`, `eyebrow`, `hairline`, `card`, `btn`, and responsive table/layout classes may stay in place; compose Tailwind around them instead of rewriting behavior.
+
 ---
 
 ## 4. Custodian Flows (3/5 Multisig)

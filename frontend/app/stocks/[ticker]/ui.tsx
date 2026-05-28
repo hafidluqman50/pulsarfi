@@ -49,10 +49,10 @@ export function StockDetailPage() {
   if (!stock) {
     return (
       <Layout>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '80px 24px' }}>
-          <div style={{ textAlign: 'center' }}>
-            <div className="display" style={{ fontSize: 32, marginBottom: 12 }}>Not found</div>
-            <div style={{ color: 'var(--body)', marginBottom: 24 }}>No pStock with ticker &quot;{ticker}&quot;</div>
+        <div className="flex flex-1 items-center justify-center px-[24px] py-[80px]">
+          <div className="text-center">
+            <div className="display mb-[12px] !text-[32px]">Not found</div>
+            <div className="mb-[24px] text-[var(--body)]">No pStock with ticker &quot;{ticker}&quot;</div>
             <button className="btn btn-primary" onClick={() => router.push('/stocks')}>Back to Markets</button>
           </div>
         </div>
@@ -65,51 +65,50 @@ export function StockDetailPage() {
 
   return (
     <Layout>
-      <div className="container pad-x" style={{ paddingTop: 28, paddingBottom: 64 }}>
+      <div className="container pad-x !pb-[64px] !pt-[28px]">
 
         {/* Breadcrumb */}
-        <nav style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 24 }}>
+        <nav className="mb-[24px] flex items-center gap-[6px]">
           <button
             onClick={() => router.push('/stocks')}
-            style={{ appearance: 'none', border: 0, background: 'transparent', padding: 0, cursor: 'pointer', fontSize: 13, color: 'var(--body)', fontFamily: 'inherit' }}
+            className="cursor-pointer appearance-none border-0 bg-transparent p-[0] text-[13px] text-[var(--body)] [font-family:inherit]"
           >
             Markets
           </button>
-          <span style={{ color: 'var(--hairline-strong)', fontSize: 13 }}>/</span>
-          <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>{stock.ticker}</span>
+          <span className="text-[13px] text-[var(--hairline-strong)]">/</span>
+          <span className="mono text-[13px] font-bold text-[var(--ink)]">{stock.ticker}</span>
         </nav>
 
         {/* Stock header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28, gap: 16, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <div className="mb-[28px] flex flex-wrap items-start justify-between gap-[16px]">
+          <div className="flex items-start gap-[16px]">
             <PStockMark ticker={stock.ticker} size={52} />
             <div>
-              <div className="eyebrow" style={{ color: 'var(--body)', marginBottom: 4 }}>
+              <div className="eyebrow mb-[4px] !text-[var(--body)]">
                 {stock.sector} · IDX: {stock.ipo} · Tokenized on Arbitrum
               </div>
-              <div className="display" style={{ fontSize: 28, lineHeight: 1.15 }}>{stock.name}</div>
-              <div style={{ marginTop: 10, display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
-                <span className="mono" style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em' }}>
+              <div className="display !text-[28px] !leading-[1.15]">{stock.name}</div>
+              <div className="mt-[10px] flex flex-wrap items-baseline gap-[16px]">
+                <span className="mono text-[28px] font-bold tracking-[-0.02em]">
                   {fmtIDRX(displayPrice)}
                 </span>
-                <span className="mono" style={{ fontSize: 15, color: isPositive ? 'var(--positive)' : 'var(--negative)' }}>
+                <span className={`mono text-[15px] ${isPositive ? 'text-[var(--positive)]' : 'text-[var(--negative)]'}`}>
                   {fmtPct(displayChange)} 24h
                 </span>
               </div>
             </div>
           </div>
           <button
-            className="btn btn-merah"
             onClick={() => setTradeOpen(true)}
-            style={{ padding: '13px 28px', fontSize: 14, flexShrink: 0 }}
+            className="btn btn-merah shrink-0 !px-[28px] !py-[13px] !text-[14px]"
           >
             Trade {stock.ticker}
           </button>
         </div>
 
         {/* Chart */}
-        <div style={{ marginBottom: 20 }}>
-          <div className="stock-chart-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div className="mb-[20px]">
+          <div className="stock-chart-header mb-[10px] flex items-center justify-between">
             <div className="range-pills">
               {STOCK_TIMEFRAME_OPTIONS.map(timeframe => (
                 <button
@@ -121,11 +120,11 @@ export function StockDetailPage() {
                 </button>
               ))}
             </div>
-            <span className="mono stock-supply-info" style={{ fontSize: 11, color: 'var(--body)' }}>
+            <span className="mono stock-supply-info text-[11px] text-[var(--body)]">
               Total supply · {fmtNum(tokenSupply, 0)} {stock.ticker}
             </span>
           </div>
-          <div style={{ border: '1px solid var(--hairline)', background: 'var(--putih)', padding: '12px 0 4px' }}>
+          <div className="border border-[var(--hairline)] bg-[var(--putih)] pb-[4px] pt-[12px]">
             <AreaChart
               data={chartData}
               height={340}
@@ -144,35 +143,34 @@ export function StockDetailPage() {
             { label: 'Pool Price', value: poolPrice?.price ? fmtIDRX(poolPrice.price) : '—' },
           ].map(statItem => (
             <div key={statItem.label} className="stock-stats-cell">
-              <div className="eyebrow" style={{ fontSize: 9, marginBottom: 5, color: 'var(--body)' }}>{statItem.label}</div>
-              <div className="mono" style={{ fontSize: 14, fontWeight: 700 }}>{statItem.value}</div>
+              <div className="eyebrow mb-[5px] !text-[9px] !text-[var(--body)]">{statItem.label}</div>
+              <div className="mono text-[14px] font-bold">{statItem.value}</div>
             </div>
           ))}
         </div>
 
         {/* News */}
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 14 }}>
+          <div className="mb-[14px] flex items-baseline justify-between">
             <span className="eyebrow">Market Intelligence</span>
-            <span className="mono" style={{ fontSize: 10, color: 'var(--body)' }}>IDX · Realtime Feed</span>
+            <span className="mono text-[10px] text-[var(--body)]">IDX · Realtime Feed</span>
           </div>
-          <div style={{ border: '1px solid var(--hairline)', background: 'var(--putih)' }}>
+          <div className="border border-[var(--hairline)] bg-[var(--putih)]">
             {newsItems.map((newsItem, newsIndex) => (
               <div
                 key={newsIndex}
-                style={{ padding: '18px 20px', borderBottom: newsIndex < newsItems.length - 1 ? '1px solid var(--hairline)' : 'none' }}
+                className={`px-[20px] py-[18px] ${newsIndex < newsItems.length - 1 ? 'border-b border-[var(--hairline)]' : ''}`}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.45, marginBottom: 8 }}>{newsItem.headline}</div>
-                    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                      <span className="eyebrow" style={{ fontSize: 9, color: 'var(--body)' }}>{newsItem.source}</span>
-                      <span style={{ fontSize: 11, color: 'var(--body)' }}>{newsItem.time}</span>
+                <div className="flex items-start justify-between gap-[16px]">
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-[8px] text-[14px] font-semibold leading-[1.45]">{newsItem.headline}</div>
+                    <div className="flex items-center gap-[12px]">
+                      <span className="eyebrow !text-[9px] !text-[var(--body)]">{newsItem.source}</span>
+                      <span className="text-[11px] text-[var(--body)]">{newsItem.time}</span>
                     </div>
                   </div>
                   <span
-                    className="eyebrow"
-                    style={{ fontSize: 9, padding: '3px 8px', border: '1px solid var(--hairline)', color: 'var(--body)', flexShrink: 0, marginTop: 2 }}
+                    className="eyebrow mt-[2px] shrink-0 border border-[var(--hairline)] px-[8px] py-[3px] !text-[9px] !text-[var(--body)]"
                   >
                     {newsItem.tag}
                   </span>

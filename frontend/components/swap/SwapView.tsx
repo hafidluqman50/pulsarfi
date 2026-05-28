@@ -168,54 +168,24 @@ export function SwapView({ headline }: SwapViewProps) {
 					(inputBalance * pct || 0).toFixed(inputToken.isStable ? 2 : 4),
 				)
 			}
-			style={{
-				appearance: "none",
-				border: "1px solid var(--hairline-strong)",
-				background: "transparent",
-				padding: "4px 10px",
-				fontSize: 11,
-				fontWeight: 600,
-				fontFamily: "Inter",
-				cursor: "pointer",
-				letterSpacing: "0.08em",
-				textTransform: "uppercase",
-			}}
+			className="cursor-pointer appearance-none border border-[var(--hairline-strong)] bg-transparent px-[10px] py-[4px] text-[11px] font-semibold uppercase tracking-[0.08em] [font-family:var(--font-inter,_Inter,_sans-serif)]"
 		>
 			{pct === 1 ? "Max" : `${pct * 100}%`}
 		</button>
 	);
 
 	return (
-		<div className="grid-2col pad-x" style={{ padding: "40px 24px" }}>
+		<div className="grid-2col !px-[24px] !py-[40px]">
 			{/* LEFT — Editorial */}
 			<div>
-				<h1
-					className="display hero-display"
-					style={{
-						fontSize: 70,
-						lineHeight: 0.96,
-						letterSpacing: "-0.03em",
-						margin: 0,
-						fontWeight: 400,
-					}}
-				>
+				<h1 className="display hero-display !m-[0] !text-[70px] !font-normal !leading-[0.96] !tracking-[-0.03em]">
 					{headline.line1}
 					<br />
 					<span className="display-it">{headline.line2}</span>
 					<br />
 					{headline.line3}
 				</h1>
-				<p
-					style={{
-						marginTop: 28,
-						fontSize: 18,
-						lineHeight: 1.55,
-						color: "var(--ink-soft)",
-						maxWidth: 540,
-						fontFamily: '"Fraunces", serif',
-						fontWeight: 300,
-					}}
-				>
+				<p className="mt-[28px] max-w-[540px] text-[18px] font-light leading-[1.55] text-[var(--ink-soft)] [font-family:var(--font-fraunces,_Fraunces,_serif)]">
 					Eight blue-chip equities from the Indonesia Stock Exchange, tokenized
 					1:1 on Arbitrum. Trade{" "}
 					<em className="display-it">BUMIP, TLKMP, GOTOP</em> and others at any
@@ -223,10 +193,7 @@ export function SwapView({ headline }: SwapViewProps) {
 					holds the underlying; arbitrageurs maintain the peg.
 				</p>
 
-				<div
-					className="hairline-top grid-3col"
-					style={{ marginTop: 36, paddingTop: 24 }}
-				>
+				<div className="hairline-top grid-3col mt-[36px] pt-[24px]">
 					<Stat label="24h Volume" value="77.8M IDRX" sub="across 8 pairs" />
 					<Stat
 						label="Total Value Locked"
@@ -236,11 +203,8 @@ export function SwapView({ headline }: SwapViewProps) {
 					<Stat label="Peg Deviation" value="0.03%" sub="within tolerance" />
 				</div>
 
-				<div style={{ marginTop: 36 }}>
-					<div
-						className="eyebrow"
-						style={{ marginBottom: 14, color: "var(--body)" }}
-					>
+				<div className="mt-[36px]">
+					<div className="eyebrow mb-[14px] !text-[var(--body)]">
 						Top movers · 24h
 					</div>
 					<MoversList tokens={marketTokens} />
@@ -248,31 +212,19 @@ export function SwapView({ headline }: SwapViewProps) {
 			</div>
 
 			{/* RIGHT — Swap card */}
-			<div className="swap-sticky" style={{ position: "sticky", top: 24 }}>
-				<div
-					className="card swap-card-shadow"
-					style={{ padding: 0, boxShadow: "12px 12px 0 0 rgba(22,17,14,0.08)" }}
-				>
-					<div
-						className="hairline"
-						style={{
-							padding: "16px 20px",
-							display: "flex",
-							alignItems: "center",
-							justifyContent: "space-between",
-						}}
-					>
-						<div className="display" style={{ fontSize: 22, fontWeight: 500 }}>
+			<div className="swap-sticky sticky top-[24px]">
+				<div className="card swap-card-shadow p-[0] shadow-[12px_12px_0_0_rgba(22,17,14,0.08)]">
+					<div className="hairline flex items-center justify-between px-[20px] py-[16px]">
+						<div className="display !text-[22px] !font-medium">
 							Swap
 						</div>
-						<div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-							<div className="eyebrow" style={{ color: "var(--body)" }}>
+						<div className="flex items-center gap-[14px]">
+							<div className="eyebrow !text-[var(--body)]">
 								v2 ROUTER
 							</div>
 							<button
 								type="button"
-								className="btn btn-ghost"
-								style={{ padding: 4 }}
+								className="btn btn-ghost !p-[4px]"
 								onClick={() => setShowSettings((s) => !s)}
 								aria-label="Settings"
 							>
@@ -282,38 +234,26 @@ export function SwapView({ headline }: SwapViewProps) {
 					</div>
 
 					{showSettings && (
-						<div
-							className="hairline"
-							style={{ padding: "14px 20px", background: "var(--canvas)" }}
-						>
-							<div
-								className="eyebrow"
-								style={{ color: "var(--body)", marginBottom: 8 }}
-							>
+						<div className="hairline bg-[var(--canvas)] px-[20px] py-[14px]">
+							<div className="eyebrow mb-[8px] !text-[var(--body)]">
 								Slippage Tolerance
 							</div>
-							<div style={{ display: "flex", gap: 8 }}>
+							<div className="flex gap-[8px]">
 								{[0.1, 0.5, 1.0].map((s) => (
 									<button
 										type="button"
 										key={s}
 										onClick={() => setSlippage(s)}
-										style={{
-											appearance: "none",
-											padding: "8px 14px",
-											border: "1px solid var(--ink)",
-											background: slippage === s ? "var(--ink)" : "transparent",
-											color: slippage === s ? "var(--putih)" : "var(--ink)",
-											fontSize: 13,
-											fontWeight: 600,
-											cursor: "pointer",
-											fontFamily: "Inter",
-										}}
+										className={`cursor-pointer appearance-none border border-[var(--ink)] px-[14px] py-[8px] text-[13px] font-semibold [font-family:var(--font-inter,_Inter,_sans-serif)] ${
+											slippage === s
+												? "bg-[var(--ink)] text-[var(--putih)]"
+												: "bg-transparent text-[var(--ink)]"
+										}`}
 									>
 										{s}%
 									</button>
 								))}
-								<div style={{ flex: 1 }} />
+								<div className="flex-1" />
 								<input
 									type="number"
 									step="0.1"
@@ -321,8 +261,7 @@ export function SwapView({ headline }: SwapViewProps) {
 									onChange={(e) =>
 										setSlippage(parseFloat(e.target.value) || 0)
 									}
-									className="input mono"
-									style={{ width: 90, textAlign: "right" }}
+									className="input mono !w-[90px] !text-right"
 								/>
 							</div>
 						</div>
@@ -337,34 +276,19 @@ export function SwapView({ headline }: SwapViewProps) {
 						onSelect={() => setPickerFor("in")}
 						actions={
 							isConnected ? (
-								<div style={{ display: "flex", gap: 6 }}>
+								<div className="flex gap-[6px]">
 									{[0.25, 0.5, 1].map(percentButton)}
 								</div>
 							) : undefined
 						}
 					/>
 
-					<div style={{ position: "relative", height: 0 }}>
+					<div className="relative h-[0]">
 						<button
 							type="button"
 							onClick={flip}
 							aria-label="Flip"
-							style={{
-								position: "absolute",
-								left: "50%",
-								top: -18,
-								transform: "translateX(-50%)",
-								width: 36,
-								height: 36,
-								background: "var(--canvas)",
-								border: "1px solid var(--ink)",
-								cursor: "pointer",
-								color: "var(--ink)",
-								display: "flex",
-								alignItems: "center",
-								justifyContent: "center",
-								borderRadius: 0,
-							}}
+							className="absolute left-1/2 top-[-18px] flex h-[36px] w-[36px] -translate-x-1/2 cursor-pointer items-center justify-center border border-[var(--ink)] bg-[var(--canvas)] text-[var(--ink)]"
 						>
 							<Icon name="swap" size={14} />
 						</button>
@@ -382,13 +306,13 @@ export function SwapView({ headline }: SwapViewProps) {
 						readOnly
 						onSelect={() => setPickerFor("out")}
 						actions={
-							<div className="mono" style={{ fontSize: 11, color: "var(--body)" }}>
+							<div className="mono text-[11px] text-[var(--body)]">
 								≈ {fmtIDRX(quote.inputAmount * inputToken.price)}
 							</div>
 						}
 					/>
 
-					<div style={{ padding: "4px 20px 16px" }}>
+					<div className="px-[20px] pb-[16px] pt-[4px]">
 						<Accordion
 							open={detailsOpen}
 							onToggle={() => setDetailsOpen((open) => !open)}
@@ -408,22 +332,16 @@ export function SwapView({ headline }: SwapViewProps) {
 								v={`${fmtNum(quote.inputAmount * 0.003, 4)} ${inputToken.ticker}`}
 								hint="0.30%"
 							/>
-<DetailRow
+							<DetailRow
 								k="Route"
 								v={
-									<span
-										style={{
-											display: "inline-flex",
-											alignItems: "center",
-											gap: 6,
-										}}
-									>
+									<span className="inline-flex items-center gap-[6px]">
 										<span className="mono">{inputToken.ticker}</span>
 										<Icon name="chevron-right" size={11} />
-										<span className="mono" style={{ color: "var(--merah)" }}>
+										<span className="mono text-[var(--merah)]">
 											{outputToken?.ticker ?? ""}
 										</span>
-										<span style={{ color: "var(--body)", marginLeft: 6 }}>
+										<span className="ml-[6px] text-[var(--body)]">
 											· Uniswap V2
 										</span>
 									</span>
@@ -432,20 +350,14 @@ export function SwapView({ headline }: SwapViewProps) {
 						</Accordion>
 					</div>
 
-					<div style={{ padding: "0 20px 20px" }}>
+					<div className="px-[20px] pb-[20px]">
 						{!isConnected ? (
 							<ConnectButton.Custom>
 								{({ openConnectModal }) => (
 									<button
 										type="button"
 										onClick={openConnectModal}
-										className="btn btn-merah"
-										style={{
-											width: "100%",
-											padding: "16px 20px",
-											fontSize: 15,
-											letterSpacing: "0.03em",
-										}}
+										className="btn btn-merah !w-full !px-[20px] !py-[16px] !text-[15px] !tracking-[0.03em]"
 									>
 										Connect Wallet
 									</button>
@@ -456,22 +368,10 @@ export function SwapView({ headline }: SwapViewProps) {
 								type="button"
 								onClick={ctaAction}
 								disabled={ctaDisabled}
-								className="btn btn-merah"
-								style={{
-									width: "100%",
-									padding: "16px 20px",
-									fontSize: 15,
-									letterSpacing: "0.03em",
-								}}
+								className="btn btn-merah !w-full !px-[20px] !py-[16px] !text-[15px] !tracking-[0.03em]"
 							>
 								{busy && (
-									<span
-										style={{
-											display: "inline-block",
-											verticalAlign: "-2px",
-											marginRight: 8,
-										}}
-									>
+									<span className="mr-[8px] inline-block align-[-2px]">
 										<Icon name="loader" size={14} />
 									</span>
 								)}
@@ -479,30 +379,14 @@ export function SwapView({ headline }: SwapViewProps) {
 							</button>
 						)}
 						{isConnected && !insufficient && quote.inputAmount > 0 && (
-							<div
-								style={{
-									marginTop: 12,
-									fontSize: 11,
-									color: "var(--body)",
-									textAlign: "center",
-									letterSpacing: "0.04em",
-								}}
-							>
+							<div className="mt-[12px] text-center text-[11px] tracking-[0.04em] text-[var(--body)]">
 								Settles instantly on-chain · Custody peg 1:1 verified 8 min ago
 							</div>
 						)}
 					</div>
 				</div>
 
-				<div
-					style={{
-						marginTop: 18,
-						fontSize: 12,
-						color: "var(--body)",
-						lineHeight: 1.6,
-						fontFamily: '"Fraunces", serif',
-					}}
-				>
+				<div className="mt-[18px] text-[12px] leading-[1.6] text-[var(--body)] [font-family:var(--font-fraunces,_Fraunces,_serif)]">
 					By trading, you affirm you are not a resident of restricted
 					jurisdictions and that these tokens are cryptographic receipts fully
 					backed 1:1 by physical IDX-listed equities held in custody by{" "}
@@ -545,23 +429,16 @@ function SwapField({
 	actions?: React.ReactNode;
 }) {
 	return (
-		<div className="hairline" style={{ padding: "20px 20px 16px" }}>
-			<div
-				style={{
-					display: "flex",
-					justifyContent: "space-between",
-					alignItems: "baseline",
-					marginBottom: 12,
-				}}
-			>
-				<span className="eyebrow" style={{ color: "var(--body)" }}>
+		<div className="hairline px-[20px] pb-[16px] pt-[20px]">
+			<div className="mb-[12px] flex items-baseline justify-between">
+				<span className="eyebrow !text-[var(--body)]">
 					{label}
 				</span>
-				<span className="mono" style={{ fontSize: 12, color: "var(--body)" }}>
+				<span className="mono text-[12px] text-[var(--body)]">
 					Bal {balance != null ? fmtNum(balance, 4) : "—"}
 				</span>
 			</div>
-			<div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+			<div className="flex items-center gap-[16px]">
 				<input
 					inputMode="decimal"
 					placeholder="0.00"
@@ -575,54 +452,20 @@ function SwapField({
 								}
 							: undefined
 					}
-					className="mono swap-input-amt"
-					style={{
-						appearance: "none",
-						border: 0,
-						outline: 0,
-						flex: 1,
-						minWidth: 0,
-						background: "transparent",
-						fontSize: 36,
-						fontWeight: 400,
-						color: "var(--ink)",
-						padding: 0,
-						fontFamily: '"Fraunces", serif',
-						letterSpacing: "-0.02em",
-						width: "100%",
-					}}
+					className="swap-input-amt w-full min-w-0 flex-1 appearance-none border-0 bg-transparent p-[0] text-[36px] font-normal tracking-[-0.02em] text-[var(--ink)] outline-none [font-family:var(--font-fraunces,_Fraunces,_serif)]"
 				/>
 				<button
 					type="button"
 					onClick={onSelect}
-					style={{
-						appearance: "none",
-						display: "flex",
-						alignItems: "center",
-						gap: 10,
-						padding: "8px 12px 8px 8px",
-						border: "1px solid var(--ink)",
-						background: "var(--canvas)",
-						cursor: "pointer",
-						color: "var(--ink)",
-						font: "inherit",
-					}}
+					className="flex cursor-pointer appearance-none items-center gap-[10px] border border-[var(--ink)] bg-[var(--canvas)] py-[8px] pl-[8px] pr-[12px] text-[var(--ink)] [font:inherit]"
 				>
 					<PStockMark ticker={token.ticker} size={26} />
-					<span style={{ fontWeight: 600, fontSize: 14 }}>{token.ticker}</span>
+					<span className="text-[14px] font-semibold">{token.ticker}</span>
 					<Icon name="chevron-down" size={14} />
 				</button>
 			</div>
-			<div
-				style={{
-					display: "flex",
-					justifyContent: "space-between",
-					alignItems: "center",
-					marginTop: 10,
-					minHeight: 22,
-				}}
-			>
-				<span className="mono" style={{ fontSize: 12, color: "var(--body)" }}>
+			<div className="mt-[10px] flex min-h-[22px] items-center justify-between">
+				<span className="mono text-[12px] text-[var(--body)]">
 					{token.name}
 				</span>
 				<div>{actions}</div>
@@ -641,32 +484,12 @@ export function DetailRow({
 	hint?: string;
 }) {
 	return (
-		<div
-			style={{
-				display: "flex",
-				justifyContent: "space-between",
-				alignItems: "baseline",
-				gap: 12,
-			}}
-		>
-			<span style={{ color: "var(--body)", fontSize: 13 }}>{k}</span>
-			<span
-				style={{
-					textAlign: "right",
-					fontSize: 13,
-					fontFamily: '"JetBrains Mono", monospace',
-				}}
-			>
+		<div className="flex items-baseline justify-between gap-[12px]">
+			<span className="text-[13px] text-[var(--body)]">{k}</span>
+			<span className="mono text-right text-[13px]">
 				{v}
 				{hint && (
-					<span
-						style={{
-							marginLeft: 6,
-							color: "var(--body)",
-							fontFamily: "Inter",
-							fontSize: 11,
-						}}
-					>
+					<span className="ml-[6px] text-[11px] text-[var(--body)] [font-family:var(--font-inter,_Inter,_sans-serif)]">
 						· {hint}
 					</span>
 				)}
@@ -686,21 +509,13 @@ function Stat({
 }) {
 	return (
 		<div>
-			<div className="eyebrow" style={{ color: "var(--body)" }}>
+			<div className="eyebrow !text-[var(--body)]">
 				{label}
 			</div>
-			<div
-				className="display"
-				style={{
-					fontSize: 32,
-					marginTop: 6,
-					lineHeight: 1,
-					letterSpacing: "-0.02em",
-				}}
-			>
+			<div className="display mt-[6px] !text-[32px] !leading-none !tracking-[-0.02em]">
 				{value}
 			</div>
-			<div style={{ marginTop: 6, fontSize: 12, color: "var(--body)" }}>
+			<div className="mt-[6px] text-[12px] text-[var(--body)]">
 				{sub}
 			</div>
 		</div>
@@ -733,17 +548,16 @@ function MoversList({ tokens }: { tokens: MarketToken[] }) {
 				{Array.from({ length: 5 }, (_, skeletonIndex) => (
 					<div
 						key={skeletonIndex}
-						className="hairline mover-row"
-						style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto auto", alignItems: "center", gap: 16, padding: "14px 0" }}
+						className="hairline mover-row grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-[16px] py-[14px]"
 					>
-						<div className="skeleton" style={{ width: 32, height: 32, flexShrink: 0 }} />
+						<div className="skeleton h-[32px] w-[32px] shrink-0" />
 						<div>
-							<div className="skeleton" style={{ height: 14, width: 60, marginBottom: 4 }} />
-							<div className="skeleton" style={{ height: 11, width: 110 }} />
+							<div className="skeleton mb-[4px] h-[14px] w-[60px]" />
+							<div className="skeleton h-[11px] w-[110px]" />
 						</div>
 						<div className="mover-spark" />
-						<div className="skeleton" style={{ height: 14, width: 80, marginLeft: "auto" }} />
-						<div className="skeleton" style={{ height: 13, width: 56, marginLeft: "auto" }} />
+						<div className="skeleton ml-auto h-[14px] w-[80px]" />
+						<div className="skeleton ml-auto h-[13px] w-[56px]" />
 					</div>
 				))}
 			</div>
@@ -757,27 +571,12 @@ function MoversList({ tokens }: { tokens: MarketToken[] }) {
 				return (
 					<div
 						key={token.ticker}
-						className="hairline row-hover mover-row"
-						style={{
-							display: "grid",
-							gridTemplateColumns: "auto 1fr auto auto auto",
-							alignItems: "center",
-							gap: 16,
-							padding: "14px 0",
-						}}
+						className="hairline row-hover mover-row grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-[16px] py-[14px]"
 					>
 						<PStockMark ticker={token.ticker} size={32} />
-						<div style={{ minWidth: 0 }}>
-							<div style={{ fontWeight: 600, fontSize: 14 }}>{token.ticker}</div>
-							<div
-								style={{
-									fontSize: 12,
-									color: "var(--body)",
-									whiteSpace: "nowrap",
-									overflow: "hidden",
-									textOverflow: "ellipsis",
-								}}
-							>
+						<div className="min-w-0">
+							<div className="text-[14px] font-semibold">{token.ticker}</div>
+							<div className="truncate text-[12px] text-[var(--body)]">
 								{token.name} · {token.sector}
 							</div>
 						</div>
@@ -787,20 +586,13 @@ function MoversList({ tokens }: { tokens: MarketToken[] }) {
 								positive={isPositive}
 							/>
 						</div>
-						<div
-							className="mono"
-							style={{ minWidth: 80, textAlign: "right", fontSize: 14 }}
-						>
+						<div className="mono min-w-[80px] text-right text-[14px]">
 							{fmtIDRX(token.price)}
 						</div>
 						<div
-							className="mono"
-							style={{
-								minWidth: 76,
-								textAlign: "right",
-								fontSize: 13,
-								color: isPositive ? "var(--positive)" : "var(--negative)",
-							}}
+							className={`mono min-w-[76px] text-right text-[13px] ${
+								isPositive ? "text-[var(--positive)]" : "text-[var(--negative)]"
+							}`}
 						>
 							{fmtPct(token.change24h)}
 						</div>

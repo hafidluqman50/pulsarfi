@@ -36,7 +36,7 @@ export function Donut({ data, size = 180, thickness = 22, palette = [] }: DonutP
     return renderedSegment;
   });
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: "block" }}>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="block">
       <circle cx={centerX} cy={centerY} r={radius} fill="none" stroke="var(--hairline)" strokeWidth={thickness} />
       {segments.map((renderedSegment, segmentIndex) => (
         <path key={segmentIndex} d={renderedSegment.arcPath} fill="none" stroke={renderedSegment.color} strokeWidth={thickness} strokeLinecap="butt" />
