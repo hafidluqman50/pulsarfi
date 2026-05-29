@@ -47,7 +47,10 @@ export function AreaChart({ data, height = 280, valueFormatter }: AreaChartProps
   const chartRef          = useRef<IChartApi | null>(null);
   const seriesRef         = useRef<ISeriesApi<'Area'> | null>(null);
   const formatterRef      = useRef(valueFormatter);
-  formatterRef.current    = valueFormatter; // stable ref avoids chart recreation on prop change
+
+  useEffect(() => {
+    formatterRef.current = valueFormatter;
+  }, [valueFormatter]);
 
   // Mount chart once — recreate only if height changes
   useEffect(() => {
@@ -116,7 +119,7 @@ export function AreaChart({ data, height = 280, valueFormatter }: AreaChartProps
       chartRef.current  = null;
       seriesRef.current = null;
     };
-  }, [height]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [height]);
 
   // Update series data and direction-based color on every data change
   useEffect(() => {
@@ -132,5 +135,5 @@ export function AreaChart({ data, height = 280, valueFormatter }: AreaChartProps
     chartRef.current?.timeScale().fitContent();
   }, [data]);
 
-  return <div ref={containerRef} style={{ width: '100%' }} />;
+  return <div ref={containerRef} className="w-full" />;
 }

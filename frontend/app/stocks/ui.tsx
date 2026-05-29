@@ -54,37 +54,36 @@ function StockRow({ stock, sparkline }: { stock: MarketStock; sparkline: number[
       className="hairline stock-list-row"
       onClick={() => router.push(`/stocks/${stock.ticker}`)}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+      <div className="flex min-w-0 items-center gap-[12px]">
         <PStockMark ticker={stock.ticker} size={34} />
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>{stock.ticker}</div>
-          <div style={{ fontSize: 12, color: 'var(--body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div className="min-w-0">
+          <div className="text-[14px] font-bold">{stock.ticker}</div>
+          <div className="truncate text-[12px] text-[var(--body)]">
             {stock.stock_name}
           </div>
-          <div className="only-mobile eyebrow" style={{ fontSize: 10, color: 'var(--body)', marginTop: 3 }}>
+          <div className="only-mobile eyebrow mt-[3px] !text-[10px] !text-[var(--body)]">
             {sector}
           </div>
         </div>
       </div>
 
       <div className="stock-sector">
-        <span style={{ fontSize: 12, color: 'var(--body)', border: '1px solid var(--hairline)', padding: '2px 8px' }}>
+        <span className="border border-[var(--hairline)] px-[8px] py-[2px] text-[12px] text-[var(--body)]">
           {sector}
         </span>
       </div>
 
-      <div className="mono" style={{ textAlign: 'right', fontSize: 14, fontWeight: 600 }}>
+      <div className="mono text-right text-[14px] font-semibold">
         {fmtIDRX(price)}
       </div>
 
       <div
-        className="mono"
-        style={{ textAlign: 'right', fontSize: 13, color: isPositive ? 'var(--positive)' : 'var(--negative)' }}
+        className={`mono text-right text-[13px] ${isPositive ? 'text-[var(--positive)]' : 'text-[var(--negative)]'}`}
       >
         {fmtPct(change24h)}
       </div>
 
-      <div className="stock-sparkline" style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div className="stock-sparkline flex justify-end">
         <Sparkline data={sparkline} positive={isPositive} width={72} height={28} />
       </div>
     </div>
@@ -96,7 +95,10 @@ const IHSG_FALLBACK = 6_170;
 export function StocksListPage(): React.ReactNode {
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('1M');
   const { data: marketStocksData = [], isLoading } = useMarketStocks();
-  const marketStocks = Array.isArray(marketStocksData) ? marketStocksData : [];
+  const marketStocks = useMemo(
+    () => Array.isArray(marketStocksData) ? marketStocksData : [],
+    [marketStocksData],
+  );
 
   const { data: ihsgData } = useStockPrice('IHSG');
   const ihsgValue  = ihsgData?.price ?? IHSG_FALLBACK;
@@ -118,28 +120,28 @@ export function StocksListPage(): React.ReactNode {
 
   return (
     <Layout>
-      <div className="container pad-x" style={{ paddingTop: 36, paddingBottom: 64 }}>
+      <div className="container pad-x !pb-[64px] !pt-[36px]">
 
         {/* ── IHSG Section ── */}
-        <div style={{ marginBottom: 48 }}>
-          <div style={{ marginBottom: 20 }}>
-            <div className="eyebrow" style={{ color: 'var(--body)', marginBottom: 8 }}>
+        <div className="mb-[48px]">
+          <div className="mb-[20px]">
+            <div className="eyebrow mb-[8px] !text-[var(--body)]">
               Indeks Harga Saham Gabungan · IDX Composite
             </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 20, flexWrap: 'wrap' }}>
-              <span className="display" style={{ fontSize: 42, letterSpacing: '-0.02em' }}>
+            <div className="flex flex-wrap items-baseline gap-[20px]">
+              <span className="display !text-[42px] !tracking-[-0.02em]">
                 {ihsgValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </span>
-              <span className="mono" style={{ fontSize: 18, color: isIhsgPositive ? 'var(--positive)' : 'var(--negative)' }}>
+              <span className={`mono text-[18px] ${isIhsgPositive ? 'text-[var(--positive)]' : 'text-[var(--negative)]'}`}>
                 {fmtPct(ihsgChange)} 24h
               </span>
-              <span className="mono" style={{ fontSize: 13, color: 'var(--body)' }}>
+              <span className="mono text-[13px] text-[var(--body)]">
                 IDR/USD {IDR_PER_USD.toLocaleString()}
               </span>
             </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div className="mb-[10px] flex items-center justify-between">
             <div className="range-pills">
               {TIMEFRAME_OPTIONS.map(timeframe => (
                 <button
@@ -153,7 +155,7 @@ export function StocksListPage(): React.ReactNode {
             </div>
           </div>
 
-          <div style={{ border: '1px solid var(--hairline)', background: 'var(--putih)', padding: '8px 0 0' }}>
+          <div className="border border-[var(--hairline)] bg-[var(--putih)] pb-[0] pt-[8px]">
             <AreaChart
               data={chartData}
               height={220}
@@ -164,22 +166,20 @@ export function StocksListPage(): React.ReactNode {
 
         {/* ── Stock List ── */}
         <div>
-          <div className="hairline-strong" style={{ paddingBottom: 12, marginBottom: 0 }}>
-            <span className="display" style={{ fontSize: 26 }}>pStocks</span>
-            <div className="eyebrow" style={{ color: 'var(--body)', marginTop: 4 }}>
+          <div className="hairline-strong mb-[0] pb-[12px]">
+            <span className="display !text-[26px]">pStocks</span>
+            <div className="eyebrow mt-[4px] !text-[var(--body)]">
               {isLoading ? 'Loading market-ready equities' : `${marketStocks.length} market-ready equities · Arbitrum`}
             </div>
           </div>
 
           <div
-            className="table-head-desktop hairline"
-            style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr 1fr 80px', gap: 16, padding: '12px 16px', alignItems: 'center' }}
+            className="table-head-desktop hairline grid grid-cols-[2fr_1.2fr_1fr_1fr_80px] items-center gap-[16px] px-[16px] py-[12px]"
           >
             {['Stock', 'Sector', 'Price', '24h', '7d'].map((heading, columnIndex) => (
               <div
                 key={heading}
-                className="eyebrow"
-                style={{ color: 'var(--body)', textAlign: columnIndex >= 2 ? 'right' : 'left' }}
+                className={`eyebrow !text-[var(--body)] ${columnIndex >= 2 ? 'text-right' : 'text-left'}`}
               >
                 {heading}
               </div>
@@ -187,7 +187,7 @@ export function StocksListPage(): React.ReactNode {
           </div>
 
           {!isLoading && marketStocks.length === 0 ? (
-            <div className="hairline" style={{ padding: '18px 16px', color: 'var(--body)' }}>
+            <div className="hairline px-[16px] py-[18px] text-[var(--body)]">
               No pStocks have an active liquidity pool yet.
             </div>
           ) : null}

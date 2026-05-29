@@ -33,7 +33,7 @@ interface RequestQueueProps {
 
 function EmptyRow({ text }: { text: string }): React.ReactNode {
   return (
-    <div className="hairline" style={{ padding: "18px 0", color: "var(--body)", fontSize: 13 }}>
+    <div className="hairline py-[18px] text-[13px] text-[var(--body)]">
       {text}
     </div>
   );
@@ -110,9 +110,9 @@ export function RequestQueue({ requests, isLoading, currentAddress }: RequestQue
     <>
       {activeRequest && <AttestorsModal request={activeRequest} onClose={() => setActiveRequest(null)} />}
       <div>
-        <div className="hairline table-head-desktop" style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr 1fr 1fr 1fr 1.6fr", gap: 12, padding: "12px 0" }}>
+        <div className="hairline table-head-desktop grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1.6fr] gap-[12px] py-[12px]">
           {["", "ID", "Type", "Asset", "Quantity", "IDR notional", "Waited", ""].map((heading, columnIndex) => (
-            <div key={columnIndex} className="eyebrow" style={{ color: "var(--body)", textAlign: columnIndex >= 4 && columnIndex <= 6 ? "right" : "left" }}>{heading}</div>
+            <div key={columnIndex} className={`eyebrow !text-[var(--body)] ${columnIndex >= 4 && columnIndex <= 6 ? "text-right" : "text-left"}`}>{heading}</div>
           ))}
         </div>
         {isLoading && <EmptyRow text="Loading custodian requests…" />}
@@ -130,47 +130,47 @@ export function RequestQueue({ requests, isLoading, currentAddress }: RequestQue
           const canCancel   = request.reject_count   >= THRESHOLD;
 
           return (
-            <div key={requestKey(request)} className="hairline table-row-stack" style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr 1fr 1fr 1fr 1.6fr", gap: 12, padding: "16px 0", alignItems: "center", opacity: status ? 0.55 : 1 }}>
-              <div style={{ width: 32, height: 32, border: "1px solid var(--ink)", display: "flex", alignItems: "center", justifyContent: "center", background: isMint ? "var(--merah)" : "var(--ink)", color: "var(--putih)", flexShrink: 0 }}>
+            <div key={requestKey(request)} className={`hairline table-row-stack grid grid-cols-[auto_1fr_1fr_1fr_1fr_1fr_1fr_1.6fr] items-center gap-[12px] py-[16px] ${status ? "opacity-[0.55]" : "opacity-100"}`}>
+              <div className={`flex h-[32px] w-[32px] shrink-0 items-center justify-center border border-[var(--ink)] text-[var(--putih)] ${isMint ? "bg-[var(--merah)]" : "bg-[var(--ink)]"}`}>
                 <Icon name={isMint ? "arrow-up" : "arrow-down"} size={14} />
               </div>
-              <div className="row-cell"><span className="row-cell-label">ID</span><div className="row-cell-value"><span className="mono" style={{ fontSize: 13 }}>REQ-{request.on_chain_id}</span></div></div>
-              <div className="row-cell"><span className="row-cell-label">Type</span><div className="row-cell-value"><span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: isMint ? "var(--merah)" : "var(--ink)" }}>{request.kind} · {request.source}</span></div></div>
-              <div className="row-cell"><span className="row-cell-label">Asset</span><div className="row-cell-value"><div style={{ display: "flex", alignItems: "center", gap: 8 }}><PStockMark ticker={request.ticker} size={22} /><span style={{ fontWeight: 600, fontSize: 13 }}>{request.ticker}</span></div></div></div>
-              <div className="row-cell" style={{ textAlign: "right" }}><span className="row-cell-label">Quantity</span><div className="row-cell-value"><span className="mono" style={{ fontSize: 13 }}>{quantity}</span></div></div>
-              <div className="row-cell" style={{ textAlign: "right" }}><span className="row-cell-label">IDR notional</span><div className="row-cell-value"><span className="mono" style={{ fontSize: 13 }}>{idrNotional}</span></div></div>
-              <div className="row-cell" style={{ textAlign: "right" }}><span className="row-cell-label">Waited</span><div className="row-cell-value"><span className="mono" style={{ fontSize: 12, color: "var(--body)" }}>{relativeAge(request.created_at)}</span></div></div>
-              <div className="col-actions pos-actions" style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+              <div className="row-cell"><span className="row-cell-label">ID</span><div className="row-cell-value"><span className="mono text-[13px]">REQ-{request.on_chain_id}</span></div></div>
+              <div className="row-cell"><span className="row-cell-label">Type</span><div className="row-cell-value"><span className={`text-[11px] font-bold uppercase tracking-[0.06em] ${isMint ? "text-[var(--merah)]" : "text-[var(--ink)]"}`}>{request.kind} · {request.source}</span></div></div>
+              <div className="row-cell"><span className="row-cell-label">Asset</span><div className="row-cell-value"><div className="flex items-center gap-[8px]"><PStockMark ticker={request.ticker} size={22} /><span className="text-[13px] font-semibold">{request.ticker}</span></div></div></div>
+              <div className="row-cell text-right"><span className="row-cell-label">Quantity</span><div className="row-cell-value"><span className="mono text-[13px]">{quantity}</span></div></div>
+              <div className="row-cell text-right"><span className="row-cell-label">IDR notional</span><div className="row-cell-value"><span className="mono text-[13px]">{idrNotional}</span></div></div>
+              <div className="row-cell text-right"><span className="row-cell-label">Waited</span><div className="row-cell-value"><span className="mono text-[12px] text-[var(--body)]">{relativeAge(request.created_at)}</span></div></div>
+              <div className="col-actions pos-actions flex items-center justify-end gap-[8px]">
                 {(request.attestors?.length ?? 0) > 0 && (
                   <button
                     onClick={() => setActiveRequest(request)}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", border: "1px solid var(--hairline-strong)", background: "transparent", cursor: "pointer", fontSize: 11, fontFamily: "Inter", fontWeight: 600, letterSpacing: "0.06em", color: "var(--body)" }}
+                    className="inline-flex cursor-pointer items-center gap-[5px] border border-[var(--hairline-strong)] bg-transparent px-[10px] py-[4px] text-[11px] font-semibold tracking-[0.06em] text-[var(--body)] [font-family:var(--font-inter,_Inter,_sans-serif)]"
                   >
-                    <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--merah)" }} />
+                    <span className="h-[6px] w-[6px] rounded-[999px] bg-[var(--merah)]" />
                     {request.attestors!.length}/5
                   </button>
                 )}
                 {!status && isRequester && canExecute && (
-                  <button className="btn btn-merah" onClick={() => handleExecuteMint(request)} style={{ padding: "6px 14px" }}>Execute Mint</button>
+                  <button className="btn btn-merah !px-[14px] !py-[6px]" onClick={() => handleExecuteMint(request)}>Execute Mint</button>
                 )}
                 {!status && isRequester && !canExecute && canCancel && (
-                  <button className="btn btn-ghost" onClick={() => handleExecuteRejectMint(request)} style={{ padding: "6px 12px", border: "1px solid var(--ink)" }}>Cancel Mint</button>
+                  <button className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px]" onClick={() => handleExecuteRejectMint(request)}>Cancel Mint</button>
                 )}
                 {!status && isRequester && !canExecute && !canCancel && (
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span className="mono" style={{ fontSize: 11, color: "var(--body)" }}>{request.approval_count}/{THRESHOLD} approve · {request.reject_count}/{THRESHOLD} reject</span>
-                    <button className="btn btn-ghost" disabled style={{ padding: "6px 12px", border: "1px solid var(--hairline)", opacity: 0.4, cursor: "not-allowed" }}>Cancel Mint</button>
-                    <button className="btn btn-merah" disabled style={{ padding: "6px 14px", opacity: 0.4, cursor: "not-allowed" }}>Execute Mint</button>
+                  <div className="flex items-center gap-[8px]">
+                    <span className="mono text-[11px] text-[var(--body)]">{request.approval_count}/{THRESHOLD} approve · {request.reject_count}/{THRESHOLD} reject</span>
+                    <button className="btn btn-ghost !cursor-not-allowed !border !border-[var(--hairline)] !px-[12px] !py-[6px] !opacity-40" disabled>Cancel Mint</button>
+                    <button className="btn btn-merah !cursor-not-allowed !px-[14px] !py-[6px] !opacity-40" disabled>Execute Mint</button>
                   </div>
                 )}
                 {!status && !isRequester && (
                   <>
-                    <button className="btn btn-ghost" onClick={() => handleReject(request)} style={{ padding: "6px 12px", border: "1px solid var(--ink)" }}>Reject</button>
-                    <button className="btn btn-primary" onClick={() => handleApprove(request)} style={{ padding: "6px 14px" }}>Approve</button>
+                    <button className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px]" onClick={() => handleReject(request)}>Reject</button>
+                    <button className="btn btn-primary !px-[14px] !py-[6px]" onClick={() => handleApprove(request)}>Approve</button>
                   </>
                 )}
                 {status && (
-                  <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: status === "executed" || status === "approved" ? "var(--positive)" : "var(--body)" }}>
+                  <span className={`text-[11px] font-bold uppercase tracking-[0.06em] ${status === "executed" || status === "approved" ? "text-[var(--positive)]" : "text-[var(--body)]"}`}>
                     {status === "executed" ? "Executed · tokens minted" : status === "approved" ? "Approved" : "Rejected"}
                   </span>
                 )}
