@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { BaseError, ContractFunctionRevertedError, parseEventLogs, type Address } from 'viem';
-import { usePublicClient, useWriteContract } from 'wagmi';
+import { useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
+import { arbitrumSepolia } from 'wagmi/chains';
 import { IDRX_ABI } from '@/lib/abi/idrx_abi';
 import { PULSAR_PROTOCOL_ABI } from '@/lib/abi/pulsar_protocol_abi';
 import { PULSAR_STOCK_ABI } from '@/lib/abi/pulsar_stock_abi';
@@ -47,6 +48,8 @@ export function useExecuteSwap() {
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
   const { writeContractAsync } = useWriteContract();
+  const chainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
   const protocolAddress = process.env.NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS as Address | undefined;
 
   return useMutation({
@@ -54,6 +57,9 @@ export function useExecuteSwap() {
       if (!publicClient) throw new Error('Public client not ready');
       if (!protocolAddress) throw new Error('Protocol unavailable');
       if (input.amount_in <= BigInt(0)) throw new Error('Swap amount is invalid');
+      if (chainId !== arbitrumSepolia.id) {
+        await switchChainAsync({ chainId: arbitrumSepolia.id });
+      }
 
       const tokenAbi = input.input_is_stable ? IDRX_ABI : PULSAR_STOCK_ABI;
 
@@ -73,7 +79,10 @@ export function useExecuteSwap() {
             args: [protocolAddress, input.amount_in],
             account: input.wallet_address,
           });
-          const approveHash = await writeContractAsync(approveRequest);
+          const approveHash = await writeContractAsync({
+            ...approveRequest,
+            chainId: arbitrumSepolia.id,
+          });
           await publicClient.waitForTransactionReceipt({ hash: approveHash });
         }
       } catch (error) {
@@ -94,7 +103,10 @@ export function useExecuteSwap() {
           ],
           account: input.wallet_address,
         });
-        txHash = await writeContractAsync(request);
+        txHash = await writeContractAsync({
+          ...request,
+          chainId: arbitrumSepolia.id,
+        });
       } catch (error) {
         throw new Error(formatSwapError(error, input.ticker));
       }
