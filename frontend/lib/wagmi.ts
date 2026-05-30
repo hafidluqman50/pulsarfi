@@ -13,3 +13,6 @@ export const config = getDefaultConfig({
   },
   ssr: true,
 });
+
+export const appChain = config.chains[0];
+export const appChainId = appChain.id;

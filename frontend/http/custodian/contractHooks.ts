@@ -1,9 +1,10 @@
 import { useMutation } from '@tanstack/react-query';
 import { BaseError, ContractFunctionRevertedError, encodePacked, keccak256 } from 'viem';
-import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
-import { arbitrumSepolia } from 'wagmi/chains';
+import { useAccount, usePublicClient, useWriteContract } from 'wagmi';
 import { IDRX_ABI } from '@/lib/abi/idrx_abi';
 import { PULSAR_PROTOCOL_ABI } from '@/lib/abi/pulsar_protocol_abi';
+import { useEnsureAppChain } from '@/lib/useEnsureAppChain';
+import { appChainId } from '@/lib/wagmi';
 import { recordMintExecution, recordMintRejectExecution } from './custodianApi';
 
 const PROTOCOL_ADDRESS = process.env.NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS as `0x${string}`;
@@ -28,17 +29,6 @@ export function buildAttestationHash(ticker: string, quantity: string, idrxAmoun
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
-
-function useEnsureArbitrumSepolia() {
-  const chainId = useChainId();
-  const { switchChainAsync } = useSwitchChain();
-
-  return async () => {
-    if (chainId !== arbitrumSepolia.id) {
-      await switchChainAsync({ chainId: arbitrumSepolia.id });
-    }
-  };
 }
 
 async function ensureIdrxAllowance(params: {
@@ -75,7 +65,7 @@ async function ensureIdrxAllowance(params: {
     abi: IDRX_ABI,
     functionName: 'approve',
     args: [PROTOCOL_ADDRESS, params.amount],
-    chainId: arbitrumSepolia.id,
+    chainId: appChainId,
   });
   await params.publicClient.waitForTransactionReceipt({ hash });
 }
@@ -124,13 +114,13 @@ export function useRequestMint() {
   const { writeContractAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const { address } = useAccount();
-  const ensureChain = useEnsureArbitrumSepolia();
+  const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (params: RequestMintParams) => {
       if (!publicClient) throw new Error('Public client not ready');
       if (!address) throw new Error('Wallet not connected');
-      await ensureChain();
+      await ensureAppChain();
 
       return writeContractAsync({
         address: PROTOCOL_ADDRESS,
@@ -144,7 +134,7 @@ export function useRequestMint() {
           params.idrxAmount,
           params.attestationHash,
         ],
-        chainId: arbitrumSepolia.id,
+        chainId: appChainId,
       });
     },
   });
@@ -152,17 +142,17 @@ export function useRequestMint() {
 
 export function useApproveMint() {
   const { writeContractAsync } = useWriteContract();
-  const ensureChain = useEnsureArbitrumSepolia();
+  const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (proposalId: bigint) => {
-      await ensureChain();
+      await ensureAppChain();
       return writeContractAsync({
         address: PROTOCOL_ADDRESS,
         abi: PULSAR_PROTOCOL_ABI,
         functionName: 'approveMint',
         args: [proposalId],
-        chainId: arbitrumSepolia.id,
+        chainId: appChainId,
       });
     },
   });
@@ -170,17 +160,17 @@ export function useApproveMint() {
 
 export function useRejectMint() {
   const { writeContractAsync } = useWriteContract();
-  const ensureChain = useEnsureArbitrumSepolia();
+  const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (proposalId: bigint) => {
-      await ensureChain();
+      await ensureAppChain();
       return writeContractAsync({
         address: PROTOCOL_ADDRESS,
         abi: PULSAR_PROTOCOL_ABI,
         functionName: 'rejectMint',
         args: [proposalId],
-        chainId: arbitrumSepolia.id,
+        chainId: appChainId,
       });
     },
   });
@@ -188,17 +178,17 @@ export function useRejectMint() {
 
 export function useApproveRedeem() {
   const { writeContractAsync } = useWriteContract();
-  const ensureChain = useEnsureArbitrumSepolia();
+  const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (requestId: bigint) => {
-      await ensureChain();
+      await ensureAppChain();
       return writeContractAsync({
         address: PROTOCOL_ADDRESS,
         abi: PULSAR_PROTOCOL_ABI,
         functionName: 'approveRedeem',
         args: [requestId],
-        chainId: arbitrumSepolia.id,
+        chainId: appChainId,
       });
     },
   });
@@ -206,17 +196,17 @@ export function useApproveRedeem() {
 
 export function useRejectRedeem() {
   const { writeContractAsync } = useWriteContract();
-  const ensureChain = useEnsureArbitrumSepolia();
+  const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (requestId: bigint) => {
-      await ensureChain();
+      await ensureAppChain();
       return writeContractAsync({
         address: PROTOCOL_ADDRESS,
         abi: PULSAR_PROTOCOL_ABI,
         functionName: 'rejectRedeem',
         args: [requestId],
-        chainId: arbitrumSepolia.id,
+        chainId: appChainId,
       });
     },
   });
@@ -226,13 +216,13 @@ export function useExecuteMint() {
   const { writeContractAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const { address } = useAccount();
-  const ensureChain = useEnsureArbitrumSepolia();
+  const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (proposalId: bigint) => {
       if (!publicClient) throw new Error('Public client not ready');
       if (!address) throw new Error('Wallet not connected');
-      await ensureChain();
+      await ensureAppChain();
 
       const proposal = await publicClient.readContract({
         address: PROTOCOL_ADDRESS,
@@ -279,7 +269,7 @@ export function useExecuteMint() {
 
         const hash = await writeContractAsync({
           ...request,
-          chainId: arbitrumSepolia.id,
+          chainId: appChainId,
         });
         await publicClient.waitForTransactionReceipt({ hash });
 
@@ -311,19 +301,19 @@ export function useExecuteMint() {
 export function useExecuteRejectMint() {
   const { writeContractAsync } = useWriteContract();
   const publicClient = usePublicClient();
-  const ensureChain = useEnsureArbitrumSepolia();
+  const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (proposalId: bigint) => {
       if (!publicClient) throw new Error('Public client not ready');
-      await ensureChain();
+      await ensureAppChain();
 
       const hash = await writeContractAsync({
         address: PROTOCOL_ADDRESS,
         abi: PULSAR_PROTOCOL_ABI,
         functionName: 'executeRejectMint',
         args: [proposalId],
-        chainId: arbitrumSepolia.id,
+        chainId: appChainId,
       });
       await publicClient.waitForTransactionReceipt({ hash });
       await recordMintRejectExecution(Number(proposalId), hash);
