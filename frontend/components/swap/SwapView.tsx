@@ -12,10 +12,11 @@ import { Sparkline } from "@/components/ui/Sparkline";
 import { TokenSelectModal } from "@/components/ui/TokenSelectModal";
 import { useExecuteSwap } from "@/http/market/swapHooks";
 import { useMarketTokens, useWalletTokenBalances } from "@/http/market/tokenHooks";
-import { useMarketStocks } from "@/http/market/hooks";
+import { useMarketStocks, useProtocolStats } from "@/http/market/hooks";
 import {
 	STABLES,
 	fmtIDRX,
+	fmtIDRXCompact,
 	fmtNum,
 	fmtPct,
 	seriesFor,
@@ -45,6 +46,15 @@ export function SwapView({ headline }: SwapViewProps) {
 	const executeSwap = useExecuteSwap();
 	const marketTokens = useMarketTokens();
 	const walletBalances = useWalletTokenBalances(marketTokens);
+	const { data: protocolStats } = useProtocolStats();
+	const { data: marketStocksRaw = [] } = useMarketStocks();
+
+	const pegDeviation = useMemo(() => {
+		const withPool = marketStocksRaw.filter(s => s.pool_price > 0 && s.price > 0);
+		if (withPool.length === 0) return null;
+		const total = withPool.reduce((sum, s) => sum + Math.abs(s.pool_price - s.price) / s.price * 100, 0);
+		return total / withPool.length;
+	}, [marketStocksRaw]);
 
 	const [inputTicker, setInputTicker] = useState("IDRX");
 	const [outputTicker, setOutputTicker] = useState("BUMIP");
@@ -194,13 +204,21 @@ export function SwapView({ headline }: SwapViewProps) {
 				</p>
 
 				<div className="hairline-top grid-3col mt-[36px] pt-[24px]">
-					<Stat label="24h Volume" value="77.8M IDRX" sub="across 8 pairs" />
+					<Stat
+						label="24h Volume"
+						value={protocolStats ? `${fmtIDRXCompact(protocolStats.volume_24h)} IDRX` : "—"}
+						sub={protocolStats ? `across ${protocolStats.pair_count} pairs` : "loading…"}
+					/>
 					<Stat
 						label="Total Value Locked"
-						value="458M IDRX"
-						sub="↑ 12.3% week"
+						value={protocolStats ? `${fmtIDRXCompact(protocolStats.tvl_idrx)} IDRX` : "—"}
+						sub="net IDRX in pools"
 					/>
-					<Stat label="Peg Deviation" value="0.03%" sub="within tolerance" />
+					<Stat
+						label="Peg Deviation"
+						value={pegDeviation !== null ? `${pegDeviation.toFixed(2)}%` : "—"}
+						sub={pegDeviation !== null ? "pool vs IDX price" : "no pool data"}
+					/>
 				</div>
 
 				<div className="mt-[36px]">
@@ -219,9 +237,6 @@ export function SwapView({ headline }: SwapViewProps) {
 							Swap
 						</div>
 						<div className="flex items-center gap-[14px]">
-							<div className="eyebrow !text-[var(--body)]">
-								v2 ROUTER
-							</div>
 							<button
 								type="button"
 								className="btn btn-ghost !p-[4px]"

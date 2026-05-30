@@ -70,6 +70,16 @@ func NewPriceService() *PriceService {
 	}
 }
 
+// GetUSDIDRRate fetches the USD/IDR exchange rate from Yahoo Finance (IDR=X).
+// Returns IDR per 1 USD (e.g. 16142).
+func (s *PriceService) GetUSDIDRRate() (float64, error) {
+	entry, err := s.fetchFromYahoo("IDR=X", "IDR")
+	if err != nil {
+		return 0, err
+	}
+	return entry.Price, nil
+}
+
 // GetIHSG fetches IDX Composite (^JKSE) from Yahoo Finance.
 func (s *PriceService) GetIHSG() (PriceEntry, error) {
 	return s.fetchFromYahoo("^JKSE", "IDR")

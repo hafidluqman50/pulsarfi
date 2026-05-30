@@ -40,7 +40,7 @@ All asset tokens use ALL-CAPS with a `P` suffix indicating Pulsar origin.
 | Contract | Address | Verification |
 |---|---:|---|
 | `PulsarProtocol` proxy | `0x204488318C0E75978B3c851382Aa83f3065a8f5A` | Verified (`ERC1967Proxy`) |
-| `PulsarProtocol` implementation | `0xB3185EB1d15D107915e6ecC019c519525545287A` | Verified |
+| `PulsarProtocol` implementation | `0x8877b33dB2443d8C47FDf4950828893Ee8C2aE5A` | Verified |
 | `IDRX` mock | `0x03b53A71C5517907006EAb512A31C1eD5a56Ae64` | Verified |
 | `UniswapV2Factory` | `0x4254378E95dBD9816a1a18428A81B4E1fBe5C296` | Verified |
 | `UniswapV2Router02` | `0xFEf655B2A0742134242711b80899d0b543A74223` | Verified |

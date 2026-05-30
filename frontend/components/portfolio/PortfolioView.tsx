@@ -24,7 +24,8 @@ import { PStockMark } from '@/components/ui/PStockMark';
 import { AreaChart } from '@/components/charts/AreaChart';
 import { Donut } from '@/components/charts/Donut';
 import { SwapModal } from '@/components/ui/SwapModal';
-import { DetailRow } from '@/components/swap/SwapView';
+import { TransferModal, type TransferToken } from '@/components/ui/TransferModal';
+import { RedeemModal, type RedeemToken } from '@/components/ui/RedeemModal';
 
 const PALETTE = ["#c8102e", "#16110e", "#1f4d8a", "#5a4a3a", "#9a0c24", "#2a231e", "#6f2da8", "#2c5e2e"];
 const PALETTE_CLASSES = [
@@ -39,13 +40,6 @@ const PALETTE_CLASSES = [
 ];
 const POSITION_CHART_ANCHOR = new Date('2026-05-26T14:00:00+08:00').getTime();
 
-type TransferToken = {
-  ticker: string;
-  name: string;
-  price: number;
-  address: Address;
-  isStable: boolean;
-};
 
 export function PortfolioView() {
   const { address, isConnected } = useAccount();
@@ -59,7 +53,8 @@ export function PortfolioView() {
   const [range, setRange]         = useState("1D");
   const [expanded, setExpanded]   = useState<string | null>(null);
   const [transferOpen, setTransferOpen] = useState<TransferToken | null>(null);
-  const [tradeToken, setTradeToken] = useState<PortfolioPosition | null>(null);
+  const [redeemOpen, setRedeemOpen]     = useState<RedeemToken | null>(null);
+  const [tradeToken, setTradeToken]     = useState<PortfolioPosition | null>(null);
 
   const positions = useMemo(() => buildPositions(balances, marketStocks, transactions), [balances, marketStocks, transactions]);
   const stables = useMemo(() => buildStables(balances), [balances]);
@@ -173,7 +168,7 @@ export function PortfolioView() {
           <h2 className="display section-title !m-[0] !text-[32px] !tracking-[-0.02em]">Positions</h2>
           <div className="eyebrow !text-[var(--body)]">{positions.length} stocks · {stables.length} stable</div>
         </div>
-        <PositionsList positions={positions} stables={stables} idrxAddress={idrxAddress} expanded={expanded} setExpanded={setExpanded} onTrade={t => setTradeToken(t)} onTransfer={t => setTransferOpen(t)} />
+        <PositionsList positions={positions} stables={stables} idrxAddress={idrxAddress} expanded={expanded} setExpanded={setExpanded} onTrade={t => setTradeToken(t)} onTransfer={t => setTransferOpen(t)} onRedeem={t => setRedeemOpen(t)} />
       </div>
 
       {/* ACTIVITY */}
@@ -192,6 +187,16 @@ export function PortfolioView() {
           onClose={() => setTransferOpen(null)}
           onSubmit={handleTransfer}
           busy={transferToken.isPending}
+        />
+      )}
+
+      {redeemOpen && (
+        <RedeemModal
+          token={redeemOpen}
+          balance={balances[redeemOpen.ticker] ?? 0}
+          onClose={() => setRedeemOpen(null)}
+          onSubmit={() => {}}
+          busy={false}
         />
       )}
 
@@ -248,7 +253,7 @@ function SplitRow({ stockValue, stableValue }: { stockValue: number; stableValue
   );
 }
 
-function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded, onTrade, onTransfer }: {
+function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded, onTrade, onTransfer, onRedeem }: {
   positions: PortfolioPosition[];
   stables: StablePosition[];
   idrxAddress?: Address;
@@ -256,11 +261,12 @@ function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded,
   setExpanded: (t: string | null) => void;
   onTrade: (t: PortfolioPosition) => void;
   onTransfer: (t: TransferToken) => void;
+  onRedeem: (t: RedeemToken) => void;
 }) {
   return (
     <div>
-      <div className="hairline table-head-desktop grid grid-cols-[auto_2fr_1fr_1fr_1fr_1fr_1fr_156px] gap-[16px] py-[14px]">
-        {["", "Stock", "Lot", "Avg buy", "IDX lot", "Market value", "Unrealized P&L", ""].map((h, i) => (
+      <div className="hairline table-head-desktop grid grid-cols-[auto_2fr_1fr_1fr_1fr_1fr_1fr_220px] gap-[16px] py-[14px]">
+        {["", "Stock", "Holdings", "Avg buy", "IDX lot", "Market value", "Unrealized P&L", ""].map((h, i) => (
           <div key={i} className={`eyebrow !text-[var(--body)] ${i >= 2 && i <= 6 ? "text-right" : "text-left"}`}>{h}</div>
         ))}
       </div>
@@ -284,7 +290,7 @@ function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded,
                 </div>
               </div>
               <div className="pos-data">
-                <RowCell label="Lot" align="right"><span className="mono text-[14px]">{fmtNum(p.qty, 2)}</span></RowCell>
+                <RowCell label="Holdings" align="right"><span className="mono text-[14px]">{fmtNum(p.qty, 2)}</span></RowCell>
                 <RowCell label="Avg buy" align="right"><span className="mono text-[14px]">{fmtIDRX(p.avg)}</span></RowCell>
                 <RowCell label="Last" align="right"><span className="mono text-[14px]">{fmtIDRX(p.price)}</span></RowCell>
                 <RowCell label="Market value" align="right"><span className="mono text-[15px] font-medium">{fmtIDRX(p.value)}</span></RowCell>
@@ -307,6 +313,16 @@ function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded,
                 >
                   Send
                 </button>
+                <button
+                  className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px] !text-[13px]"
+                  disabled={!p.contractAddress}
+                  onClick={e => {
+                    e.stopPropagation();
+                    if (p.contractAddress) onRedeem({ ticker: p.ticker, name: p.name, price: p.price, address: p.contractAddress });
+                  }}
+                >
+                  Redeem
+                </button>
               </div>
             </div>
             {isOpen && <PositionDetail position={p} />}
@@ -327,7 +343,7 @@ function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded,
             </div>
           </div>
           <div className="pos-data">
-            <RowCell label="Lot" align="right"><span className="mono text-[14px]">{fmtNum(s.qty, 2)}</span></RowCell>
+            <RowCell label="Holdings" align="right"><span className="mono text-[14px]">{fmtNum(s.qty, 2)}</span></RowCell>
             <RowCell label="Avg buy" align="right"><span className="mono text-[14px]">1 IDRX</span></RowCell>
             <RowCell label="Last" align="right"><span className="mono text-[14px]">1 IDRX</span></RowCell>
             <RowCell label="Market value" align="right"><span className="mono text-[15px]">{fmtIDRX(s.value)}</span></RowCell>
@@ -388,7 +404,7 @@ function PositionDetail({ position }: { position: PortfolioPosition }) {
           <AreaChart data={ranged} height={200} valueFormatter={v => fmtIDRX(v)} />
         </div>
         <div className="flex flex-col gap-[12px] pt-[4px]">
-          <KV k="Lot owned"     v={`${fmtNum(position.qty, 2)}`} />
+          <KV k="Holdings"      v={`${fmtNum(position.qty, 2)}`} />
           <KV k="Avg buy price" v={fmtIDRX(position.avg)} />
           <KV k="IDX lot price" v={fmtIDRX(position.price)} />
           <KV k="Pool price" v={fmtIDRX(position.poolPrice)} />
@@ -448,50 +464,3 @@ function ActivityList({ rows }: { rows: ActivityRow[] }) {
   );
 }
 
-function TransferModal({ token, balance, onClose, onSubmit, busy }: {
-  token: TransferToken;
-  balance: number;
-  onClose: () => void;
-  onSubmit: (opts: { token: TransferToken; to: Address; amount: string }) => void;
-  busy: boolean;
-}) {
-  const [to, setTo]   = useState("");
-  const [amt, setAmt] = useState("");
-  const num = parseFloat(amt) || 0;
-  const ok  = /^0x[a-fA-F0-9]{40}$/.test(to) && num > 0 && num <= balance && !busy;
-
-  return (
-    <div className="overlay fixed inset-[0] z-[200] flex items-center justify-center bg-[rgba(22,17,14,0.45)] p-[16px]" onClick={onClose}>
-      <div className="modal w-[440px] max-w-full border border-[var(--ink)] bg-[var(--putih)] shadow-[8px_8px_0_0_rgba(22,17,14,0.10)]" onClick={e => e.stopPropagation()}>
-        <div className="hairline flex items-center justify-between px-[20px] py-[16px]">
-          <div className="display !text-[22px]">Send {token.ticker}</div>
-          <button className="btn-ghost btn !p-[4px]" onClick={onClose}><Icon name="x" /></button>
-        </div>
-        <div className="flex flex-col gap-[14px] p-[20px]">
-          <div>
-            <div className="eyebrow mb-[6px] !text-[var(--body)]">Recipient address</div>
-            <input className="input mono" placeholder="0x… or .arb name" value={to} onChange={e => setTo(e.target.value)} />
-          </div>
-          <div>
-            <div className="mb-[6px] flex justify-between">
-              <div className="eyebrow !text-[var(--body)]">Amount</div>
-              <span className="mono text-[12px] text-[var(--body)]">Balance {fmtNum(balance, 4)}</span>
-            </div>
-            <div className="relative">
-              <input className="input mono !pr-[60px]" placeholder="0.00" value={amt} onChange={e => setAmt(e.target.value.replace(/[^0-9.]/g, ""))} />
-              <button onClick={() => setAmt(balance.toString())} className="absolute right-[6px] top-1/2 -translate-y-1/2 cursor-pointer appearance-none border border-[var(--hairline-strong)] bg-[var(--canvas)] px-[8px] py-[4px] text-[11px] font-semibold [font-family:var(--font-inter,_Inter,_sans-serif)]">MAX</button>
-            </div>
-            {num > balance && <div className="mt-[6px] text-[12px] text-[var(--negative)]">Exceeds available balance</div>}
-          </div>
-          <div className="hairline-top flex flex-col gap-[6px] pt-[14px] text-[13px]">
-            <DetailRow k="Network"     v="Arbitrum Sepolia" />
-            <DetailRow k="Network fee" v="~$0.12" />
-          </div>
-          <button className="btn btn-primary !w-full !p-[14px]" disabled={!ok} onClick={() => onSubmit({ token, to: to as Address, amount: amt })}>
-            {busy ? "Sending..." : `Send ${token.ticker}`}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}

@@ -17,6 +17,7 @@ type Registry struct {
 	PublicPrice            *publicsvc.PriceService
 	PublicReserve          *publicsvc.ReserveService
 	PublicStockTransaction *publicsvc.StockTransactionService
+	PublicStats            *publicsvc.StatsService
 	Email                  *external.EmailService
 	Storage                *external.StorageService
 	Stream                 *external.StreamService
@@ -60,6 +61,11 @@ func NewRegistry(cfg Config) *Registry {
 		PublicStockTransaction: &publicsvc.StockTransactionService{
 			Stocks:       cfg.Repos.Stock,
 			Transactions: cfg.Repos.StockTransaction,
+		},
+		PublicStats: &publicsvc.StatsService{
+			Transactions: cfg.Repos.StockTransaction,
+			Stocks:       cfg.Repos.Stock,
+			Price:        price,
 		},
 		Email:   cfg.EmailService,
 		Storage: cfg.StorageService,

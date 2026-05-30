@@ -137,7 +137,7 @@ img, svg, video { max-width: 100%; }
 .row-cell-label { display: none; }
 .row-cell-value { display: block; }
 
-.position-row { display: grid; grid-template-columns: auto 2fr 1fr 1fr 1fr 1fr 1fr 156px; gap: 16px; align-items: center; padding: 18px 0; }
+.position-row { display: grid; grid-template-columns: auto 2fr 1fr 1fr 1fr 1fr 1fr 220px; gap: 16px; align-items: center; padding: 18px 0; }
 .position-row .pos-head    { display: contents; }
 .position-row .pos-data    { display: contents; }
 .position-row .pos-actions { display: flex; gap: 8px; justify-content: flex-end; white-space: nowrap; }

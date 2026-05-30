@@ -513,9 +513,9 @@ contract PulsarProtocolTest is Test {
         vm.prank(noKycUser);
         PulsarStock(stockAddress).approve(address(protocol), 1e18);
 
-        vm.prank(cust1);
+        vm.prank(noKycUser);
         vm.expectRevert(abi.encodeWithSelector(KYCRequired.selector, noKycUser));
-        protocol.requestRedeem("BUMIP", 1e18, noKycUser);
+        protocol.requestRedeem("BUMIP", 1e18);
     }
 
     function test_requestRedeem_revertsIfCallerNotCustodian() public {
@@ -525,7 +525,7 @@ contract PulsarProtocolTest is Test {
 
         vm.prank(kycUser);
         vm.expectRevert();
-        protocol.requestRedeem("BUMIP", 1e18, kycUser);
+        protocol.requestRedeem("BUMIP", 1e18);
     }
 
     // ─── Access control ───────────────────────────────────────────────────────
