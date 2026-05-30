@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { BaseError, type Address } from 'viem';
-import { usePublicClient, useWriteContract } from 'wagmi';
+import { useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
+import { arbitrumSepolia } from 'wagmi/chains';
 import { IDRX_ABI } from '@/lib/abi/idrx_abi';
 import { PULSAR_STOCK_ABI } from '@/lib/abi/pulsar_stock_abi';
 
@@ -26,11 +27,16 @@ export function useTransferToken() {
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
   const { writeContractAsync } = useWriteContract();
+  const chainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
 
   return useMutation({
     mutationFn: async (input: TransferTokenInput) => {
       if (!publicClient) throw new Error('Public client not ready');
       if (input.amount <= BigInt(0)) throw new Error('Transfer amount is invalid');
+      if (chainId !== arbitrumSepolia.id) {
+        await switchChainAsync({ chainId: arbitrumSepolia.id });
+      }
 
       try {
         const { request } = await publicClient.simulateContract({
@@ -40,7 +46,10 @@ export function useTransferToken() {
           args: [input.to, input.amount],
           account: input.from,
         });
-        const txHash = await writeContractAsync(request);
+        const txHash = await writeContractAsync({
+          ...request,
+          chainId: arbitrumSepolia.id,
+        });
         await publicClient.waitForTransactionReceipt({ hash: txHash });
         return txHash;
       } catch (error) {
