@@ -9,6 +9,7 @@ import { tokenByTicker, sliceRange, fmtIDRX, fmtNum, fmtPct, shortAddr } from '@
 import { useMarketStocks, useStockTransactions } from '@/http/market/hooks';
 import { useWalletTokenBalances } from '@/http/market/tokenHooks';
 import { useTransferToken } from '@/http/market/transferHooks';
+import { useRequestRedeem } from '@/http/market/redeemHooks';
 import { toMarketToken, unitsFromDecimalInput } from '@/lib/swap';
 import {
   ActivityRow,
@@ -49,6 +50,7 @@ export function PortfolioView() {
   const balances = useWalletTokenBalances(marketTokens);
   const { data: transactions = [] } = useStockTransactions(address);
   const transferToken = useTransferToken();
+  const requestRedeem = useRequestRedeem();
 
   const [range, setRange]         = useState("1D");
   const [expanded, setExpanded]   = useState<string | null>(null);
@@ -88,6 +90,29 @@ export function PortfolioView() {
         </ConnectButton.Custom>
       </div>
     );
+  }
+
+  async function handleRedeem(opts: { token: typeof redeemOpen; amount: string }) {
+    if (!opts.token || !address) return;
+    const toastId = toast.loading('Submitting redeem request…');
+    try {
+      const tokenAmount = unitsFromDecimalInput(opts.amount, 18);
+      const txHash = await requestRedeem.mutateAsync({
+        ticker: opts.token.ticker,
+        tokenAmount,
+        walletAddress: address,
+        stockContractAddress: opts.token.address,
+      });
+      toast.success('Redeem request submitted', {
+        id: toastId,
+        description: `Tx ${txHash.slice(0, 10)}...${txHash.slice(-6)}`,
+        duration: 6000,
+      });
+      setRedeemOpen(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Redeem failed';
+      toast.error('Redeem failed', { id: toastId, description: message.slice(0, 160), duration: 8000 });
+    }
   }
 
   async function handleTransfer(opts: { token: TransferToken; to: Address; amount: string }) {
@@ -195,8 +220,8 @@ export function PortfolioView() {
           token={redeemOpen}
           balance={balances[redeemOpen.ticker] ?? 0}
           onClose={() => setRedeemOpen(null)}
-          onSubmit={() => {}}
-          busy={false}
+          onSubmit={(opts) => handleRedeem({ token: redeemOpen, amount: opts.amount })}
+          busy={requestRedeem.isPending}
         />
       )}
 

@@ -45,7 +45,7 @@ export function PriceTicker() {
       {tickerItems.map(stockItem => (
         <div key={animationKey + stockItem.ticker} className="flex items-baseline gap-[8px] whitespace-nowrap">
           <span className="font-[600] text-[12px]">{stockItem.ticker}</span>
-          <span className="mono text-[12px] text-[var(--ink)]">{fmtIDRX(stockItem.price)}</span>
+          <span className="mono text-[12px] text-[var(--ink)]">{fmtIDRX(stockItem.price * 100)}</span>
           <span className={`mono text-[11px] ${stockItem.changePercent >= 0 ? 'text-[var(--positive)]' : 'text-[var(--negative)]'}`}>
             {fmtPct(stockItem.changePercent)}
           </span>

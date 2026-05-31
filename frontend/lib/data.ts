@@ -24,14 +24,14 @@ export type Token = PStock | Stable;
 
 // Prices denominated in IDRX (1 IDRX = 1 IDR, rate ~16,142 IDR/USD)
 export const PSTOCKS: PStock[] = [
-  { ticker: "BUMIP", name: "Pulsar Bumi Resources",       sector: "Energy",         price: 245,   change24h: +4.21, supply: 18_240_000, ipo: "BUMI" },
-  { ticker: "ENRGP", name: "Pulsar Energi Mega",           sector: "Energy",         price: 378,   change24h: +1.84, supply: 12_400_000, ipo: "ENRG" },
-  { ticker: "KIJAP", name: "Pulsar Kawasan Industri",      sector: "Infrastructure", price: 144,   change24h: -0.61, supply: 9_120_000,  ipo: "KIJA" },
-  { ticker: "TLKMP", name: "Pulsar Telkom Indonesia",      sector: "Telecom",        price: 2_973, change24h: +0.42, supply: 6_800_000,  ipo: "TLKM" },
-  { ticker: "BBRIP", name: "Pulsar Bank Rakyat",           sector: "Financial",      price: 4_779, change24h: -1.12, supply: 5_240_000,  ipo: "BBRI" },
-  { ticker: "GOTOP", name: "Pulsar GoTo Gojek Tokopedia",  sector: "Technology",     price: 98,    change24h: +7.93, supply: 28_900_000, ipo: "GOTO" },
-  { ticker: "ASIIP", name: "Pulsar Astra International",   sector: "Industrials",    price: 5_188, change24h: +0.18, supply: 4_120_000,  ipo: "ASII" },
-  { ticker: "UNVRP", name: "Pulsar Unilever Indonesia",    sector: "Consumer",       price: 2_400, change24h: -0.34, supply: 3_840_000,  ipo: "UNVR" },
+  { ticker: "BUMIP", name: "Pulsar Bumi Resources",       sector: "Energy",         price: 24_500,   change24h: +4.21, supply: 18_240_000, ipo: "BUMI" },
+  { ticker: "ENRGP", name: "Pulsar Energi Mega",           sector: "Energy",         price: 37_800,   change24h: +1.84, supply: 12_400_000, ipo: "ENRG" },
+  { ticker: "KIJAP", name: "Pulsar Kawasan Industri",      sector: "Infrastructure", price: 14_400,   change24h: -0.61, supply: 9_120_000,  ipo: "KIJA" },
+  { ticker: "TLKMP", name: "Pulsar Telkom Indonesia",      sector: "Telecom",        price: 297_300,  change24h: +0.42, supply: 6_800_000,  ipo: "TLKM" },
+  { ticker: "BBRIP", name: "Pulsar Bank Rakyat",           sector: "Financial",      price: 477_900,  change24h: -1.12, supply: 5_240_000,  ipo: "BBRI" },
+  { ticker: "GOTOP", name: "Pulsar GoTo Gojek Tokopedia",  sector: "Technology",     price: 9_800,    change24h: +7.93, supply: 28_900_000, ipo: "GOTO" },
+  { ticker: "ASIIP", name: "Pulsar Astra International",   sector: "Industrials",    price: 518_800,  change24h: +0.18, supply: 4_120_000,  ipo: "ASII" },
+  { ticker: "UNVRP", name: "Pulsar Unilever Indonesia",    sector: "Consumer",       price: 240_000,  change24h: -0.34, supply: 3_840_000,  ipo: "UNVR" },
 ];
 
 export const STABLES: Stable[] = [

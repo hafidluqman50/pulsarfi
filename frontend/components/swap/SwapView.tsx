@@ -52,7 +52,10 @@ export function SwapView({ headline }: SwapViewProps) {
 	const pegDeviation = useMemo(() => {
 		const withPool = marketStocksRaw.filter(s => s.pool_price > 0 && s.price > 0);
 		if (withPool.length === 0) return null;
-		const total = withPool.reduce((sum, s) => sum + Math.abs(s.pool_price - s.price) / s.price * 100, 0);
+		const total = withPool.reduce((sum, s) => {
+			const idxLotPrice = s.price * 100;
+			return sum + Math.abs(s.pool_price - idxLotPrice) / idxLotPrice * 100;
+		}, 0);
 		return total / withPool.length;
 	}, [marketStocksRaw]);
 

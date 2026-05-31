@@ -15,6 +15,7 @@ var (
 	publicReserveSvc          *publicsvc.ReserveService
 	publicStockTransactionSvc *publicsvc.StockTransactionService
 	publicStatsSvc            *publicsvc.StatsService
+	publicRedeemSvc           *publicsvc.PublicRedeemService
 )
 
 func ConfigureRepos(r *repository.Registry) {
@@ -27,6 +28,7 @@ func ConfigureServices(s *service.Registry) {
 	publicReserveSvc = s.PublicReserve
 	publicStockTransactionSvc = s.PublicStockTransaction
 	publicStatsSvc = s.PublicStats
+	publicRedeemSvc = s.PublicRedeem
 }
 
 func ensureRepos(c *gin.Context) bool {
