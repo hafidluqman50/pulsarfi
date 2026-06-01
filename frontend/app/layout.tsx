@@ -33,8 +33,16 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PulsarFi — Tokenized Indonesian Equities",
+  title: "PulsarFi | Tokenized Indonesian Equities",
   description: "24/7 automated market maker for 1:1 tokenized Indonesian equities on Arbitrum.",
+  icons: {
+    icon: [
+      { url: "/logo-only-nobg.png", type: "image/png" },
+      { url: "/favicon.ico", sizes: "256x256" },
+    ],
+    shortcut: "/favicon.ico",
+    apple: "/logo-only-nobg.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

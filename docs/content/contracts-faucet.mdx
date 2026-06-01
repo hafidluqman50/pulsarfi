@@ -1,0 +1,113 @@
+---
+id: contracts-faucet
+title: Contracts & Faucet
+sidebar_label: Contracts & Faucet
+slug: /contracts-faucet
+---
+
+import FaucetButton from '@site/src/components/FaucetButton';
+
+The following contracts are deployed on Arbitrum Sepolia. These addresses should
+stay aligned with `smart-contract/.env` and `frontend/.env.local`.
+
+<table className="contract-table">
+  <thead>
+    <tr>
+      <th>Contract</th>
+      <th>Address</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>PulsarProtocol proxy</td>
+      <td><code>0x204488318C0E75978B3c851382Aa83f3065a8f5A</code></td>
+      <td>Main entry point for mint, redeem, swap, and KYC.</td>
+    </tr>
+    <tr>
+      <td>PulsarProtocol implementation</td>
+      <td><code>0x14c54E6cade1A13c73685c239aE895A7d37DC3df</code></td>
+      <td>Verified UUPS implementation.</td>
+    </tr>
+    <tr>
+      <td>IDRX mock</td>
+      <td><code>0x03b53A71C5517907006EAb512A31C1eD5a56Ae64</code></td>
+      <td>Testnet stablecoin with 2 decimals.</td>
+    </tr>
+    <tr>
+      <td>UniswapV2Factory</td>
+      <td><code>0x4254378E95dBD9816a1a18428A81B4E1fBe5C296</code></td>
+      <td>Custom factory on Arbitrum Sepolia.</td>
+    </tr>
+    <tr>
+      <td>UniswapV2Router02</td>
+      <td><code>0xFEf655B2A0742134242711b80899d0b543A74223</code></td>
+      <td>Router used for liquidity and swaps.</td>
+    </tr>
+    <tr>
+      <td>IDRXFaucet</td>
+      <td><code>0x286954bE9b8a2B52f2A61432Fa448C5287e4dDEA</code></td>
+      <td>Testnet IDRX faucet.</td>
+    </tr>
+    <tr>
+      <td>WETH</td>
+      <td><code>0x980B62Da83eFf3D4576C647993b0c1D7faf17c73</code></td>
+      <td>External Arbitrum Sepolia dependency.</td>
+    </tr>
+  </tbody>
+</table>
+
+## IDRX faucet
+
+<FaucetButton />
+
+Manual Foundry call:
+
+```bash
+cast send 0x286954bE9b8a2B52f2A61432Fa448C5287e4dDEA "drip()" \
+  --rpc-url "$RPC_URL" \
+  --private-key "$PRIVATE_KEY"
+```
+
+## Network
+
+- Chain: Arbitrum Sepolia
+- Chain ID: `421614`
+- Hex chain ID: `0x66eee`
+- Explorer: [sepolia.arbiscan.io](https://sepolia.arbiscan.io)
+
+## Frontend environment mapping
+
+The frontend expects public contract addresses through environment variables:
+
+```text
+NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS=0x204488318C0E75978B3c851382Aa83f3065a8f5A
+NEXT_PUBLIC_IDRX_ADDRESS=0x03b53A71C5517907006EAb512A31C1eD5a56Ae64
+NEXT_PUBLIC_RPC_URL=...
+NEXT_PUBLIC_BACKEND_URL=...
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=...
+```
+
+## Smart contract environment mapping
+
+The smart contract scripts use:
+
+```text
+PULSAR_PROTOCOL_PROXY=0x204488318C0E75978B3c851382Aa83f3065a8f5A
+PULSAR_PROTOCOL_IMPL=0x14c54E6cade1A13c73685c239aE895A7d37DC3df
+IDRX=0x03b53A71C5517907006EAb512A31C1eD5a56Ae64
+UNISWAP_V2_FACTORY=0x4254378E95dBD9816a1a18428A81B4E1fBe5C296
+UNISWAP_V2_ROUTER=0xFEf655B2A0742134242711b80899d0b543A74223
+WETH=0x980B62Da83eFf3D4576C647993b0c1D7faf17c73
+```
+
+## Verification checklist
+
+Before a demo or review session, verify:
+
+- `PulsarProtocol.router()` equals the deployed Uniswap V2 router.
+- `UniswapV2Router02.factory()` equals the deployed factory.
+- `PulsarProtocol.idrx()` equals the mock IDRX token.
+- The frontend env points to the same protocol and IDRX addresses.
+- The faucet has enough IDRX balance.
+- At least one pStock has been minted and has a usable pool.
