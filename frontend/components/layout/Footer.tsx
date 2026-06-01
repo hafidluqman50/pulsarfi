@@ -41,7 +41,7 @@ export function Footer() {
       </div>
       <div className="mt-[36px] pt-[20px] border-t border-[rgba(255,255,255,0.18)] flex justify-between text-[rgba(255,255,255,0.55)] text-[12px] flex-wrap gap-[8px]">
         <span>© 2026 PulsarFi · Arbitrum Buildathon</span>
-        <span>v0.4.1 — Sepolia Testnet</span>
+        <span>v0.4.1 | Sepolia Testnet</span>
       </div>
     </div>
   );
