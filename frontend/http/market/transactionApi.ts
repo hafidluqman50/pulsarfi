@@ -10,7 +10,7 @@ export interface RecordStockTransactionInput {
   block_number: number;
 }
 
-export type TransactionSide = 'buy' | 'sell' | 'request-redeem' | 'redeemed';
+export type TransactionSide = 'buy' | 'sell' | 'request-redeem' | 'redeemed' | 'cancel-redeem';
 
 export interface StockTransaction {
   id: number;
