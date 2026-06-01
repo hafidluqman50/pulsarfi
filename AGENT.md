@@ -44,6 +44,7 @@ All asset tokens use ALL-CAPS with a `P` suffix indicating Pulsar origin.
 | `IDRX` mock | `0x03b53A71C5517907006EAb512A31C1eD5a56Ae64` | Verified |
 | `UniswapV2Factory` | `0x4254378E95dBD9816a1a18428A81B4E1fBe5C296` | Verified |
 | `UniswapV2Router02` | `0xFEf655B2A0742134242711b80899d0b543A74223` | Verified |
+| `IDRXFaucet` | `0x286954bE9b8a2B52f2A61432Fa448C5287e4dDEA` | Verified |
 | WETH | `0x980B62Da83eFf3D4576C647993b0c1D7faf17c73` | External dependency |
 
 The matching `.env` keys are `PULSAR_PROTOCOL_PROXY`, `PULSAR_PROTOCOL_IMPL`, `IDRX`, `UNISWAP_V2_FACTORY`, `UNISWAP_V2_ROUTER`, and `WETH`. Keep these in sync with `frontend/.env.local` (`NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS`, `NEXT_PUBLIC_IDRX_ADDRESS`).
