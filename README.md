@@ -39,6 +39,7 @@ frontend/         Next.js + RainbowKit + TailwindCSS
 | IDRX mock | `0x03b53A71C5517907006EAb512A31C1eD5a56Ae64` | Verified |
 | UniswapV2Factory | `0x4254378E95dBD9816a1a18428A81B4E1fBe5C296` | Verified |
 | UniswapV2Router02 | `0xFEf655B2A0742134242711b80899d0b543A74223` | Verified |
+| IDRXFaucet | `0x286954bE9b8a2B52f2A61432Fa448C5287e4dDEA` | Verified |
 | WETH | `0x980B62Da83eFf3D4576C647993b0c1D7faf17c73` | External |
 
 Keep `smart-contract/.env` and `frontend/.env.local` aligned with these addresses.
@@ -110,6 +111,17 @@ cast call $UNISWAP_V2_FACTORY "feeToSetter()(address)" --rpc-url "$RPC_URL"
 ```
 
 The router must point to the same factory stored in `.env`, and both contracts must be verified on Arbiscan.
+
+### Testnet IDRX Faucet
+
+`IDRXFaucet` is pre-funded with 500 billion IDRX for judges and testers. Call `drip()` to receive 100,000 IDRX — once per 24 hours per address.
+
+```bash
+cast send 0x286954bE9b8a2B52f2A61432Fa448C5287e4dDEA "drip()" \
+  --rpc-url "$RPC_URL" --private-key "$PRIVATE_KEY"
+```
+
+Or use the "Get testnet IDRX" button on the frontend.
 
 ### Backend
 
