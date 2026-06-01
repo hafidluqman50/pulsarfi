@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"path/filepath"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -20,9 +21,11 @@ type StorageService struct {
 
 func NewStorageService(endpoint, accessKey, secretKey, region, bucket, projectURL string) *StorageService {
 	client := s3.NewFromConfig(aws.Config{
-		Region:      region,
-		Credentials: credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+		Region:       region,
+		Credentials:  credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
 		BaseEndpoint: aws.String(endpoint),
+	}, func(o *s3.Options) {
+		o.UsePathStyle = true
 	})
 	return &StorageService{client: client, bucket: bucket, projectURL: projectURL}
 }
@@ -42,4 +45,30 @@ func (s *StorageService) Upload(ctx context.Context, folder string, file multipa
 	}
 
 	return fmt.Sprintf("%s/storage/v1/object/public/%s/%s", s.projectURL, s.bucket, key), nil
+}
+
+func (s *StorageService) UploadPrivate(ctx context.Context, key string, file multipart.File, header *multipart.FileHeader) (string, error) {
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		Body:        file,
+		ContentType: aws.String(header.Header.Get("Content-Type")),
+	})
+	if err != nil {
+		return "", fmt.Errorf("upload to storage: %w", err)
+	}
+
+	return key, nil
+}
+
+func (s *StorageService) SignedURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	presigner := s3.NewPresignClient(s.client)
+	result, err := presigner.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", fmt.Errorf("presign storage object: %w", err)
+	}
+	return result.URL, nil
 }

@@ -157,16 +157,52 @@ export function buildPortfolioSeries(currentValue: number, transactions: StockTr
 }
 
 export function buildActivityRows(transactions: StockTransaction[]): ActivityRow[] {
-  return transactions.map((tx) => {
+  return [...transactions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map((tx) => {
     const stockQty = stockLots(tx.stock_amount);
     const idrx = idrxAmount(tx.idrx_amount);
-    const isBuy = tx.side === 'buy';
+
+    let text: string;
+    let a: string;
+    let b: string;
+
+    switch (tx.side) {
+      case 'buy':
+        text = 'Buy';
+        a = `${formatAmount(idrx)} IDRX`;
+        b = `${formatAmount(stockQty)} ${tx.ticker}`;
+        break;
+      case 'sell':
+        text = 'Sell';
+        a = `${formatAmount(stockQty)} ${tx.ticker}`;
+        b = `${formatAmount(idrx)} IDRX`;
+        break;
+      case 'request-redeem':
+        text = 'Redeem Request';
+        a = `${formatAmount(stockQty)} ${tx.ticker}`;
+        b = '';
+        break;
+      case 'redeemed':
+        text = 'Redeemed';
+        a = `${formatAmount(stockQty)} ${tx.ticker}`;
+        b = 'Physical shares → KSEI';
+        break;
+      case 'cancel-redeem':
+        text = 'Redeem Cancelled';
+        a = `${formatAmount(stockQty)} ${tx.ticker}`;
+        b = 'Tokens returned to wallet';
+        break;
+      default:
+        text = tx.side;
+        a = `${formatAmount(stockQty)} ${tx.ticker}`;
+        b = '';
+    }
+
     return {
       kind: 'swap',
       when: relativeTime(tx.created_at),
-      text: isBuy ? 'Buy' : 'Sell',
-      a: isBuy ? `${formatAmount(idrx)} IDRX` : `${formatAmount(stockQty)} ${tx.ticker}`,
-      b: isBuy ? `${formatAmount(stockQty)} ${tx.ticker}` : `${formatAmount(idrx)} IDRX`,
+      text,
+      a,
+      b,
       status: 'Confirmed',
       hash: `${tx.tx_hash.slice(0, 6)}...${tx.tx_hash.slice(-4)}`,
       txHash: tx.tx_hash,

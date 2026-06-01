@@ -41,23 +41,25 @@ func (r *RedeemProposalRepository) FindByOnChainID(ctx context.Context, onChainI
 }
 
 type RedeemProposalCreateInput struct {
-	OnChainID     int64
-	StockID       int64
-	TokenAmount   string
-	FeeIdrx       string
-	UserAddress   string
-	RequestTxHash *string
+	OnChainID       int64
+	StockID         int64
+	TokenAmount     string
+	FeeIdrx         string
+	UserAddress     string
+	AttestationHash string
+	RequestTxHash   *string
 }
 
 func (r *RedeemProposalRepository) Create(ctx context.Context, input RedeemProposalCreateInput) (model.RedeemProposal, error) {
 	proposal := model.RedeemProposal{
-		OnChainID:     input.OnChainID,
-		StockID:       input.StockID,
-		TokenAmount:   input.TokenAmount,
-		FeeIdrx:       input.FeeIdrx,
-		UserAddress:   input.UserAddress,
-		Status:        "pending",
-		RequestTxHash: input.RequestTxHash,
+		OnChainID:       input.OnChainID,
+		StockID:         input.StockID,
+		TokenAmount:     input.TokenAmount,
+		FeeIdrx:         input.FeeIdrx,
+		UserAddress:     input.UserAddress,
+		AttestationHash: input.AttestationHash,
+		Status:          "pending",
+		RequestTxHash:   input.RequestTxHash,
 	}
 	return proposal, r.DB.WithContext(ctx).Create(&proposal).Error
 }

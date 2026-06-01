@@ -8,11 +8,16 @@ import { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { shortAddr } from '@/lib/data';
 import { useSiweAuth } from '@/contexts/SiweAuthContext';
+import { useProtocolStats } from '@/http/market/hooks';
 
 export function NavBar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const pathname = usePathname();
   const { isAuthenticated, role, signOut } = useSiweAuth();
+  const { data: protocolStats } = useProtocolStats();
+  const idrUsdRate = protocolStats?.idr_usd_rate
+    ? Math.round(protocolStats.idr_usd_rate).toLocaleString('en-US')
+    : '...';
 
   const navItems = [
     { href: '/home',      label: 'Home',      visible: true },
@@ -72,7 +77,7 @@ export function NavBar() {
 
         {/* Right: wallet connect */}
         <div className="flex justify-end gap-[12px] items-center flex-1">
-          <span className="eyebrow nav-wallet-ens text-[var(--body)]">EN · IDR/USD 16,142</span>
+          <span className="eyebrow nav-wallet-ens text-[var(--body)]">EN · IDR/USD {idrUsdRate}</span>
           <ConnectButton.Custom>
             {({ account, chain, openConnectModal, openAccountModal, mounted }) => {
               if (!mounted) return null;

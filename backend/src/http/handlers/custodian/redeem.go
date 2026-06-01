@@ -12,170 +12,97 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
 )
 
-type recordRedeemRequestBody struct {
-	OnChainID   *int64 `json:"on_chain_id"      binding:"required"`
-	Ticker      string `json:"ticker"           binding:"required"`
-	TokenAmount string `json:"token_amount"     binding:"required"`
-	FeeIdrx     string `json:"fee_idrx"`
-	UserAddress string `json:"user_address"     binding:"required"`
-	TxHash      string `json:"tx_hash"          binding:"required"`
-}
-
-func RecordRedeemRequestHandler(c *gin.Context) {
-	claims, ok := custodianMiddleware.Get(c)
-	if !ok {
-		response.Unauthorized(c, "unauthorized")
-		return
-	}
-
-	var req recordRedeemRequestBody
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	onChainID := *req.OnChainID
-
-	stock, found, err := repos.Stock.FindByTicker(c.Request.Context(), req.Ticker)
-	if err != nil {
-		response.InternalError(c, "failed to lookup stock")
-		return
-	}
-	if !found {
-		response.NotFound(c, "stock not found")
-		return
-	}
-
-	custodian, found, err := repos.Custodian.FindByWalletAddress(c.Request.Context(), claims.WalletAddress)
-	if err != nil || !found {
-		response.InternalError(c, "failed to lookup custodian")
-		return
-	}
-
-	_, exists, _ := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), onChainID)
-	if exists {
-		response.OK(c, "proposal already recorded", nil)
-		return
-	}
-
-	txHash := req.TxHash
-	feeIdrx := req.FeeIdrx
-	if feeIdrx == "" {
-		feeIdrx = "0"
-	}
-	proposal, err := repos.RedeemProposal.Create(c.Request.Context(), repository.RedeemProposalCreateInput{
-		OnChainID:     onChainID,
-		StockID:       stock.ID,
-		TokenAmount:   req.TokenAmount,
-		FeeIdrx:       feeIdrx,
-		UserAddress:   req.UserAddress,
-		RequestTxHash: &txHash,
-	})
-	if err != nil {
-		response.InternalError(c, "failed to record proposal")
-		return
-	}
-
-	repos.RedeemApproval.Create(c.Request.Context(), proposal.ID, custodian.ID, "approve", &txHash)
-
-	if streamService != nil {
-		streamService.Emit(external.LevelInfo, "[redeem]",
-			fmt.Sprintf("requestRedeem recorded · ticker=%s · proposal=%d · requester=%s",
-				req.Ticker, onChainID, custodian.WalletAddress[:10]+"..."))
-	}
-
-	response.Created(c, "redeem proposal recorded", proposal)
-}
-
 type recordRedeemApprovalBody struct {
 	OnChainID *int64 `json:"on_chain_id" binding:"required"`
 	TxHash    string `json:"tx_hash"     binding:"required"`
 }
 
 func RecordRedeemApprovalHandler(c *gin.Context) {
-	claims, ok := custodianMiddleware.Get(c)
-	if !ok {
-		response.Unauthorized(c, "unauthorized")
+	if !ensureService(c, custodianRedeemSvc) {
 		return
 	}
+
+	claims, _ := custodianMiddleware.Get(c)
 
 	var req recordRedeemApprovalBody
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	onChainID := *req.OnChainID
 
-	proposal, found, err := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), onChainID)
-	if err != nil || !found {
+	err := custodianRedeemSvc.RecordVote(c.Request.Context(), custodiansvc.RecordRedeemVoteRequest{
+		OnChainID:     *req.OnChainID,
+		CustodianAddr: claims.WalletAddress,
+		VoteType:      "approve",
+		TxHash:        req.TxHash,
+	})
+	if err == custodiansvc.ErrRedeemProposalNotFound {
 		response.NotFound(c, "proposal not found")
 		return
 	}
-
-	custodian, found, err := repos.Custodian.FindByWalletAddress(c.Request.Context(), claims.WalletAddress)
-	if err != nil || !found {
-		response.InternalError(c, "failed to lookup custodian")
+	if err == custodiansvc.ErrRedeemAlreadyVoted {
+		response.BadRequest(c, "approval already recorded")
 		return
 	}
-
-	txHash := req.TxHash
-	if err := repos.RedeemApproval.Create(c.Request.Context(), proposal.ID, custodian.ID, "approve", &txHash); err != nil {
-		response.BadRequest(c, "approval already recorded")
+	if err != nil {
+		response.InternalError(c, "failed to record approval")
 		return
 	}
 
 	if streamService != nil {
 		streamService.Emit(external.LevelOK, "[redeem]",
 			fmt.Sprintf("approveRedeem · proposal=%d · approver=%s",
-				onChainID, custodian.WalletAddress[:10]+"..."))
+				*req.OnChainID, claims.WalletAddress[:10]+"..."))
 	}
 
 	response.OK(c, "approval recorded", nil)
 }
 
 func RecordRedeemRejectionHandler(c *gin.Context) {
-	claims, ok := custodianMiddleware.Get(c)
-	if !ok {
-		response.Unauthorized(c, "unauthorized")
+	if !ensureService(c, custodianRedeemSvc) {
 		return
 	}
+
+	claims, _ := custodianMiddleware.Get(c)
 
 	var req recordRedeemApprovalBody
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	onChainID := *req.OnChainID
 
-	proposal, found, err := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), onChainID)
-	if err != nil || !found {
+	err := custodianRedeemSvc.RecordVote(c.Request.Context(), custodiansvc.RecordRedeemVoteRequest{
+		OnChainID:     *req.OnChainID,
+		CustodianAddr: claims.WalletAddress,
+		VoteType:      "reject",
+		TxHash:        req.TxHash,
+	})
+	if err == custodiansvc.ErrRedeemProposalNotFound {
 		response.NotFound(c, "proposal not found")
 		return
 	}
-
-	custodian, found, err := repos.Custodian.FindByWalletAddress(c.Request.Context(), claims.WalletAddress)
-	if err != nil || !found {
-		response.InternalError(c, "failed to lookup custodian")
+	if err == custodiansvc.ErrRedeemAlreadyVoted {
+		response.BadRequest(c, "rejection already recorded")
 		return
 	}
-
-	txHash := req.TxHash
-	if err := repos.RedeemApproval.Create(c.Request.Context(), proposal.ID, custodian.ID, "reject", &txHash); err != nil {
-		response.BadRequest(c, "rejection already recorded")
+	if err != nil {
+		response.InternalError(c, "failed to record rejection")
 		return
 	}
 
 	if streamService != nil {
 		streamService.Emit(external.LevelInfo, "[redeem]",
 			fmt.Sprintf("rejectRedeem · proposal=%d · rejecter=%s",
-				onChainID, custodian.WalletAddress[:10]+"..."))
+				*req.OnChainID, claims.WalletAddress[:10]+"..."))
 	}
 
 	response.OK(c, "rejection recorded", nil)
 }
 
 type recordRedeemExecutionBody struct {
-	OnChainID *int64 `json:"on_chain_id" binding:"required"`
-	TxHash    string `json:"tx_hash"     binding:"required"`
+	OnChainID   *int64 `json:"on_chain_id"   binding:"required"`
+	TxHash      string `json:"tx_hash"       binding:"required"`
+	BlockNumber int64  `json:"block_number"`
 }
 
 func RecordRedeemExecutionHandler(c *gin.Context) {
@@ -191,8 +118,9 @@ func RecordRedeemExecutionHandler(c *gin.Context) {
 	onChainID := *req.OnChainID
 
 	if err := custodianSvc.RecordRedeemExecution(c.Request.Context(), custodiansvc.RecordRedeemExecutionRequest{
-		OnChainID: onChainID,
-		TxHash:    req.TxHash,
+		OnChainID:   onChainID,
+		TxHash:      req.TxHash,
+		BlockNumber: req.BlockNumber,
 	}); err != nil {
 		if err == custodiansvc.ErrProposalNotFound {
 			response.NotFound(c, "proposal not found")
@@ -219,13 +147,23 @@ func RecordRedeemRejectExecutionHandler(c *gin.Context) {
 	}
 	onChainID := *req.OnChainID
 
-	_, found, err := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), onChainID)
+	proposal, found, err := repos.RedeemProposal.FindByOnChainID(c.Request.Context(), onChainID)
 	if err != nil || !found {
 		response.NotFound(c, "proposal not found")
 		return
 	}
 
 	repos.RedeemProposal.MarkRejected(c.Request.Context(), onChainID, req.TxHash)
+
+	repos.StockTransaction.Create(c.Request.Context(), repository.StockTransactionCreateInput{
+		StockID:       proposal.StockID,
+		WalletAddress: proposal.UserAddress,
+		Side:          "cancel-redeem",
+		IdrxAmount:    proposal.FeeIdrx,
+		StockAmount:   proposal.TokenAmount,
+		TxHash:        req.TxHash,
+		BlockNumber:   req.BlockNumber,
+	})
 
 	if streamService != nil {
 		streamService.Emit(external.LevelOK, "[evm]",

@@ -9,24 +9,30 @@ import (
 )
 
 var (
-	repos          *repository.Registry
-	custodianSvc   *custodiansvc.CustodianService
-	emailService   *external.EmailService
-	storageService *external.StorageService
-	streamService  *external.StreamService
+	repos              *repository.Registry
+	custodianSvc       *custodiansvc.CustodianService
+	custodianRedeemSvc *custodiansvc.RedeemService
+	custodianKYCSvc    *custodiansvc.KYCService
+	emailService       *external.EmailService
+	storageService     *external.StorageService
+	streamService      *external.StreamService
 )
 
 type Services struct {
-	Repos     *repository.Registry
-	Custodian *custodiansvc.CustodianService
-	Email     *external.EmailService
-	Storage   *external.StorageService
-	Stream    *external.StreamService
+	Repos           *repository.Registry
+	Custodian       *custodiansvc.CustodianService
+	CustodianRedeem *custodiansvc.RedeemService
+	CustodianKYC    *custodiansvc.KYCService
+	Email           *external.EmailService
+	Storage         *external.StorageService
+	Stream          *external.StreamService
 }
 
 func ConfigureServices(s Services) {
 	repos = s.Repos
 	custodianSvc = s.Custodian
+	custodianRedeemSvc = s.CustodianRedeem
+	custodianKYCSvc = s.CustodianKYC
 	emailService = s.Email
 	storageService = s.Storage
 	streamService = s.Stream

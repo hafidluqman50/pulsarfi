@@ -260,7 +260,8 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
     // ─── Redeem Request ───────────────────────────────────────────────────────
 
-    function requestRedeem(string calldata ticker, uint256 tokenAmount, address user) external onlyRole(CUSTODIAN_ROLE) {
+    function requestRedeem(string calldata ticker, uint256 tokenAmount) external {
+        address user = msg.sender;
         if (!kycApproved[user]) revert KYCRequired(user);
         address stockAddress = _requireStock(ticker);
 
@@ -387,12 +388,12 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
     // ─── KYC Management ──────────────────────────────────────────────────────
 
-    function approveKYC(address wallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function approveKYC(address wallet) external onlyRole(CUSTODIAN_ROLE) {
         kycApproved[wallet] = true;
         emit KYCApproved(wallet);
     }
 
-    function revokeKYC(address wallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function revokeKYC(address wallet) external onlyRole(CUSTODIAN_ROLE) {
         kycApproved[wallet] = false;
         emit KYCRevoked(wallet);
     }

@@ -9,6 +9,8 @@ type RedeemApproval struct {
 	Type        string    `gorm:"column:type"`
 	TxHash      *string   `gorm:"column:tx_hash"`
 	AttestedAt  time.Time `gorm:"column:attested_at;autoCreateTime"`
+
+	Custodian Custodian `gorm:"foreignKey:CustodianID"`
 }
 
 func (RedeemApproval) TableName() string { return "redeem_attestations" }

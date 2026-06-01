@@ -137,7 +137,7 @@ img, svg, video { max-width: 100%; }
 .row-cell-label { display: none; }
 .row-cell-value { display: block; }
 
-.position-row { display: grid; grid-template-columns: auto 2fr 1fr 1fr 1fr 1fr 1fr 156px; gap: 16px; align-items: center; padding: 18px 0; }
+.position-row { display: grid; grid-template-columns: auto 2fr 1fr 1fr 1fr 1fr 1fr 220px; gap: 16px; align-items: center; padding: 18px 0; }
 .position-row .pos-head    { display: contents; }
 .position-row .pos-data    { display: contents; }
 .position-row .pos-actions { display: flex; gap: 8px; justify-content: flex-end; white-space: nowrap; }
@@ -199,6 +199,7 @@ img, svg, video { max-width: 100%; }
   .range-pills button { padding: 6px 10px !important; font-size: 10px !important; }
 
   .reserves-table .table-row-stack { grid-template-columns: 1fr !important; row-gap: 2px !important; }
+  .kyc-table .table-row-stack { grid-template-columns: 1fr !important; row-gap: 2px !important; }
 
   .stock-list-row { grid-template-columns: 1fr auto auto !important; gap: 12px !important; }
   .stock-list-row .stock-sector   { display: none !important; }

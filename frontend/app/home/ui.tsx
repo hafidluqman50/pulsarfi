@@ -1,7 +1,6 @@
 'use client';
 
 import { Layout } from '@/components/layout/Layout';
-import { Masthead } from '@/components/layout/Masthead';
 import { SwapView } from '@/components/swap/SwapView';
 
 const SWAP_HEADLINE = {
@@ -14,7 +13,6 @@ const SWAP_HEADLINE = {
 export function SwapPage() {
   return (
     <Layout>
-      <Masthead />
       <SwapView headline={SWAP_HEADLINE} />
     </Layout>
   );

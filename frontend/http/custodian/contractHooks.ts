@@ -1,11 +1,11 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { BaseError, ContractFunctionRevertedError, encodePacked, keccak256 } from 'viem';
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi';
 import { IDRX_ABI } from '@/lib/abi/idrx_abi';
 import { PULSAR_PROTOCOL_ABI } from '@/lib/abi/pulsar_protocol_abi';
 import { useEnsureAppChain } from '@/lib/useEnsureAppChain';
 import { appChainId } from '@/lib/wagmi';
-import { recordMintExecution, recordMintRejectExecution } from './custodianApi';
+import { createWalletVerification, recordMintExecution, recordMintRejectExecution, recordRedeemExecution, recordRedeemRejectionExecution } from './custodianApi';
 
 const PROTOCOL_ADDRESS = process.env.NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS as `0x${string}`;
 const MINT_THRESHOLD = 3;
@@ -122,92 +122,137 @@ export function useRequestMint() {
       if (!address) throw new Error('Wallet not connected');
       await ensureAppChain();
 
-      return writeContractAsync({
-        address: PROTOCOL_ADDRESS,
-        abi: PULSAR_PROTOCOL_ABI,
-        functionName: 'requestMint',
-        args: [
-          params.ticker,
-          params.stockName,
-          params.idxTicker,
-          params.tokenAmount,
-          params.idrxAmount,
-          params.attestationHash,
-        ],
-        chainId: appChainId,
-      });
+      try {
+        const { request } = await publicClient.simulateContract({
+          address: PROTOCOL_ADDRESS,
+          abi: PULSAR_PROTOCOL_ABI,
+          functionName: 'requestMint',
+          args: [
+            params.ticker,
+            params.stockName,
+            params.idxTicker,
+            params.tokenAmount,
+            params.idrxAmount,
+            params.attestationHash,
+          ],
+          account: address,
+        });
+        return writeContractAsync({ ...request, chainId: appChainId });
+      } catch (err) {
+        throw new Error(err instanceof Error ? err.message : 'requestMint simulation failed');
+      }
     },
   });
 }
 
 export function useApproveMint() {
   const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { address } = useAccount();
   const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (proposalId: bigint) => {
+      if (!publicClient) throw new Error('Public client not ready');
+      if (!address) throw new Error('Wallet not connected');
       await ensureAppChain();
-      return writeContractAsync({
-        address: PROTOCOL_ADDRESS,
-        abi: PULSAR_PROTOCOL_ABI,
-        functionName: 'approveMint',
-        args: [proposalId],
-        chainId: appChainId,
-      });
+
+      try {
+        const { request } = await publicClient.simulateContract({
+          address: PROTOCOL_ADDRESS,
+          abi: PULSAR_PROTOCOL_ABI,
+          functionName: 'approveMint',
+          args: [proposalId],
+          account: address,
+        });
+        return writeContractAsync({ ...request, chainId: appChainId });
+      } catch (err) {
+        throw new Error(err instanceof Error ? err.message : 'approveMint simulation failed');
+      }
     },
   });
 }
 
 export function useRejectMint() {
   const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { address } = useAccount();
   const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (proposalId: bigint) => {
+      if (!publicClient) throw new Error('Public client not ready');
+      if (!address) throw new Error('Wallet not connected');
       await ensureAppChain();
-      return writeContractAsync({
-        address: PROTOCOL_ADDRESS,
-        abi: PULSAR_PROTOCOL_ABI,
-        functionName: 'rejectMint',
-        args: [proposalId],
-        chainId: appChainId,
-      });
+
+      try {
+        const { request } = await publicClient.simulateContract({
+          address: PROTOCOL_ADDRESS,
+          abi: PULSAR_PROTOCOL_ABI,
+          functionName: 'rejectMint',
+          args: [proposalId],
+          account: address,
+        });
+        return writeContractAsync({ ...request, chainId: appChainId });
+      } catch (err) {
+        throw new Error(err instanceof Error ? err.message : 'rejectMint simulation failed');
+      }
     },
   });
 }
 
 export function useApproveRedeem() {
   const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { address } = useAccount();
   const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (requestId: bigint) => {
+      if (!publicClient) throw new Error('Public client not ready');
+      if (!address) throw new Error('Wallet not connected');
       await ensureAppChain();
-      return writeContractAsync({
-        address: PROTOCOL_ADDRESS,
-        abi: PULSAR_PROTOCOL_ABI,
-        functionName: 'approveRedeem',
-        args: [requestId],
-        chainId: appChainId,
-      });
+
+      try {
+        const { request } = await publicClient.simulateContract({
+          address: PROTOCOL_ADDRESS,
+          abi: PULSAR_PROTOCOL_ABI,
+          functionName: 'approveRedeem',
+          args: [requestId],
+          account: address,
+        });
+        return writeContractAsync({ ...request, chainId: appChainId });
+      } catch (err) {
+        throw new Error(err instanceof Error ? err.message : 'approveRedeem simulation failed');
+      }
     },
   });
 }
 
 export function useRejectRedeem() {
   const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { address } = useAccount();
   const ensureAppChain = useEnsureAppChain();
 
   return useMutation({
     mutationFn: async (requestId: bigint) => {
+      if (!publicClient) throw new Error('Public client not ready');
+      if (!address) throw new Error('Wallet not connected');
       await ensureAppChain();
-      return writeContractAsync({
-        address: PROTOCOL_ADDRESS,
-        abi: PULSAR_PROTOCOL_ABI,
-        functionName: 'rejectRedeem',
-        args: [requestId],
-        chainId: appChainId,
-      });
+
+      try {
+        const { request } = await publicClient.simulateContract({
+          address: PROTOCOL_ADDRESS,
+          abi: PULSAR_PROTOCOL_ABI,
+          functionName: 'rejectRedeem',
+          args: [requestId],
+          account: address,
+        });
+        return writeContractAsync({ ...request, chainId: appChainId });
+      } catch (err) {
+        throw new Error(err instanceof Error ? err.message : 'rejectRedeem simulation failed');
+      }
     },
   });
 }
@@ -318,6 +363,109 @@ export function useExecuteRejectMint() {
       await publicClient.waitForTransactionReceipt({ hash });
       await recordMintRejectExecution(Number(proposalId), hash);
       return hash;
+    },
+  });
+}
+
+export function useExecuteRedeem() {
+  const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { address } = useAccount();
+  const ensureAppChain = useEnsureAppChain();
+
+  return useMutation({
+    mutationFn: async (requestId: bigint) => {
+      if (!publicClient) throw new Error('Public client not ready');
+      if (!address) throw new Error('Wallet not connected');
+      await ensureAppChain();
+
+      const { request } = await publicClient.simulateContract({
+        address: PROTOCOL_ADDRESS,
+        abi: PULSAR_PROTOCOL_ABI,
+        functionName: 'executeRedeem',
+        args: [requestId],
+        account: address,
+      });
+      const hash = await writeContractAsync({ ...request, chainId: appChainId });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      await recordRedeemExecution(Number(requestId), hash, Number(receipt.blockNumber));
+      return hash;
+    },
+  });
+}
+
+export function useExecuteRejectRedeem() {
+  const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { address } = useAccount();
+  const ensureAppChain = useEnsureAppChain();
+
+  return useMutation({
+    mutationFn: async (requestId: bigint) => {
+      if (!publicClient) throw new Error('Public client not ready');
+      if (!address) throw new Error('Wallet not connected');
+      await ensureAppChain();
+
+      const { request } = await publicClient.simulateContract({
+        address: PROTOCOL_ADDRESS,
+        abi: PULSAR_PROTOCOL_ABI,
+        functionName: 'executeReject',
+        args: [requestId],
+        account: address,
+      });
+      const hash = await writeContractAsync({ ...request, chainId: appChainId });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      await recordRedeemRejectionExecution(Number(requestId), hash, Number(receipt.blockNumber));
+      return hash;
+    },
+  });
+}
+
+export interface RecordKYCParams {
+  walletAddress: `0x${string}`;
+  type: 'retail' | 'institution';
+  fullName: string;
+  email: string;
+  document: File;
+}
+
+export function useRecordKYC() {
+  const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
+  const { address } = useAccount();
+  const ensureAppChain = useEnsureAppChain();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (params: RecordKYCParams) => {
+      if (!publicClient) throw new Error('Public client not ready');
+      if (!address) throw new Error('Wallet not connected');
+      await ensureAppChain();
+
+      const { request } = await publicClient.simulateContract({
+        address: PROTOCOL_ADDRESS,
+        abi: PULSAR_PROTOCOL_ABI,
+        functionName: 'approveKYC',
+        args: [params.walletAddress],
+        account: address,
+      });
+
+      const hash = await writeContractAsync({ ...request, chainId: appChainId });
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      const body = new FormData();
+      body.append('wallet_address', params.walletAddress);
+      body.append('type', params.type);
+      body.append('full_name', params.fullName);
+      body.append('email', params.email);
+      body.append('approval_tx_hash', hash);
+      body.append('document', params.document);
+      await createWalletVerification(body);
+
+      return hash;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['custodian'] });
     },
   });
 }

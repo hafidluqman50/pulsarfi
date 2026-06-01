@@ -53,6 +53,25 @@ func (r *StockTransactionRepository) FindByTxHash(ctx context.Context, txHash st
 	return tx, err == nil, err
 }
 
+type StatsRow struct {
+	Volume24h float64
+	TvlIdrx   float64
+}
+
+func (r *StockTransactionRepository) ComputeStats(ctx context.Context) (StatsRow, error) {
+	var row StatsRow
+	err := r.DB.WithContext(ctx).Raw(`
+		SELECT
+			COALESCE(SUM(CASE WHEN created_at >= NOW() - INTERVAL '24 hours' THEN idrx_amount::numeric / 100 ELSE 0 END), 0) AS volume_24h,
+			COALESCE(SUM(CASE WHEN side = 'buy' THEN idrx_amount::numeric / 100 ELSE -idrx_amount::numeric / 100 END), 0)  AS tvl_idrx
+		FROM stock_transactions
+	`).Scan(&row).Error
+	if row.TvlIdrx < 0 {
+		row.TvlIdrx = 0
+	}
+	return row, err
+}
+
 type StockTransactionCreateInput struct {
 	StockID       int64
 	WalletAddress string

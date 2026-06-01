@@ -62,12 +62,13 @@ func buildHandler() (*gin.Engine, func(), error) {
 
 	var storageSvc *external.StorageService
 	if endpoint := config.GetEnv("SUPABASE_S3_ENDPOINT"); endpoint != "" {
+		storageBucket := config.GetEnv("SUPABASE_KYC_BUCKET")
 		storageSvc = external.NewStorageService(
 			endpoint,
 			config.GetEnv("SUPABASE_S3_ACCESS_KEY"),
 			config.GetEnv("SUPABASE_S3_SECRET_KEY"),
 			config.GetEnv("SUPABASE_S3_REGION"),
-			config.GetEnv("SUPABASE_STORAGE_BUCKET"),
+			storageBucket,
 			config.GetEnv("SUPABASE_URL"),
 		)
 	}
@@ -82,11 +83,13 @@ func buildHandler() (*gin.Engine, func(), error) {
 
 	authhandler.Configure(svcs.Auth)
 	custodianHandler.ConfigureServices(custodianHandler.Services{
-		Repos:     repos,
-		Custodian: svcs.Custodian,
-		Email:     svcs.Email,
-		Storage:   svcs.Storage,
-		Stream:    svcs.Stream,
+		Repos:           repos,
+		Custodian:       svcs.Custodian,
+		CustodianRedeem: svcs.CustodianRedeem,
+		CustodianKYC:    svcs.CustodianKYC,
+		Email:           svcs.Email,
+		Storage:         svcs.Storage,
+		Stream:          svcs.Stream,
 	})
 	publicHandler.ConfigureRepos(repos)
 	publicHandler.ConfigureServices(svcs)

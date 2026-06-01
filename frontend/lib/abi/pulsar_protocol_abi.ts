@@ -729,11 +729,6 @@ export const PULSAR_PROTOCOL_ABI = [
         "name": "tokenAmount",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [],

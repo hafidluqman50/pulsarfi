@@ -3,12 +3,12 @@
 const MARKS: Record<string, { fill: string; glyph: string, icon:string }> = {
   BUMIP: { fill: "#16110e", glyph: "B", icon: '/logos/BUMI.png' },
   ENRGP: { fill: "#c8102e", glyph: "E", icon: '/logos/ENRG.png' },
-  KIJAP: { fill: "#2a231e", glyph: "K", icon: '/logos/KIJA.png' },
-  TLKMP: { fill: "#1f4d8a", glyph: "T", icon: '/logos/TLKM.png' },
+  BRPTP: { fill: "#1a5276", glyph: "B", icon: '/logos/BRPT.png' },
+  PTROP: { fill: "#7d6608", glyph: "P", icon: '/logos/PTRO.png' },
   BBRIP: { fill: "#9a0c24", glyph: "R", icon: '/logos/BBRI.png' },
-  GOTOP: { fill: "#16110e", glyph: "G", icon: '/logos/GOTO.png' },
-  ASIIP: { fill: "#5a4a3a", glyph: "A", icon: '/logos/ASII.png' },
-  UNVRP: { fill: "#1a3a6e", glyph: "U", icon: '/logos/UNVR.png' },
+  BMRIP: { fill: "#003d7a", glyph: "M", icon: '/logos/BMRI.png' },
+  BBCAP: { fill: "#003087", glyph: "C", icon: '/logos/BBCA.png' },
+  BDMNP: { fill: "#e65c00", glyph: "D", icon: '/logos/BDMN.png' },
   IDRX:  { fill: "#1a7a4a", glyph: "₹", icon: '/logos/IDRX.png' },
 };
 

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getMarketStocks, getStockPrice } from './priceApi';
 import { getStockTransactions } from './transactionApi';
+import { getProtocolStats } from './statsApi';
 
 export function useStockPrice(ticker: string, source?: 'idx') {
   return useQuery({
@@ -16,6 +17,14 @@ export function useMarketStocks() {
     queryKey: ['market-stocks'],
     queryFn: getMarketStocks,
     refetchInterval: 15_000,
+  });
+}
+
+export function useProtocolStats() {
+  return useQuery({
+    queryKey: ['protocol-stats'],
+    queryFn:  getProtocolStats,
+    refetchInterval: 30_000,
   });
 }
 
