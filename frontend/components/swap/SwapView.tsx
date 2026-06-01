@@ -201,7 +201,7 @@ export function SwapView({ headline }: SwapViewProps) {
 				<p className="mt-[28px] max-w-[540px] text-[18px] font-light leading-[1.55] text-[var(--ink-soft)] [font-family:var(--font-fraunces,_Fraunces,_serif)]">
 					Eight blue-chip equities from the Indonesia Stock Exchange, tokenized
 					1:1 on Arbitrum. Trade{" "}
-					<em className="display-it">BUMIP, TLKMP, GOTOP</em> and others at any
+					<em className="display-it">BUMIP, BRPTP, BBCAP</em> and others at any
 					hour, settle in seconds, and exit gap risk on the weekend. A custodian
 					holds the underlying; arbitrageurs maintain the peg.
 				</p>
@@ -408,7 +408,7 @@ export function SwapView({ headline }: SwapViewProps) {
 					By trading, you affirm you are not a resident of restricted
 					jurisdictions and that these tokens are cryptographic receipts fully
 					backed 1:1 by physical IDX-listed equities held in custody by{" "}
-					<em>PT Horizon Kustodian Indonesia</em>.
+					<em>licensed custodians registered with the Indonesia Stock Exchange</em>.
 				</div>
 			</div>
 

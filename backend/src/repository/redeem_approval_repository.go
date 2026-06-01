@@ -23,7 +23,7 @@ func (r *RedeemApprovalRepository) Create(ctx context.Context, proposalID, custo
 
 func (r *RedeemApprovalRepository) FindByProposalID(ctx context.Context, proposalID int64) ([]model.RedeemApproval, error) {
 	var records []model.RedeemApproval
-	err := r.DB.WithContext(ctx).Where("proposal_id = ?", proposalID).Order("attested_at ASC").Find(&records).Error
+	err := r.DB.WithContext(ctx).Preload("Custodian").Where("proposal_id = ?", proposalID).Order("attested_at ASC").Find(&records).Error
 	return records, err
 }
 

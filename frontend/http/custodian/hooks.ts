@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { getCustodianRequests, getCustodianStats, getReserves } from './custodianApi';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { createWalletVerification, getCustodianRequests, getCustodianStats, getReserves, getWalletVerifications } from './custodianApi';
 
 export function useCustodianStats() {
   return useQuery({
@@ -22,5 +22,23 @@ export function useReserves() {
     queryKey: ['public', 'reserves'],
     queryFn: getReserves,
     refetchInterval: 30_000,
+  });
+}
+
+export function useWalletVerifications() {
+  return useQuery({
+    queryKey: ['custodian', 'wallet-verifications'],
+    queryFn: getWalletVerifications,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useCreateWalletVerification() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createWalletVerification,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['custodian'] });
+    },
   });
 }

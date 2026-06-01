@@ -1,0 +1,3 @@
+ALTER TABLE redeem_proposals ADD COLUMN IF NOT EXISTS attestation_hash CHAR(66);
+UPDATE redeem_proposals SET attestation_hash = '0x0000000000000000000000000000000000000000000000000000000000000000' WHERE attestation_hash IS NULL;
+ALTER TABLE redeem_proposals ALTER COLUMN attestation_hash SET NOT NULL;

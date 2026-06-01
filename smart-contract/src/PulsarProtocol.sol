@@ -388,12 +388,12 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
     // ─── KYC Management ──────────────────────────────────────────────────────
 
-    function approveKYC(address wallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function approveKYC(address wallet) external onlyRole(CUSTODIAN_ROLE) {
         kycApproved[wallet] = true;
         emit KYCApproved(wallet);
     }
 
-    function revokeKYC(address wallet) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function revokeKYC(address wallet) external onlyRole(CUSTODIAN_ROLE) {
         kycApproved[wallet] = false;
         emit KYCRevoked(wallet);
     }

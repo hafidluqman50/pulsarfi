@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
@@ -19,8 +20,9 @@ type RecordMintExecutionRequest struct {
 }
 
 type RecordRedeemExecutionRequest struct {
-	OnChainID int64
-	TxHash    string
+	OnChainID   int64
+	TxHash      string
+	BlockNumber int64
 }
 
 func (s *CustodianService) RecordMintExecution(ctx context.Context, req RecordMintExecutionRequest) error {
@@ -132,6 +134,17 @@ func (s *CustodianService) RecordRedeemExecution(ctx context.Context, req Record
 	if err := tx.Commit().Error; err != nil {
 		return err
 	}
+
+	// Record redeemed entry in stock_transactions for portfolio activity feed
+	s.Repos.StockTransaction.Create(ctx, repository.StockTransactionCreateInput{
+		StockID:       proposal.StockID,
+		WalletAddress: strings.ToLower(proposal.UserAddress),
+		Side:          "redeemed",
+		IdrxAmount:    proposal.FeeIdrx,
+		StockAmount:   proposal.TokenAmount,
+		TxHash:        req.TxHash,
+		BlockNumber:   req.BlockNumber,
+	})
 
 	if s.Stream != nil {
 		s.Stream.Emit(external.LevelOK, "[por]",

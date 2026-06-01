@@ -9,17 +9,20 @@ import (
 )
 
 type PublicRedeemService struct {
-	Stocks          *repository.StockRepository
-	RedeemProposals *repository.RedeemProposalRepository
+	Stocks              *repository.StockRepository
+	RedeemProposals     *repository.RedeemProposalRepository
+	StockTransactions   *repository.StockTransactionRepository
 }
 
 type RecordRedeemRequest struct {
-	OnChainID   int64
-	Ticker      string
-	TokenAmount string
-	FeeIdrx     string
-	UserAddress string
-	TxHash      string
+	OnChainID       int64
+	Ticker          string
+	TokenAmount     string
+	FeeIdrx         string
+	UserAddress     string
+	AttestationHash string
+	TxHash          string
+	BlockNumber     int64
 }
 
 type RedeemProposalResponse struct {
@@ -60,16 +63,28 @@ func (s *PublicRedeemService) Record(ctx context.Context, req RecordRedeemReques
 
 	txHash := req.TxHash
 	proposal, err := s.RedeemProposals.Create(ctx, repository.RedeemProposalCreateInput{
-		OnChainID:     req.OnChainID,
-		StockID:       stock.ID,
-		TokenAmount:   req.TokenAmount,
-		FeeIdrx:       feeIdrx,
-		UserAddress:   strings.ToLower(req.UserAddress),
-		RequestTxHash: &txHash,
+		OnChainID:       req.OnChainID,
+		StockID:         stock.ID,
+		TokenAmount:     req.TokenAmount,
+		FeeIdrx:         feeIdrx,
+		UserAddress:     strings.ToLower(req.UserAddress),
+		AttestationHash: req.AttestationHash,
+		RequestTxHash:   &txHash,
 	})
 	if err != nil {
 		return model.RedeemProposal{}, false, err
 	}
+
+	// Record in stock_transactions for portfolio activity feed
+	s.StockTransactions.Create(ctx, repository.StockTransactionCreateInput{
+		StockID:       stock.ID,
+		WalletAddress: strings.ToLower(req.UserAddress),
+		Side:          "request-redeem",
+		IdrxAmount:    feeIdrx,
+		StockAmount:   req.TokenAmount,
+		TxHash:        req.TxHash,
+		BlockNumber:   req.BlockNumber,
+	})
 
 	return proposal, true, nil
 }

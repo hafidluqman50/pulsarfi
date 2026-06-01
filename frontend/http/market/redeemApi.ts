@@ -6,7 +6,9 @@ export interface RecordRedeemInput {
   token_amount: string;
   fee_idrx: string;
   user_address: string;
+  attestation_hash: string;
   tx_hash: string;
+  block_number: number;
 }
 
 export async function recordRedeemRequest(input: RecordRedeemInput): Promise<void> {

@@ -29,7 +29,6 @@ func RegisterRoutes(rg *gin.RouterGroup, jwtConfig auth.Config) {
 	protected.GET("/mint-proposals/:id", custodianHandler.GetMintProposalHandler)
 
 	// Redeem proposals
-	protected.POST("/redeem-proposals", custodianHandler.RecordRedeemRequestHandler)
 	protected.POST("/redeem-proposals/approve", custodianHandler.RecordRedeemApprovalHandler)
 	protected.POST("/redeem-proposals/reject", custodianHandler.RecordRedeemRejectionHandler)
 	protected.POST("/redeem-proposals/execute", custodianHandler.RecordRedeemExecutionHandler)
@@ -43,5 +42,6 @@ func RegisterRoutes(rg *gin.RouterGroup, jwtConfig auth.Config) {
 
 	// KYC management
 	protected.GET("/wallet-verifications", custodianHandler.ListWalletVerificationsHandler)
-	protected.PATCH("/wallet-verifications/:id", custodianHandler.UpdateWalletVerificationHandler)
+	protected.POST("/wallet-verifications", custodianHandler.CreateWalletVerificationHandler)
+	protected.GET("/wallet-verifications/:id/document-url", custodianHandler.GetWalletVerificationDocumentURLHandler)
 }

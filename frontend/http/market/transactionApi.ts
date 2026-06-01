@@ -10,6 +10,8 @@ export interface RecordStockTransactionInput {
   block_number: number;
 }
 
+export type TransactionSide = 'buy' | 'sell' | 'request-redeem' | 'redeemed';
+
 export interface StockTransaction {
   id: number;
   stock_id: number;
@@ -17,7 +19,7 @@ export interface StockTransaction {
   stock_name: string;
   idx_ticker: string;
   wallet_address: string;
-  side: 'buy' | 'sell';
+  side: TransactionSide;
   idrx_amount: string;
   stock_amount: string;
   tx_hash: string;

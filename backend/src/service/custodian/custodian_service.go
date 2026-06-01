@@ -42,25 +42,27 @@ type AttestorInfo struct {
 }
 
 type PendingRequestResponse struct {
-	ID               int64          `json:"id"`
-	OnChainID        int64          `json:"on_chain_id"`
-	Kind             string         `json:"kind"`
-	Ticker           string         `json:"ticker"`
-	StockName        string         `json:"stock_name"`
-	IdxTicker        string         `json:"idx_ticker"`
-	TokenAmount      string         `json:"token_amount"`
-	IdrxAmount       *string        `json:"idrx_amount,omitempty"`
-	FeeIdrx          *string        `json:"fee_idrx,omitempty"`
-	UserAddress      *string        `json:"user_address,omitempty"`
-	RequesterAddress *string        `json:"requester_address,omitempty"`
-	Source           string         `json:"source"`
-	Destination      *string        `json:"destination,omitempty"`
-	ApprovalCount    int64          `json:"approval_count"`
-	RejectCount      int64          `json:"reject_count"`
-	Attestors        []AttestorInfo `json:"attestors"`
-	Status           string         `json:"status"`
-	RequestTxHash    *string        `json:"request_tx_hash,omitempty"`
-	CreatedAt        any            `json:"created_at"`
+	ID                     int64          `json:"id"`
+	OnChainID              int64          `json:"on_chain_id"`
+	Kind                   string         `json:"kind"`
+	Ticker                 string         `json:"ticker"`
+	StockName              string         `json:"stock_name"`
+	IdxTicker              string         `json:"idx_ticker"`
+	TokenAmount            string         `json:"token_amount"`
+	IdrxAmount             *string        `json:"idrx_amount,omitempty"`
+	FeeIdrx                *string        `json:"fee_idrx,omitempty"`
+	UserAddress            *string        `json:"user_address,omitempty"`
+	RequesterAddress       *string        `json:"requester_address,omitempty"`
+	ApproveInitiatorAddress *string       `json:"approve_initiator_address,omitempty"`
+	RejectInitiatorAddress  *string       `json:"reject_initiator_address,omitempty"`
+	Source                 string         `json:"source"`
+	Destination            *string        `json:"destination,omitempty"`
+	ApprovalCount          int64          `json:"approval_count"`
+	RejectCount            int64          `json:"reject_count"`
+	Attestors              []AttestorInfo `json:"attestors"`
+	Status                 string         `json:"status"`
+	RequestTxHash          *string        `json:"request_tx_hash,omitempty"`
+	CreatedAt              any            `json:"created_at"`
 }
 
 type PendingRequestsResponse struct {
@@ -265,30 +267,60 @@ func (s *CustodianService) mintPendingResponse(ctx context.Context, mint model.M
 }
 
 func (s *CustodianService) redeemPendingResponse(ctx context.Context, redeem model.RedeemProposal) (PendingRequestResponse, error) {
-	approvals, err := s.Repos.RedeemApproval.CountByProposalID(ctx, redeem.ID, "approve")
-	if err != nil {
-		return PendingRequestResponse{}, err
-	}
-	rejections, err := s.Repos.RedeemApproval.CountByProposalID(ctx, redeem.ID, "reject")
+	votes, err := s.Repos.RedeemApproval.FindByProposalID(ctx, redeem.ID)
 	if err != nil {
 		return PendingRequestResponse{}, err
 	}
 
+	var approvals, rejections int64
+	var approveInitiator, rejectInitiator *string
+	attestors := make([]AttestorInfo, 0, len(votes))
+
+	for _, v := range votes {
+		txHash := ""
+		if v.TxHash != nil {
+			txHash = *v.TxHash
+		}
+		attestors = append(attestors, AttestorInfo{
+			Name:          v.Custodian.Name,
+			WalletAddress: v.Custodian.WalletAddress,
+			Type:          v.Type,
+			TxHash:        txHash,
+			AttestedAt:    v.AttestedAt,
+		})
+		if v.Type == "approve" {
+			approvals++
+			if approveInitiator == nil {
+				addr := v.Custodian.WalletAddress
+				approveInitiator = &addr
+			}
+		} else {
+			rejections++
+			if rejectInitiator == nil {
+				addr := v.Custodian.WalletAddress
+				rejectInitiator = &addr
+			}
+		}
+	}
+
 	return PendingRequestResponse{
-		ID:            redeem.ID,
-		OnChainID:     redeem.OnChainID,
-		Kind:          "redeem",
-		Ticker:        redeem.Stock.Ticker,
-		StockName:     redeem.Stock.StockName,
-		IdxTicker:     redeem.Stock.IdxTicker,
-		TokenAmount:   redeem.TokenAmount,
-		FeeIdrx:       &redeem.FeeIdrx,
-		UserAddress:   &redeem.UserAddress,
-		Source:        "retail",
-		ApprovalCount: approvals,
-		RejectCount:   rejections,
-		Status:        redeem.Status,
-		RequestTxHash: redeem.RequestTxHash,
-		CreatedAt:     redeem.CreatedAt,
+		ID:                      redeem.ID,
+		OnChainID:               redeem.OnChainID,
+		Kind:                    "redeem",
+		Ticker:                  redeem.Stock.Ticker,
+		StockName:               redeem.Stock.StockName,
+		IdxTicker:               redeem.Stock.IdxTicker,
+		TokenAmount:             redeem.TokenAmount,
+		FeeIdrx:                 &redeem.FeeIdrx,
+		UserAddress:             &redeem.UserAddress,
+		ApproveInitiatorAddress: approveInitiator,
+		RejectInitiatorAddress:  rejectInitiator,
+		Source:                  "retail",
+		ApprovalCount:           approvals,
+		RejectCount:             rejections,
+		Attestors:               attestors,
+		Status:                  redeem.Status,
+		RequestTxHash:           redeem.RequestTxHash,
+		CreatedAt:               redeem.CreatedAt,
 	}, nil
 }

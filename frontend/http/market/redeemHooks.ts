@@ -11,6 +11,7 @@ import { PULSAR_PROTOCOL_ABI } from "@/lib/abi/pulsar_protocol_abi";
 import { PULSAR_STOCK_ABI } from "@/lib/abi/pulsar_stock_abi";
 import { useEnsureAppChain } from "@/lib/useEnsureAppChain";
 import { appChainId } from "@/lib/wagmi";
+import { buildAttestationHash } from "@/http/custodian/contractHooks";
 import { recordRedeemRequest } from "./redeemApi";
 
 const UNISWAP_V2_ROUTER_ABI = [
@@ -168,7 +169,7 @@ export function useRequestRedeem() {
 				}
 			}
 
-			// 3. Call requestRedeem on SC
+			// 3. Simulate + call requestRedeem — allowances are set, catches KYCRequired cleanly
 			let txHash: Address;
 			try {
 				const { request } = await publicClient.simulateContract({
@@ -207,13 +208,20 @@ export function useRequestRedeem() {
 				throw new Error("RedeemRequested event not found");
 
 			// 5. Record to backend
+			const tokenAmountFinal = event?.tokenAmount ?? input.tokenAmount;
+			const feeIdrxFinal = event?.feeIdrx ?? BigInt(0);
+			const quantity = (tokenAmountFinal / BigInt(10 ** 18)).toString();
+			const attestationHash = buildAttestationHash(input.ticker, quantity, feeIdrxFinal);
+
 			await recordRedeemRequest({
 				on_chain_id: Number(event?.requestId ?? 0),
 				ticker: input.ticker,
-				token_amount: (event?.tokenAmount ?? input.tokenAmount).toString(),
-				fee_idrx: (event?.feeIdrx ?? BigInt(0)).toString(),
+				token_amount: tokenAmountFinal.toString(),
+				fee_idrx: feeIdrxFinal.toString(),
 				user_address: input.walletAddress,
+				attestation_hash: attestationHash,
 				tx_hash: txHash,
+				block_number: Number(receipt.blockNumber),
 			});
 
 			return txHash;

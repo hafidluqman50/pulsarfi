@@ -36,7 +36,10 @@ CREATE TABLE wallet_verifications (
     type           VARCHAR(15) NOT NULL CHECK (type IN ('retail', 'institution')),
     status         VARCHAR(10) NOT NULL DEFAULT 'pending'
                        CHECK (status IN ('pending', 'approved', 'rejected')),
-    document_url   TEXT,
+    full_name      VARCHAR(120),
+    email          VARCHAR(255),
+    document_ref   TEXT,
+    approval_tx_hash CHAR(66),
     submitted_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     verified_at    TIMESTAMPTZ,
     verified_by    BIGINT      REFERENCES custodians(id)

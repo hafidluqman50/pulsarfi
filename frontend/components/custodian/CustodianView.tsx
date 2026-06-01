@@ -2,7 +2,8 @@
 
 import { useAccount } from 'wagmi';
 import { fmtIDRCompact, shortAddr } from '@/lib/data';
-import { useCustodianRequests, useCustodianStats, useReserves } from '@/http/custodian/hooks';
+import { useCustodianRequests, useCustodianStats, useReserves, useWalletVerifications } from '@/http/custodian/hooks';
+import { KYCRegistry } from './KYCRegistry';
 import { MintOrderForm } from './MintOrderForm';
 import { RequestQueue } from './RequestQueue';
 import { ReservesTable } from './ReservesTable';
@@ -34,6 +35,7 @@ export function CustodianView(): React.ReactNode {
   const { data: stats, isLoading: statsLoading } = useCustodianStats();
   const { data: requestsData, isLoading: requestsLoading } = useCustodianRequests();
   const { data: reserves, isLoading: reservesLoading } = useReserves();
+  const { data: kycRecords, isLoading: kycLoading } = useWalletVerifications();
 
   return (
     <div className="pad-x !px-[24px] !pb-[16px] !pt-[32px]">
@@ -74,6 +76,14 @@ export function CustodianView(): React.ReactNode {
           <div className="eyebrow !text-[var(--body)]">{lastAttestationLabel(reserves ?? [])}</div>
         </div>
         <ReservesTable entries={reserves ?? []} isLoading={reservesLoading} />
+      </div>
+
+      <div className="mt-[56px]">
+        <div className="hairline-strong flex flex-wrap items-baseline justify-between gap-[8px] pb-[12px]">
+          <h2 className="display section-title !m-[0] !text-[32px] !tracking-[-0.02em]">KYC & redemption access</h2>
+          <div className="eyebrow !text-[var(--body)]">{kycRecords?.length ?? 0} verified</div>
+        </div>
+        <KYCRegistry records={kycRecords ?? []} isLoading={kycLoading} />
       </div>
     </div>
   );

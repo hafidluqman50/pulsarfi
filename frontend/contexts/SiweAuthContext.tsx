@@ -131,25 +131,7 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // keep the persisted SIWE session when the same wallet reconnects or the app refreshes
-  useEffect(() => {
-    if (!isConnected || !address) return;
-
-    const walletAddress = address.toLowerCase();
-    const session = readStoredSession();
-
-    if (session?.walletAddress === walletAddress) {
-      deferApplySession(session);
-      return;
-    }
-
-    if (session || (authedAddressRef.current && authedAddressRef.current !== walletAddress)) {
-      deferClearAuth();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, address]);
-
-  // auto-trigger SIWE only when there is no valid stored session for this wallet
+  // restore session or auto-trigger SIWE when wallet connects
   useEffect(() => {
     if (!isConnected || !address) return;
 

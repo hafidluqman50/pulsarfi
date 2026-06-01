@@ -10,7 +10,8 @@ type RedeemProposal struct {
 	FeeIdrx       string     `gorm:"column:fee_idrx;type:numeric"`
 	UserAddress   string     `gorm:"column:user_address"`
 	Status        string     `gorm:"column:status"`
-	RequestTxHash *string    `gorm:"column:request_tx_hash"`
+	AttestationHash string     `gorm:"column:attestation_hash"`
+	RequestTxHash   *string    `gorm:"column:request_tx_hash"`
 	ExecuteTxHash *string    `gorm:"column:execute_tx_hash"`
 	CreatedAt     time.Time  `gorm:"column:created_at;autoCreateTime"`
 	ExecutedAt    *time.Time `gorm:"column:executed_at"`

@@ -199,6 +199,7 @@ img, svg, video { max-width: 100%; }
   .range-pills button { padding: 6px 10px !important; font-size: 10px !important; }
 
   .reserves-table .table-row-stack { grid-template-columns: 1fr !important; row-gap: 2px !important; }
+  .kyc-table .table-row-stack { grid-template-columns: 1fr !important; row-gap: 2px !important; }
 
   .stock-list-row { grid-template-columns: 1fr auto auto !important; gap: 12px !important; }
   .stock-list-row .stock-sector   { display: none !important; }

@@ -19,6 +19,8 @@ type Registry struct {
 	PublicStockTransaction *publicsvc.StockTransactionService
 	PublicStats            *publicsvc.StatsService
 	PublicRedeem           *publicsvc.PublicRedeemService
+	CustodianRedeem        *custodiansvc.RedeemService
+	CustodianKYC           *custodiansvc.KYCService
 	Email                  *external.EmailService
 	Storage                *external.StorageService
 	Stream                 *external.StreamService
@@ -69,8 +71,19 @@ func NewRegistry(cfg Config) *Registry {
 			Price:        price,
 		},
 		PublicRedeem: &publicsvc.PublicRedeemService{
-			Stocks:          cfg.Repos.Stock,
-			RedeemProposals: cfg.Repos.RedeemProposal,
+			Stocks:            cfg.Repos.Stock,
+			RedeemProposals:   cfg.Repos.RedeemProposal,
+			StockTransactions: cfg.Repos.StockTransaction,
+		},
+		CustodianRedeem: &custodiansvc.RedeemService{
+			RedeemProposals:    cfg.Repos.RedeemProposal,
+			RedeemAttestations: cfg.Repos.RedeemApproval,
+			Custodians:         cfg.Repos.Custodian,
+		},
+		CustodianKYC: &custodiansvc.KYCService{
+			WalletVerifications: cfg.Repos.WalletVerification,
+			Custodians:          cfg.Repos.Custodian,
+			Storage:             cfg.StorageService,
 		},
 		Email:   cfg.EmailService,
 		Storage: cfg.StorageService,
