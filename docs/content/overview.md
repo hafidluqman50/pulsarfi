@@ -72,7 +72,7 @@ custodian operations.
 
 ## Key guarantees
 
-The MVP is designed around the following guarantees:
+PulsarFi is designed around the following guarantees:
 
 - pStock supply is created only through the protocol.
 - Each mint requires custodian authorization.
@@ -87,7 +87,7 @@ The MVP is designed around the following guarantees:
 
 The current implementation targets Arbitrum Sepolia. It uses a mock IDRX token,
 a custom Uniswap V2 deployment, and a faucet for testnet liquidity. The design is
-structured so a future production version can replace mock IDRX, strengthen
+structured so production deployments can replace mock IDRX, strengthen
 proof-of-reserves automation, and migrate liquidity controls to a more advanced
 AMM model.
 
@@ -95,10 +95,10 @@ AMM model.
 
 If you are new to the system, read these pages in order:
 
-1. [Why This Exists](./problem)
-2. [Why IDRX](./why-idrx)
-3. [Business Flow](./business-flow)
+1. [Why PulsarFi](./problem)
+2. [IDRX Settlement](./why-idrx)
+3. [Market & Revenue Model](./business-flow)
 4. [Architecture](./architecture)
 5. [Protocol Design](./protocol-design)
-6. [App Flow](./app-flow)
+6. [App & Operator Flow](./app-flow)
 7. [Getting Started](./getting-started)

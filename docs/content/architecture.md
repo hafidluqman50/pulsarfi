@@ -82,7 +82,7 @@ The system has several boundaries that should not be blurred:
 | Wallet to frontend | The wallet owns keys. The frontend can request signatures, not sign for users. |
 | Frontend to backend | Backend accepts records, but sensitive routes require SIWE JWT. |
 | Frontend to chain | All token movements are direct wallet transactions. |
-| Backend to chain | Backend reads and mirrors; it does not act as a transaction executor in the MVP. |
+| Backend to chain | Backend reads and mirrors; it does not act as a transaction executor. |
 | Custodian to protocol | Custodians can vote, but one custodian cannot complete threshold operations alone. |
 | Admin to protocol | Admin can configure dependencies and upgrades, but mint/redeem operations remain role-gated. |
 
@@ -112,7 +112,8 @@ storage:        optional S3-compatible private bucket for KYC statements
 ## Data synchronization model
 
 The frontend is responsible for calling backend record endpoints after a
-transaction is confirmed. This is used instead of an indexer for the MVP.
+transaction is confirmed. This keeps the deployed system lightweight while still
+preserving an auditable mirror of confirmed transactions.
 
 Example swap sync:
 
@@ -137,11 +138,11 @@ Example mint sync:
 7. Backend updates stock contract address and reserve snapshot.
 ```
 
-## Why no indexer in the MVP
+## Why no indexer
 
-An indexer would be stronger for production-grade reconciliation, but it adds
-operational overhead. For the hackathon MVP, transaction receipt parsing from the
-frontend is enough to demonstrate the full flow while keeping the system simple.
+An indexer would be stronger for large-scale reconciliation, but it adds
+operational overhead. Transaction receipt parsing from the frontend is enough for
+the current deployment while keeping the system simple.
 
 The current design still leaves room for an indexer later because the backend
 tables already model proposals, attestations, transactions, and reserve records

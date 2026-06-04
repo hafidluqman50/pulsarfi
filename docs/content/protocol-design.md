@@ -5,7 +5,7 @@ sidebar_label: Protocol Design
 slug: /protocol-design
 ---
 
-`PulsarProtocol` is the single on-chain entrypoint for the MVP. It is UUPS
+`PulsarProtocol` is the single on-chain entrypoint for PulsarFi. It is UUPS
 upgradeable and owns every `PulsarStock` token contract it deploys.
 
 ## Roles
@@ -158,7 +158,7 @@ precision is lost.
 
 ## Protocol invariants
 
-The MVP should preserve these invariants:
+The protocol should preserve these invariants:
 
 - Only `PulsarProtocol` can mint or burn `PulsarStock`.
 - A mint proposal cannot execute before threshold approval.
@@ -178,6 +178,5 @@ matters because Uniswap V2 router pair address calculation depends on the pair
 init code hash. Recompiling the pair with different bytecode can make the router
 calculate the wrong deterministic pair address.
 
-For the MVP, do not deploy Uniswap V2 by recompiling dependency contracts through
-Foundry. Use the official artifact deployment scripts already included in the
-repo.
+Do not deploy Uniswap V2 by recompiling dependency contracts through Foundry.
+Use the official artifact deployment scripts already included in the repo.

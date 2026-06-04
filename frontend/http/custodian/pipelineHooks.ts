@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { parseEventLogs } from 'viem';
@@ -9,9 +9,14 @@ import { recordMintRequest } from './custodianApi';
 import { PULSAR_PROTOCOL_ABI } from '@/lib/abi/pulsar_protocol_abi';
 
 export function useTerminalLog() {
-  const [log, setLog] = useState<LogLine[]>(() => [
-    { timestamp: currentTimestamp(), level: "INFO", text: "[ready] awaiting operator command…" },
-  ]);
+  const [log, setLog] = useState<LogLine[]>([]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setLog([{ timestamp: currentTimestamp(), level: "INFO", text: "[ready] awaiting operator command…" }]);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   function appendLog(line: Omit<LogLine, 'timestamp'>) {
     setLog(prev => [...prev, { timestamp: currentTimestamp(), ...line }]);
@@ -36,7 +41,7 @@ export function useMintPipeline(appendLog: (line: Omit<LogLine, 'timestamp'>) =>
   const queryClient = useQueryClient();
 
   async function run(params: MintPipelineParams) {
-    const { ticker, stockName, idxTicker, quantity, idrPrice, idrTotal } = params;
+    const { ticker, stockName, idxTicker, quantity, idrTotal } = params;
     setRunning(true);
 
     const toastId = toast.loading(`Submitting mint request…`, {

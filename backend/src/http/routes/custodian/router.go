@@ -15,6 +15,7 @@ func RegisterRoutes(rg *gin.RouterGroup, jwtConfig auth.Config) {
 
 	// Dashboard stats
 	protected.GET("/stats", custodianHandler.GetStatsHandler)
+	protected.GET("/stocks", custodianHandler.ListStocksHandler)
 
 	// Unified pending request queue (mints + redeems)
 	protected.GET("/requests", custodianHandler.ListPendingRequestsHandler)

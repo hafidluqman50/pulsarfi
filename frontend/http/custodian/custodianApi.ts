@@ -81,6 +81,15 @@ export interface WalletVerification {
   verified_by?: number | null;
 }
 
+export interface CustodianStock {
+  id: number;
+  ticker: string;
+  stock_name: string;
+  idx_ticker: string;
+  sector?: string | null;
+  contract_address?: string | null;
+}
+
 interface ApiResponse<T> {
   status_code: number;
   message: string;
@@ -95,6 +104,11 @@ export async function getCustodianStats(): Promise<CustodianStats> {
 export async function getCustodianRequests(): Promise<CustodianRequests> {
   const { data } = await client.get<ApiResponse<CustodianRequests>>('/custodian/requests');
   return data.data;
+}
+
+export async function getCustodianStocks(): Promise<CustodianStock[]> {
+  const { data } = await client.get<ApiResponse<CustodianStock[]>>('/custodian/stocks');
+  return Array.isArray(data.data) ? data.data : [];
 }
 
 export async function getReserves(): Promise<ReserveEntry[]> {

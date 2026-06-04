@@ -3,7 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { DetailRow } from '@/components/swap/SwapView';
-import { useMarketStocks, useStockPrice } from '@/http/market/hooks';
+import { useStockPrice } from '@/http/market/hooks';
+import { useCustodianStocks } from '@/http/custodian/hooks';
 import { useTerminalLog, useMintPipeline } from '@/http/custodian/pipelineHooks';
 import { currentTimestamp } from '@/lib/terminal';
 
@@ -28,10 +29,10 @@ function Cursor(): React.ReactNode {
 }
 
 export function MintOrderForm(): React.ReactNode {
-  const { data: marketStocks = [], isLoading: isStocksLoading } = useMarketStocks();
+  const { data: custodianStocks = [], isLoading: isStocksLoading } = useCustodianStocks();
   const stockOptions = useMemo(
-    () => marketStocks.filter(stock => stock.idx_ticker && stock.ticker),
-    [marketStocks],
+    () => custodianStocks.filter(stock => stock.idx_ticker && stock.ticker),
+    [custodianStocks],
   );
 
   const [selectedIpoTicker, setSelectedIpoTicker] = useState("");

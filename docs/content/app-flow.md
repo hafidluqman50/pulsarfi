@@ -1,7 +1,7 @@
 ---
 id: app-flow
-title: App Flow
-sidebar_label: App Flow
+title: App & Operator Flow
+sidebar_label: App & Operator Flow
 slug: /app-flow
 ---
 
