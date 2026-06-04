@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img src="./frontend/public/logo-nobg.png" width="320" alt="PulsarFi" />
+# <img src="./frontend/public/logo.png" width="320" alt="PulsarFi" />
 
 ### Asset-backed Indonesian equity tokenization on Arbitrum Sepolia
 
