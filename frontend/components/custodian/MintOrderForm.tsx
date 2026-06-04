@@ -1,14 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { DetailRow } from '@/components/swap/SwapView';
-import { PSTOCKS } from '@/lib/data';
-import { useStockPrice } from '@/http/market/hooks';
+import { useMarketStocks, useStockPrice } from '@/http/market/hooks';
 import { useTerminalLog, useMintPipeline } from '@/http/custodian/pipelineHooks';
 import { currentTimestamp } from '@/lib/terminal';
 
-const IDR_PRICE_FALLBACK: Record<string, number> = { BUMI: 246, ENRG: 378, KIJA: 144, TLKM: 2976, BBRI: 4780, GOTO: 98, ASII: 5190, UNVR: 2402 };
 const LOT_SIZE = 100;
 
 function Field({ label, children }: { label: string; children: React.ReactNode }): React.ReactNode {
@@ -30,22 +28,29 @@ function Cursor(): React.ReactNode {
 }
 
 export function MintOrderForm(): React.ReactNode {
-  const [selectedIpoTicker, setSelectedIpoTicker] = useState("BUMI");
+  const { data: marketStocks = [], isLoading: isStocksLoading } = useMarketStocks();
+  const stockOptions = useMemo(
+    () => marketStocks.filter(stock => stock.idx_ticker && stock.ticker),
+    [marketStocks],
+  );
+
+  const [selectedIpoTicker, setSelectedIpoTicker] = useState("");
   const [quantity, setQuantity] = useState("50000");
   const { log, appendLog } = useTerminalLog();
   const { run: runMint, running, isPending: isMintPending } = useMintPipeline(appendLog);
 
-  const selectedStock = PSTOCKS.find(stock => stock.ipo === selectedIpoTicker);
-  const { data: priceData } = useStockPrice(selectedIpoTicker, 'idx');
-  const idrPrice = priceData?.price ?? IDR_PRICE_FALLBACK[selectedIpoTicker] ?? 250;
-  const idrTotal = idrPrice * (parseInt(quantity) || 0) * LOT_SIZE;
+  const activeIpoTicker = selectedIpoTicker || stockOptions[0]?.idx_ticker || "";
+  const selectedStock = stockOptions.find(stock => stock.idx_ticker === activeIpoTicker);
+  const { data: priceData, isLoading: isPriceLoading } = useStockPrice(activeIpoTicker, 'idx');
+  const idrPrice = priceData?.price;
+  const idrTotal = (idrPrice ?? 0) * (parseInt(quantity) || 0) * LOT_SIZE;
 
   async function handleRunPipeline(): Promise<void> {
-    if (!selectedStock || !parseInt(quantity)) return;
+    if (!selectedStock || !parseInt(quantity) || !idrPrice) return;
     await runMint({
       ticker: selectedStock.ticker,
-      stockName: selectedStock.name,
-      idxTicker: selectedIpoTicker,
+      stockName: selectedStock.stock_name,
+      idxTicker: activeIpoTicker,
       quantity,
       idrPrice,
       idrTotal,
@@ -61,9 +66,22 @@ export function MintOrderForm(): React.ReactNode {
         </div>
         <div className="flex flex-col gap-[18px] p-[20px]">
           <Field label="IDX Ticker">
-            <select className="input mono" value={selectedIpoTicker} onChange={event => setSelectedIpoTicker(event.target.value)}>
-              {PSTOCKS.map(stock => <option key={stock.ipo} value={stock.ipo}>{stock.ipo} · {stock.name.replace("Pulsar ", "")}</option>)}
-            </select>
+            {isStocksLoading ? (
+              <div className="skeleton h-[48px] w-full" />
+            ) : (
+              <select
+                className="input mono"
+                value={activeIpoTicker}
+                onChange={event => setSelectedIpoTicker(event.target.value)}
+                disabled={stockOptions.length === 0}
+              >
+                {stockOptions.map(stock => (
+                  <option key={stock.idx_ticker} value={stock.idx_ticker}>
+                    {stock.idx_ticker} · {stock.stock_name.replace("Pulsar ", "")}
+                  </option>
+                ))}
+              </select>
+            )}
           </Field>
           <Field label="Order quantity (lots to buy on IDX)">
             <input className="input mono" value={quantity} onChange={event => setQuantity(event.target.value.replace(/[^0-9]/g, ""))} />
@@ -72,20 +90,27 @@ export function MintOrderForm(): React.ReactNode {
 
         <div className="hairline bg-[var(--canvas-soft)] px-[20px] py-[16px]">
           <div className="eyebrow mb-[10px] !text-[var(--body)]">02 · Order preview</div>
-          <div className="flex flex-col gap-[8px]">
-            <DetailRow k="IDR notional" v={`Rp ${idrTotal.toLocaleString("id-ID")}`} />
-            <DetailRow
-              k="Mint output"
-              v={`${parseInt(quantity || "0").toLocaleString()} ${selectedStock?.ticker ?? selectedIpoTicker}`}
-              hint={`1 token = ${LOT_SIZE} shares`}
-            />
-          </div>
+          {isPriceLoading || !idrPrice ? (
+            <div className="flex flex-col gap-[8px]">
+              <div className="skeleton h-[22px] w-full" />
+              <div className="skeleton h-[22px] w-[80%]" />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-[8px]">
+              <DetailRow k="IDR notional" v={`Rp ${idrTotal.toLocaleString("id-ID")}`} />
+              <DetailRow
+                k="Mint output"
+                v={`${parseInt(quantity || "0").toLocaleString()} ${selectedStock?.ticker ?? activeIpoTicker}`}
+                hint={`1 token = ${LOT_SIZE} shares`}
+              />
+            </div>
+          )}
         </div>
 
         <div className="p-[20px]">
           <button
             onClick={handleRunPipeline}
-            disabled={running || isMintPending || !quantity}
+            disabled={running || isMintPending || !quantity || !selectedStock || !idrPrice}
             className="btn btn-merah !inline-flex !w-full !items-center !justify-center !gap-[10px] !p-[16px] !text-[15px]"
           >
             {running ? <Icon name="loader" size={14} /> : <Icon name="play" size={14} />}

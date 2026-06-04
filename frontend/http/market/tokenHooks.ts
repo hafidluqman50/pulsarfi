@@ -13,6 +13,10 @@ export function useMarketTokens(): MarketToken[] {
 }
 
 export function useWalletTokenBalances(tokens: MarketToken[]): Balances {
+  return useWalletTokenBalanceState(tokens).balances;
+}
+
+export function useWalletTokenBalanceState(tokens: MarketToken[]): { balances: Balances; isLoading: boolean } {
   const { address } = useAccount();
   const idrxAddress = process.env.NEXT_PUBLIC_IDRX_ADDRESS as Address | undefined;
   const tokenContracts = useMemo(() => {
@@ -34,7 +38,7 @@ export function useWalletTokenBalances(tokens: MarketToken[]): Balances {
       ]));
   }, [address, tokens]);
 
-  const { data: balanceReads } = useReadContracts({
+  const { data: balanceReads, isLoading } = useReadContracts({
     contracts: [
       ...(idrxAddress && address ? [
         {
@@ -57,7 +61,7 @@ export function useWalletTokenBalances(tokens: MarketToken[]): Balances {
     },
   });
 
-  return useMemo(() => {
+  const balances = useMemo(() => {
     if (!balanceReads || !address || !idrxAddress) return {};
 
     const next: Balances = {};
@@ -79,4 +83,6 @@ export function useWalletTokenBalances(tokens: MarketToken[]): Balances {
 
     return next;
   }, [address, balanceReads, idrxAddress, tokens]);
+
+  return { balances, isLoading: Boolean(address && idrxAddress && isLoading) };
 }

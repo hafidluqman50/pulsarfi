@@ -6,8 +6,8 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { toast } from 'sonner';
 import { type Address } from 'viem';
 import { tokenByTicker, sliceRange, fmtIDRX, fmtNum, fmtPct, shortAddr } from '@/lib/data';
-import { useMarketStocks, useStockTransactions } from '@/http/market/hooks';
-import { useWalletTokenBalances } from '@/http/market/tokenHooks';
+import { useMarketStocks, useStockHistory, useStockTransactions } from '@/http/market/hooks';
+import { useWalletTokenBalanceState } from '@/http/market/tokenHooks';
 import { useTransferToken } from '@/http/market/transferHooks';
 import { useRequestRedeem } from '@/http/market/redeemHooks';
 import { toMarketToken, unitsFromDecimalInput } from '@/lib/swap';
@@ -39,16 +39,48 @@ const PALETTE_CLASSES = [
   "bg-[#6f2da8]",
   "bg-[#2c5e2e]",
 ];
-const POSITION_CHART_ANCHOR = new Date('2026-05-26T14:00:00+08:00').getTime();
 
+function PortfolioSkeleton(): React.ReactNode {
+  return (
+    <div className="pad-x !px-[24px] !pb-[16px] !pt-[32px]">
+      <div className="grid-2col-balanced">
+        <div>
+          <div className="skeleton h-[14px] w-[180px]" />
+          <div className="skeleton mt-[22px] h-[74px] w-[420px] max-w-full" />
+          <div className="mt-[20px] flex flex-wrap gap-[28px]">
+            <div className="skeleton h-[48px] w-[150px]" />
+            <div className="skeleton h-[48px] w-[190px]" />
+            <div className="skeleton h-[48px] w-[150px]" />
+          </div>
+        </div>
+        <div className="skeleton h-[92px] w-full" />
+      </div>
+      <div className="hairline-top mt-[32px] pt-[24px]">
+        <div className="mb-[18px] flex items-center justify-between">
+          <div className="skeleton h-[42px] w-[180px]" />
+          <div className="skeleton h-[34px] w-[260px]" />
+        </div>
+        <div className="skeleton h-[280px] w-full" />
+      </div>
+      <div className="mt-[40px]">
+        <div className="skeleton h-[38px] w-[180px]" />
+        {Array.from({ length: 4 }, (_, index) => (
+          <div key={index} className="hairline py-[18px]">
+            <div className="skeleton h-[44px] w-full" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function PortfolioView() {
   const { address, isConnected } = useAccount();
   const idrxAddress = process.env.NEXT_PUBLIC_IDRX_ADDRESS as Address | undefined;
-  const { data: marketStocks = [] } = useMarketStocks();
+  const { data: marketStocks = [], isLoading: isMarketLoading } = useMarketStocks();
   const marketTokens = useMemo(() => marketStocks.map(toMarketToken), [marketStocks]);
-  const balances = useWalletTokenBalances(marketTokens);
-  const { data: transactions = [] } = useStockTransactions(address);
+  const { balances, isLoading: isBalancesLoading } = useWalletTokenBalanceState(marketTokens);
+  const { data: transactions = [], isLoading: isTransactionsLoading } = useStockTransactions(address);
   const transferToken = useTransferToken();
   const requestRedeem = useRequestRedeem();
 
@@ -90,6 +122,10 @@ export function PortfolioView() {
         </ConnectButton.Custom>
       </div>
     );
+  }
+
+  if (isMarketLoading || isBalancesLoading || isTransactionsLoading) {
+    return <PortfolioSkeleton />;
   }
 
   async function handleRedeem(opts: { token: typeof redeemOpen; amount: string }) {
@@ -403,13 +439,7 @@ function RowCell({ label, align = "left", children }: { label: string; align?: "
 
 function PositionDetail({ position }: { position: PortfolioPosition }) {
   const [range, setRange] = useState("1M");
-  const series = useMemo(() => {
-    return [
-      { timestamp: POSITION_CHART_ANCHOR - 60 * 60_000, value: position.price },
-      { timestamp: POSITION_CHART_ANCHOR, value: position.price },
-    ];
-  }, [position.price]);
-  const ranged = useMemo(() => sliceRange(series, range), [series, range]);
+  const { data: series = [], isLoading } = useStockHistory(position.ipo, range, 'idx');
 
   return (
     <div className="mt-[-1px] border-t border-[var(--hairline)] bg-[var(--canvas-soft)] p-[20px]">
@@ -426,7 +456,11 @@ function PositionDetail({ position }: { position: PortfolioPosition }) {
               ))}
             </div>
           </div>
-          <AreaChart data={ranged} height={200} valueFormatter={v => fmtIDRX(v)} />
+          {isLoading || series.length === 0 ? (
+            <div className="skeleton h-[200px] w-full" />
+          ) : (
+            <AreaChart data={series} height={200} valueFormatter={v => fmtIDRX(v)} />
+          )}
         </div>
         <div className="flex flex-col gap-[12px] pt-[4px]">
           <KV k="Holdings"      v={`${fmtNum(position.qty, 2)}`} />
@@ -488,4 +522,3 @@ function ActivityList({ rows }: { rows: ActivityRow[] }) {
     </div>
   );
 }
-

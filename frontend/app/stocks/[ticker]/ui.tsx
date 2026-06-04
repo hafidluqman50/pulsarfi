@@ -6,45 +6,70 @@ import { Layout } from '@/components/layout/Layout';
 import { SwapModal } from '@/components/ui/SwapModal';
 import { PStockMark } from '@/components/ui/PStockMark';
 import { AreaChart } from '@/components/charts/AreaChart';
-import { useStockPrice } from '@/http/market/hooks';
+import { useMarketStocks, useStockHistory, useStockPrice } from '@/http/market/hooks';
 import { useReserves } from '@/http/custodian/hooks';
 import {
-  PSTOCKS, sliceRange,
   fmtIDRX, fmtPct, fmtNum,
 } from '@/lib/data';
 import {
-  buildMinuteTimeSeries,
-  buildStockTimeSeries,
   rawTokenToNumber,
   STOCK_LOT_SIZE,
   STOCK_NEWS,
   STOCK_TIMEFRAME_OPTIONS,
 } from '@/lib/stockDetail';
+import { toMarketToken } from '@/lib/swap';
+
+function DetailSkeleton(): React.ReactNode {
+  return (
+    <Layout>
+      <div className="container pad-x !pb-[64px] !pt-[28px]">
+        <div className="mb-[24px] flex items-center gap-[8px]">
+          <div className="skeleton h-[14px] w-[72px]" />
+          <div className="skeleton h-[14px] w-[46px]" />
+        </div>
+        <div className="mb-[28px] flex flex-wrap items-start justify-between gap-[16px]">
+          <div className="flex items-start gap-[16px]">
+            <div className="skeleton h-[52px] w-[52px]" />
+            <div>
+              <div className="skeleton h-[13px] w-[260px]" />
+              <div className="skeleton mt-[10px] h-[34px] w-[360px] max-w-full" />
+              <div className="skeleton mt-[14px] h-[30px] w-[180px]" />
+            </div>
+          </div>
+          <div className="skeleton h-[44px] w-[136px]" />
+        </div>
+        <div className="border border-[var(--hairline)] bg-[var(--putih)] p-[12px]">
+          <div className="skeleton h-[340px] w-full" />
+        </div>
+      </div>
+    </Layout>
+  );
+}
 
 export function StockDetailPage() {
   const params = useParams();
   const router = useRouter();
   const ticker = typeof params.ticker === 'string' ? params.ticker : '';
 
-  const stock = PSTOCKS.find(stockItem => stockItem.ticker === ticker);
-  const { data: idxPrice } = useStockPrice(stock?.ipo ?? '', 'idx');
-  const { data: poolPrice } = useStockPrice(stock?.ipo ?? '');
-  const { data: reserves = [] } = useReserves();
+  const { data: marketStocks = [], isLoading: isMarketLoading } = useMarketStocks();
+  const stock = marketStocks.find(stockItem => stockItem.ticker === ticker);
+  const { data: idxPrice } = useStockPrice(stock?.idx_ticker ?? '', 'idx');
+  const { data: poolPrice } = useStockPrice(stock?.idx_ticker ?? '');
+  const { data: reserves = [], isLoading: isReservesLoading } = useReserves();
 
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('1M');
   const [tradeOpen, setTradeOpen]                 = useState(false);
+  const { data: chartData = [], isLoading: isHistoryLoading } = useStockHistory(stock?.idx_ticker ?? '', selectedTimeframe, 'idx');
 
-  const reserveEntry   = reserves.find(entry => entry.stock.ticker === stock?.ticker);
-  const tokenSupply    = rawTokenToNumber(reserveEntry?.on_chain_supply) ?? stock?.supply ?? 0;
+  const reserveEntry  = reserves.find(entry => entry.stock.ticker === stock?.ticker);
+  const tokenSupply   = rawTokenToNumber(reserveEntry?.on_chain_supply);
   const displayPrice  = idxPrice?.price ?? stock?.price ?? 0;
-  const displayChange = idxPrice?.change_24h ?? stock?.change24h ?? 0;
-  const pricedStock = stock ? { ...stock, price: displayPrice, change24h: displayChange } : null;
+  const displayChange = idxPrice?.change_24h ?? stock?.change_24h ?? 0;
+  const pricedStock = stock ? { ...toMarketToken(stock), price: displayPrice, change24h: displayChange } : null;
 
-  const fullSeries = stock ? buildStockTimeSeries({ ...stock, price: displayPrice, change24h: displayChange }, 365) : [];
-  const minuteSeries = buildMinuteTimeSeries(idxPrice?.sparkline_1d ?? []);
-  const chartData = selectedTimeframe === '1D' && minuteSeries.length > 0
-    ? minuteSeries
-    : sliceRange(fullSeries, selectedTimeframe);
+  if (isMarketLoading) {
+    return <DetailSkeleton />;
+  }
 
   if (!stock) {
     return (
@@ -85,9 +110,9 @@ export function StockDetailPage() {
             <PStockMark ticker={stock.ticker} size={52} />
             <div>
               <div className="eyebrow mb-[4px] !text-[var(--body)]">
-                {stock.sector} · IDX: {stock.ipo} · Tokenized on Arbitrum
+                {stock.sector ?? 'Sector pending'} · IDX: {stock.idx_ticker} · Tokenized on Arbitrum
               </div>
-              <div className="display !text-[28px] !leading-[1.15]">{stock.name}</div>
+              <div className="display !text-[28px] !leading-[1.15]">{stock.stock_name}</div>
               <div className="mt-[10px] flex flex-wrap items-baseline gap-[16px]">
                 <span className="mono text-[28px] font-bold tracking-[-0.02em]">
                   {fmtIDRX(displayPrice)}
@@ -121,25 +146,33 @@ export function StockDetailPage() {
               ))}
             </div>
             <span className="mono stock-supply-info text-[11px] text-[var(--body)]">
-              Total supply · {fmtNum(tokenSupply, 0)} {stock.ticker}
+              {isReservesLoading || tokenSupply == null ? (
+                <span className="skeleton inline-block h-[13px] w-[150px] align-[-2px]" />
+              ) : (
+                <>Total supply · {fmtNum(tokenSupply, 0)} {stock.ticker}</>
+              )}
             </span>
           </div>
           <div className="border border-[var(--hairline)] bg-[var(--putih)] pb-[4px] pt-[12px]">
-            <AreaChart
-              data={chartData}
-              height={340}
-              valueFormatter={value => fmtIDRX(value)}
-            />
+            {isHistoryLoading || chartData.length === 0 ? (
+              <div className="skeleton h-[340px] w-full" />
+            ) : (
+              <AreaChart
+                data={chartData}
+                height={340}
+                valueFormatter={value => fmtIDRX(value)}
+              />
+            )}
           </div>
         </div>
 
         {/* Stats row */}
         <div className="stock-stats-grid">
           {[
-            { label: 'IDX Ticker', value: stock.ipo },
-            { label: 'Sector',     value: stock.sector },
-            { label: 'Total Supply', value: fmtNum(tokenSupply, 0) },
-            { label: 'IDX Mkt Cap', value: fmtIDRX(displayPrice * tokenSupply * STOCK_LOT_SIZE) },
+            { label: 'IDX Ticker', value: stock.idx_ticker },
+            { label: 'Sector',     value: stock.sector ?? '—' },
+            { label: 'Total Supply', value: tokenSupply == null ? '—' : fmtNum(tokenSupply, 0) },
+            { label: 'IDX Mkt Cap', value: tokenSupply == null ? '—' : fmtIDRX(displayPrice * tokenSupply * STOCK_LOT_SIZE) },
             { label: 'Pool Price', value: poolPrice?.price ? fmtIDRX(poolPrice.price) : '—' },
           ].map(statItem => (
             <div key={statItem.label} className="stock-stats-cell">

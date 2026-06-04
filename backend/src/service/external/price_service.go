@@ -21,6 +21,11 @@ type PriceEntry struct {
 	Sparkline1d []float64 `json:"sparkline_1d,omitempty"`
 }
 
+type PriceHistoryPoint struct {
+	Timestamp int64   `json:"timestamp"`
+	Value     float64 `json:"value"`
+}
+
 type yahooChartResponse struct {
 	Chart struct {
 		Result []struct {
@@ -29,6 +34,7 @@ type yahooChartResponse struct {
 				RegularMarketChangePercent float64 `json:"regularMarketChangePercent"`
 				Currency                   string  `json:"currency"`
 			} `json:"meta"`
+			Timestamp  []int64 `json:"timestamp"`
 			Indicators struct {
 				Quote []struct {
 					Close []*float64 `json:"close"`
@@ -73,11 +79,16 @@ func NewPriceService() *PriceService {
 // GetUSDIDRRate fetches the USD/IDR exchange rate from Yahoo Finance (IDR=X).
 // Returns IDR per 1 USD (e.g. 16142).
 func (s *PriceService) GetUSDIDRRate() (float64, error) {
-	entry, err := s.fetchFromYahoo("IDR=X", "IDR")
+	entry, err := s.GetUSDIDR()
 	if err != nil {
 		return 0, err
 	}
 	return entry.Price, nil
+}
+
+// GetUSDIDR fetches the USD/IDR exchange rate from Yahoo Finance (IDR=X).
+func (s *PriceService) GetUSDIDR() (PriceEntry, error) {
+	return s.fetchFromYahoo("IDR=X", "IDR")
 }
 
 // GetIHSG fetches IDX Composite (^JKSE) from Yahoo Finance.
@@ -92,6 +103,16 @@ func (s *PriceService) GetYahooIDX(idxTicker string) (PriceEntry, error) {
 
 func (s *PriceService) GetYahooIDXMarket(idxTicker string) (PriceEntry, []float64, error) {
 	return s.fetchYahooMarket(idxTicker+".JK", "IDRX", "1d", "1m")
+}
+
+func (s *PriceService) GetIHSGHistory(rangeName string) ([]PriceHistoryPoint, error) {
+	rangeParam, interval := yahooRangeParams(rangeName)
+	return s.fetchYahooHistory("^JKSE", "IDR", rangeParam, interval)
+}
+
+func (s *PriceService) GetYahooIDXHistory(idxTicker string, rangeName string) ([]PriceHistoryPoint, error) {
+	rangeParam, interval := yahooRangeParams(rangeName)
+	return s.fetchYahooHistory(idxTicker+".JK", "IDRX", rangeParam, interval)
 }
 
 // GetOnchainPrice reads the AMM spot price from the Uniswap V2 pair for stockAddr/IDRX.
@@ -225,6 +246,94 @@ func (s *PriceService) fetchYahooMarket(symbol, currency, rangeParam, interval s
 	return entry, closes, nil
 }
 
+func (s *PriceService) fetchYahooHistory(symbol, currency, rangeParam, interval string) ([]PriceHistoryPoint, error) {
+	entry, points, err := s.fetchYahooMarketPoints(symbol, currency, rangeParam, interval)
+	if err != nil {
+		return nil, err
+	}
+	if entry.Price > 0 {
+		lastIndex := len(points) - 1
+		if lastIndex < 0 || points[lastIndex].Value != entry.Price {
+			points = append(points, PriceHistoryPoint{
+				Timestamp: entry.FetchedAt.UnixMilli(),
+				Value:     entry.Price,
+			})
+		}
+	}
+	return points, nil
+}
+
+func (s *PriceService) fetchYahooMarketPoints(symbol, currency, rangeParam, interval string) (PriceEntry, []PriceHistoryPoint, error) {
+	url := fmt.Sprintf(
+		"https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=%s&range=%s",
+		symbol,
+		interval,
+		rangeParam,
+	)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return PriceEntry{}, nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return PriceEntry{}, nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return PriceEntry{}, nil, fmt.Errorf("yahoo status: %d", resp.StatusCode)
+	}
+
+	var parsed yahooChartResponse
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return PriceEntry{}, nil, fmt.Errorf("decode: %w", err)
+	}
+	if parsed.Chart.Error != nil {
+		return PriceEntry{}, nil, fmt.Errorf("yahoo error: %s", parsed.Chart.Error.Description)
+	}
+	if len(parsed.Chart.Result) == 0 {
+		return PriceEntry{}, nil, fmt.Errorf("no data for %s", symbol)
+	}
+
+	result := parsed.Chart.Result[0]
+	meta := result.Meta
+	cur := currency
+	if cur == "" {
+		cur = meta.Currency
+	}
+
+	closes := yahooCloses(result.Indicators.Quote)
+	change24h := meta.RegularMarketChangePercent
+	if change24h == 0 {
+		change24h = derivedChangePercent(meta.RegularMarketPrice, closes)
+	}
+
+	entry := PriceEntry{
+		Price:     meta.RegularMarketPrice,
+		Change24h: change24h,
+		Currency:  cur,
+		Source:    "yahoo",
+		FetchedAt: time.Now(),
+	}
+	return entry, yahooHistoryPoints(result.Timestamp, result.Indicators.Quote), nil
+}
+
+func yahooRangeParams(rangeName string) (string, string) {
+	switch strings.ToUpper(rangeName) {
+	case "1D":
+		return "1d", "1m"
+	case "1W":
+		return "5d", "15m"
+	case "3M":
+		return "3mo", "1d"
+	case "1Y":
+		return "1y", "1d"
+	default:
+		return "1mo", "1d"
+	}
+}
+
 func yahooCloses(quotes []struct {
 	Close []*float64 `json:"close"`
 }) []float64 {
@@ -240,6 +349,32 @@ func yahooCloses(quotes []struct {
 		closes = append(closes, *closeValue)
 	}
 	return closes
+}
+
+func yahooHistoryPoints(timestamps []int64, quotes []struct {
+	Close []*float64 `json:"close"`
+}) []PriceHistoryPoint {
+	if len(quotes) == 0 || len(timestamps) == 0 {
+		return nil
+	}
+
+	closes := quotes[0].Close
+	limit := len(timestamps)
+	if len(closes) < limit {
+		limit = len(closes)
+	}
+
+	points := make([]PriceHistoryPoint, 0, limit)
+	for i := 0; i < limit; i++ {
+		if closes[i] == nil {
+			continue
+		}
+		points = append(points, PriceHistoryPoint{
+			Timestamp: timestamps[i] * 1000,
+			Value:     *closes[i],
+		})
+	}
+	return points
 }
 
 func derivedChangePercent(currentPrice float64, closes []float64) float64 {
