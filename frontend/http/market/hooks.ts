@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { getMarketStocks, getStockPrice } from './priceApi';
+import { getMarketStocks, getStockHistory, getStockPrice } from './priceApi';
 import { getStockTransactions } from './transactionApi';
 import { getProtocolStats } from './statsApi';
 
@@ -9,6 +9,15 @@ export function useStockPrice(ticker: string, source?: 'idx') {
     queryFn: () => getStockPrice(ticker, source),
     refetchInterval: 15_000,
     enabled: !!ticker,
+  });
+}
+
+export function useStockHistory(ticker: string, range: string, source?: 'idx') {
+  return useQuery({
+    queryKey: ['price-history', ticker, range, source ?? 'default'],
+    queryFn: () => getStockHistory(ticker, range, source),
+    refetchInterval: 60_000,
+    enabled: !!ticker && !!range,
   });
 }
 

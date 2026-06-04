@@ -23,6 +23,9 @@ func (s *PriceService) GetStockPrice(ctx context.Context, ticker string, source 
 	}
 
 	ticker = strings.ToUpper(ticker)
+	if ticker == "USDIDR" || ticker == "IDRUSD" || ticker == "IDR=X" {
+		return s.Price.GetUSDIDR()
+	}
 	if ticker == "IHSG" {
 		return s.Price.GetIHSG()
 	}
@@ -54,6 +57,27 @@ func (s *PriceService) GetStockPrice(ctx context.Context, ticker string, source 
 	}
 
 	return entry, nil
+}
+
+func (s *PriceService) GetStockHistory(ctx context.Context, ticker string, source string, rangeName string) ([]external.PriceHistoryPoint, error) {
+	ticker = strings.ToUpper(ticker)
+	if ticker == "IHSG" {
+		return s.Price.GetIHSGHistory(rangeName)
+	}
+
+	stock, found, err := s.Stocks.FindByTickerOrIdxTicker(ctx, ticker)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrStockNotFound
+	}
+
+	if strings.EqualFold(source, "idx") || stock.ContractAddress == nil || *stock.ContractAddress == "" {
+		return s.Price.GetYahooIDXHistory(stock.IdxTicker, rangeName)
+	}
+
+	return s.Price.GetYahooIDXHistory(stock.IdxTicker, rangeName)
 }
 
 func (s *PriceService) GetIDXStockPrice(ctx context.Context, ticker string) (external.PriceEntry, error) {

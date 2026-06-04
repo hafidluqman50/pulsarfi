@@ -4,7 +4,6 @@ import type { StockTransaction } from '@/http/market/transactionApi';
 import type { Balances, TimePoint } from '@/lib/data';
 
 export const PORTFOLIO_LOT_SIZE = 100;
-const PORTFOLIO_CHART_ANCHOR = new Date('2026-05-26T14:00:00+08:00').getTime();
 
 export type PortfolioPosition = {
   ticker: string;
@@ -137,7 +136,7 @@ export function buildStables(balances: Balances): StablePosition[] {
 }
 
 export function buildPortfolioSeries(currentValue: number, transactions: StockTransaction[]): TimePoint[] {
-  const now = PORTFOLIO_CHART_ANCHOR;
+  const now = Date.now();
   if (currentValue <= 0) {
     return [
       { timestamp: now - 60_000, value: 0 },

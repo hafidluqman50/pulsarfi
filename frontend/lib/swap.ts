@@ -1,6 +1,6 @@
 import { parseUnits, type Address } from 'viem';
 import type { MarketStock } from '@/http/market/priceApi';
-import { fmtIDRX, fmtNum, PStock, PSTOCKS, Token } from '@/lib/data';
+import { fmtIDRX, fmtNum, PStock, Token } from '@/lib/data';
 
 export type MarketToken = PStock & { contractAddress?: Address };
 
@@ -16,15 +16,14 @@ export interface SwapQuote {
 }
 
 export function toMarketToken(stock: MarketStock): MarketToken {
-  const fallback = PSTOCKS.find(item => item.ticker === stock.ticker);
   return {
     ticker: stock.ticker,
     name: stock.stock_name,
-    sector: stock.sector ?? fallback?.sector ?? 'Other',
+    sector: stock.sector ?? '',
     price: stock.pool_price || 0,
-    change24h: stock.change_24h ?? fallback?.change24h ?? 0,
-    supply: fallback?.supply ?? 0,
-    ipo: stock.idx_ticker || fallback?.ipo || stock.ticker,
+    change24h: stock.change_24h ?? 0,
+    supply: 0,
+    ipo: stock.idx_ticker || stock.ticker,
     contractAddress: stock.contract_address as Address | undefined,
     isStable: false,
   };

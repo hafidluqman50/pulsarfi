@@ -21,11 +21,23 @@ export interface StockPrice {
   sparkline_1d?: number[];
 }
 
+export interface PriceHistoryPoint {
+  timestamp: number;
+  value: number;
+}
+
 export async function getStockPrice(ticker: string, source?: 'idx'): Promise<StockPrice> {
   const res = await client.get(`/public/prices/${ticker}`, {
     params: source ? { source } : undefined,
   });
   return res.data.data;
+}
+
+export async function getStockHistory(ticker: string, range: string, source?: 'idx'): Promise<PriceHistoryPoint[]> {
+  const res = await client.get(`/public/prices/${ticker}/history`, {
+    params: { range, ...(source ? { source } : {}) },
+  });
+  return Array.isArray(res.data?.data) ? res.data.data : [];
 }
 
 export async function getMarketStocks(): Promise<MarketStock[]> {

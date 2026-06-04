@@ -32,3 +32,27 @@ func GetStockPriceHandler(c *gin.Context) {
 
 	response.OK(c, "price retrieved", entry)
 }
+
+func GetStockHistoryHandler(c *gin.Context) {
+	if !ensureService(c, publicPriceSvc) {
+		return
+	}
+
+	ticker := strings.ToUpper(c.Param("ticker"))
+	if ticker == "" {
+		response.BadRequest(c, "ticker is required")
+		return
+	}
+
+	points, err := publicPriceSvc.GetStockHistory(c.Request.Context(), ticker, c.Query("source"), c.DefaultQuery("range", "1M"))
+	if errors.Is(err, publicsvc.ErrStockNotFound) {
+		response.NotFound(c, "stock not found")
+		return
+	}
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+
+	response.OK(c, "price history retrieved", points)
+}

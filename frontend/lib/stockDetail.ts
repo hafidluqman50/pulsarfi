@@ -1,41 +1,5 @@
-import { PStock, TimePoint } from '@/lib/data';
-
 export const STOCK_TIMEFRAME_OPTIONS = ['1D', '1W', '1M', '3M', '1Y'] as const;
 export const STOCK_LOT_SIZE = 100;
-
-export function buildStockTimeSeries(stock: PStock, days = 365): TimePoint[] {
-  let seed = 0;
-  for (const character of stock.ticker) seed = ((seed * 31 + character.charCodeAt(0)) >>> 0);
-  const rng = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 0xffffffff;
-
-  const endPrice = stock.price;
-  const startFactor = stock.change24h >= 0 ? 0.62 + rng() * 0.28 : 1.08 + rng() * 0.28;
-  const startPrice = endPrice * startFactor;
-  const trend = (endPrice - startPrice) / days;
-  const outputPoints: TimePoint[] = [];
-  let currentPrice = startPrice;
-  const today = new Date(2026, 4, 23);
-
-  for (let dayIndex = 0; dayIndex < days; dayIndex++) {
-    const noise = (rng() - 0.5) * currentPrice * 0.024;
-    const shock = rng() < 0.018 ? (rng() - 0.38) * currentPrice * 0.07 : 0;
-    currentPrice = Math.max(endPrice * 0.22, currentPrice + trend + noise + shock);
-    const date = new Date(today);
-    date.setDate(date.getDate() - (days - 1 - dayIndex));
-    outputPoints.push({ timestamp: date.getTime(), value: currentPrice });
-  }
-  outputPoints[outputPoints.length - 1].value = endPrice;
-  return outputPoints;
-}
-
-export function buildMinuteTimeSeries(values: number[]): TimePoint[] {
-  const now = Date.now();
-  const start = now - Math.max(values.length - 1, 0) * 60_000;
-  return values.map((value, index) => ({
-    timestamp: start + index * 60_000,
-    value,
-  }));
-}
 
 export function rawTokenToNumber(raw?: string, decimals = 18): number | null {
   if (!raw) return null;
