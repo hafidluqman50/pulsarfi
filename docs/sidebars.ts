@@ -15,7 +15,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Operations',
-      items: ['getting-started', 'contracts-faucet'],
+      items: ['getting-started', 'contracts-faucet', 'judge-demo-access'],
     },
   ],
 };

@@ -14,6 +14,8 @@
 
 [Explore Docs](https://pulsarfi-docs.vercel.app) · [Frontend](./frontend) · [Backend](./backend) · [Smart Contracts](./smart-contract)
 
+Demo custodian wallets and the operator flow for judging are documented in [Judge Demo Access](https://pulsarfi-docs.vercel.app/judge-demo-access). Custodian private keys are not published publicly; the trading flow remains self-serve with any Arbitrum Sepolia wallet.
+
 <br/>
 
 <img src="https://img.shields.io/badge/RWA-IDX%20Equities-c8102e?style=for-the-badge" alt="RWA IDX Equities"/>
@@ -26,7 +28,7 @@
 
 ## Overview
 
-PulsarFi is a hackathon MVP for tokenizing Indonesian public equities into pStock tokens on Arbitrum Sepolia. Each pStock represents custodian-backed IDX exposure, priced through IDX market data and traded against IDRX liquidity.
+PulsarFi tokenizes Indonesian public equities into pStock tokens on Arbitrum Sepolia. Each pStock represents custodian-backed IDX exposure, priced through IDX market data and traded against IDRX liquidity.
 
 The product surface is intentionally compact:
 

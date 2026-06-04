@@ -14,7 +14,7 @@ type StockRepository struct {
 
 func (r *StockRepository) FindAll(ctx context.Context) ([]model.Stock, error) {
 	var stocks []model.Stock
-	if err := r.DB.WithContext(ctx).Find(&stocks).Error; err != nil {
+	if err := r.DB.WithContext(ctx).Order("id ASC").Find(&stocks).Error; err != nil {
 		return nil, err
 	}
 	return stocks, nil

@@ -48,8 +48,8 @@ Verification flow:
 7. Backend checks whether the wallet exists in `custodians`.
 8. Backend issues JWT with role `user` or `custodian`.
 
-The nonce store is in-memory for the MVP. That is acceptable for a hackathon
-deployment but should be moved to shared storage for multi-instance production.
+The nonce store is in-memory in the current deployment. A multi-instance
+deployment should move nonce state to shared storage.
 
 ## Public API surface
 

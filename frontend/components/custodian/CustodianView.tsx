@@ -57,6 +57,7 @@ export function CustodianView(): React.ReactNode {
         <Metric label="Assets Under Custody" value={stats ? fmtIDRCompact(stats.assets_under_custody_idr) : "—"} sub="total custodian holdings" tone="ink" isLoading={statsLoading} />
         <Metric label="24h Mint Volume" value={stats ? fmtIDRCompact(String(parseFloat(stats.mint_volume_24h_idrx) / 100)) : "—"} sub={stats ? `${stats.mint_count_24h} mints · ${stats.burn_count_24h} burns` : "—"} tone="merah" isLoading={statsLoading} />
         <Metric label="Pending requests" value={stats ? String(stats.pending_requests.total) : "—"} sub={stats ? `${stats.pending_requests.mints} mint · ${stats.pending_requests.redeems} redeem` : "—"} isLoading={statsLoading} />
+        <Metric label="Reserve records" value={reserves ? String(reserves.length) : "—"} sub={reserves ? lastAttestationLabel(reserves) : "—"} isLoading={reservesLoading} />
       </div>
 
       <MintOrderForm />

@@ -1,7 +1,7 @@
 ---
 id: why-idrx
-title: Why IDRX
-sidebar_label: Why IDRX
+title: IDRX Settlement
+sidebar_label: IDRX Settlement
 slug: /why-idrx
 ---
 
@@ -120,9 +120,9 @@ Using IDRX keeps on-chain operations aligned with those references.
 
 Choosing IDRX is not free.
 
-| Tradeoff | Impact | Why acceptable for MVP |
+| Tradeoff | Impact | Why acceptable |
 | --- | --- | --- |
-| Lower global liquidity than USDC | Pools may start thinner. | The product is local-market-first and uses faucet/testnet liquidity for MVP. |
+| Lower global liquidity than USDC | Pools may start thinner. | The product is local-market-first and uses IDRX liquidity to match the underlying market. |
 | More dependency on IDRX availability | Production needs real IDRX deployment or bridge support. | The architecture isolates IDRX address configuration. |
 | Less familiar for global DeFi users | Some users may prefer USD-denominated assets. | The docs and UI explain IDRX as the Rupiah settlement asset. |
 

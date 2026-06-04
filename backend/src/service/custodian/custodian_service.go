@@ -33,6 +33,15 @@ type StatsResponse struct {
 	} `json:"pending_requests"`
 }
 
+type StockResponse struct {
+	ID              int64   `json:"id"`
+	Ticker          string  `json:"ticker"`
+	StockName       string  `json:"stock_name"`
+	IdxTicker       string  `json:"idx_ticker"`
+	Sector          *string `json:"sector"`
+	ContractAddress *string `json:"contract_address"`
+}
+
 type AttestorInfo struct {
 	Name          string `json:"name"`
 	WalletAddress string `json:"wallet_address"`
@@ -42,27 +51,27 @@ type AttestorInfo struct {
 }
 
 type PendingRequestResponse struct {
-	ID                     int64          `json:"id"`
-	OnChainID              int64          `json:"on_chain_id"`
-	Kind                   string         `json:"kind"`
-	Ticker                 string         `json:"ticker"`
-	StockName              string         `json:"stock_name"`
-	IdxTicker              string         `json:"idx_ticker"`
-	TokenAmount            string         `json:"token_amount"`
-	IdrxAmount             *string        `json:"idrx_amount,omitempty"`
-	FeeIdrx                *string        `json:"fee_idrx,omitempty"`
-	UserAddress            *string        `json:"user_address,omitempty"`
-	RequesterAddress       *string        `json:"requester_address,omitempty"`
-	ApproveInitiatorAddress *string       `json:"approve_initiator_address,omitempty"`
-	RejectInitiatorAddress  *string       `json:"reject_initiator_address,omitempty"`
-	Source                 string         `json:"source"`
-	Destination            *string        `json:"destination,omitempty"`
-	ApprovalCount          int64          `json:"approval_count"`
-	RejectCount            int64          `json:"reject_count"`
-	Attestors              []AttestorInfo `json:"attestors"`
-	Status                 string         `json:"status"`
-	RequestTxHash          *string        `json:"request_tx_hash,omitempty"`
-	CreatedAt              any            `json:"created_at"`
+	ID                      int64          `json:"id"`
+	OnChainID               int64          `json:"on_chain_id"`
+	Kind                    string         `json:"kind"`
+	Ticker                  string         `json:"ticker"`
+	StockName               string         `json:"stock_name"`
+	IdxTicker               string         `json:"idx_ticker"`
+	TokenAmount             string         `json:"token_amount"`
+	IdrxAmount              *string        `json:"idrx_amount,omitempty"`
+	FeeIdrx                 *string        `json:"fee_idrx,omitempty"`
+	UserAddress             *string        `json:"user_address,omitempty"`
+	RequesterAddress        *string        `json:"requester_address,omitempty"`
+	ApproveInitiatorAddress *string        `json:"approve_initiator_address,omitempty"`
+	RejectInitiatorAddress  *string        `json:"reject_initiator_address,omitempty"`
+	Source                  string         `json:"source"`
+	Destination             *string        `json:"destination,omitempty"`
+	ApprovalCount           int64          `json:"approval_count"`
+	RejectCount             int64          `json:"reject_count"`
+	Attestors               []AttestorInfo `json:"attestors"`
+	Status                  string         `json:"status"`
+	RequestTxHash           *string        `json:"request_tx_hash,omitempty"`
+	CreatedAt               any            `json:"created_at"`
 }
 
 type PendingRequestsResponse struct {
@@ -110,6 +119,30 @@ func (s *CustodianService) GetStats(ctx context.Context) (StatsResponse, error) 
 	res.PendingRequests.Mints = len(pending.Mints)
 	res.PendingRequests.Redeems = len(pending.Redeems)
 	return res, nil
+}
+
+func (s *CustodianService) ListStocks(ctx context.Context) ([]StockResponse, error) {
+	stocks, err := s.Repos.Stock.FindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]StockResponse, 0, len(stocks))
+	for _, stock := range stocks {
+		items = append(items, stockResponse(stock))
+	}
+	return items, nil
+}
+
+func stockResponse(stock model.Stock) StockResponse {
+	return StockResponse{
+		ID:              stock.ID,
+		Ticker:          stock.Ticker,
+		StockName:       stock.StockName,
+		IdxTicker:       stock.IdxTicker,
+		Sector:          stock.Sector,
+		ContractAddress: stock.ContractAddress,
+	}
 }
 
 func (s *CustodianService) assetsUnderCustodyIDR(ctx context.Context) (string, error) {

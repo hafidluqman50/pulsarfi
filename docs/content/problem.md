@@ -1,7 +1,7 @@
 ---
 id: problem
-title: Why This Exists
-sidebar_label: Problem
+title: Why PulsarFi
+sidebar_label: Why PulsarFi
 slug: /problem
 ---
 
@@ -10,23 +10,44 @@ but they do not naturally fit crypto-native workflows. PulsarFi exists to make
 IDX equity exposure programmable without pretending that compliance and custody
 do not matter.
 
-## Market problem
+## Market context
 
 IDX equity access is still tied to traditional market structure:
 
 - trading happens within exchange hours;
+- investors cannot exit while the market is closed;
+- overnight macro shocks can reprice risk before the local market opens;
+- pre-opening gaps can push stocks directly into downside price limits;
 - brokerage onboarding is jurisdiction-specific;
-- settlement is slower than token settlement;
+- exchange settlement and withdrawable cash follow securities settlement timing;
 - portfolio positions are trapped inside broker interfaces;
 - assets are not composable with DeFi rails;
 - international crypto-native users cannot easily interact with Indonesian equities.
+
+In Indonesian market language, **ARB** usually refers to **Auto Rejection
+Bawah**, where sell orders below the exchange's lower price boundary are
+automatically rejected. For international readers, this is closest to a
+single-stock **downside price limit** or **limit-down style price band**. It is
+not exactly the same as the U.S. Limit Up-Limit Down mechanism, but the economic
+effect is similar: when price protection bands are hit, users may not be able to
+exit at the price or time they want.
+
+This matters most around market close and pre-open:
+
+```text
+global macro shock after IDX close
+    -> user cannot sell the underlying stock overnight
+    -> pre-open reprices the stock lower
+    -> downside price limit / ARB can reject lower sell orders
+    -> broker exit is delayed even before T+2 cash settlement
+```
 
 This creates a gap between two markets:
 
 | Traditional IDX market | Crypto-native market |
 | --- | --- |
 | Strong real-world asset base | 24/7 global accessibility |
-| Regulated custody and settlement | Fast self-custody transfers |
+| Regulated custody and T+2-style settlement | Fast self-custody transfers |
 | Broker-centric UX | Wallet-centric UX |
 | Limited composability | Programmable asset flows |
 | Compliance built into account access | Compliance usually built into gateways |
@@ -34,7 +55,7 @@ This creates a gap between two markets:
 PulsarFi is designed to bridge these strengths rather than replace one side with
 the other.
 
-## Product problem
+## Product thesis
 
 Most tokenized asset products fall into one of two weak patterns:
 
@@ -61,7 +82,7 @@ PulsarFi uses a gateway model:
 
 | Action | KYC required? | Reason |
 | --- | --- | --- |
-| Hold pStock | No | Holding an ERC-20 receipt is permissionless in the MVP. |
+| Hold pStock | No | Holding an ERC-20 receipt is permissionless. |
 | Transfer pStock | No | ERC-20 transferability is preserved. |
 | Swap pStock and IDRX | No | Trading happens through the pool. |
 | Request redemption | Yes | The user is entering the off-chain securities delivery process. |
@@ -88,12 +109,58 @@ The choice is strategic. PulsarFi is not only bringing Indonesian equities
 on-chain; it is also giving Rupiah stablecoin rails a concrete financial use
 case.
 
-## Liquidity problem
+## Exit liquidity problem
+
+Traditional equity settlement creates two separate exit frictions:
+
+1. **Trading exit**: the investor needs an open market and executable price.
+2. **Cash exit**: after the trade, cash availability follows the securities
+   settlement cycle.
+
+IDX-listed equities use exchange settlement timing rather than instant wallet
+settlement. In practice, this means a user can be exposed to overnight risk,
+pre-open repricing, downside price limits, and delayed cash availability.
+
+## Profit is not withdrawable cash
+
+In a brokerage account, selling a profitable stock position does not mean the
+user can withdraw the cash immediately. The trade can show realized profit in
+the broker interface, but regular-market cash availability still follows the
+securities settlement cycle.
+
+For IDX regular-market equities, settlement is commonly T+2: the transaction is
+settled two exchange days after the trade date. That creates a practical capital
+lock:
+
+```text
+profitable stock sale
+    -> profit appears in broker account
+    -> cash is not withdrawable on the same day
+    -> user waits for T+2-style settlement
+    -> capital cannot be redeployed or withdrawn instantly
+```
+
+This is one of the core reasons PulsarFi uses an IDRX-denominated on-chain
+receipt market. A user exiting a pStock position receives wallet-settled IDRX
+from the pool instead of waiting for brokerage cash settlement.
+
+PulsarFi does not claim to remove the underlying market's custody requirements.
+Instead, it creates an on-chain secondary exit path: a user can swap pStock
+against IDRX liquidity even when the traditional brokerage exit path is slower
+or temporarily constrained.
+
+References:
+
+- [IDX trading hours and settlement mechanism](https://www.idx.id/en/products-services/trading-hours-and-mechanism/)
+- [KPEI / IDClear equity settlement overview](https://www.idclear.co.id/en/segmentation/equities/settlement)
+- [KSEI transaction settlement services](https://web.ksei.co.id/services/types/transaction-settlement?setLocale=en-US)
+
+## Liquidity integrity problem
 
 If a protocol mints receipt tokens directly to an operator wallet without
 matching liquidity, the first seller can drain the pool and break the expected
-relationship between the receipt and the underlying asset. For this reason, the
-MVP design sends new mints into the liquidity pool with IDRX funding.
+relationship between the receipt and the underlying asset. For this reason,
+PulsarFi sends new mints into the liquidity pool with IDRX funding.
 
 The result is a stricter minting rule:
 

@@ -1,14 +1,19 @@
 ---
 id: business-flow
-title: Business Flow
-sidebar_label: Business Flow
+title: Market & Revenue Model
+sidebar_label: Market & Revenue Model
 slug: /business-flow
 ---
 
-The PulsarFi business process connects off-chain securities custody with
-on-chain receipt-token liquidity. The system is intentionally designed as a
-two-world workflow: the off-chain world proves that shares exist, while the
-on-chain world makes the receipt liquid and transferable.
+PulsarFi connects off-chain securities custody with on-chain receipt-token
+liquidity. The system is intentionally designed as a two-world workflow: the
+off-chain world proves that shares exist, while the on-chain world makes the
+receipt liquid, transferable, and available outside traditional exchange hours.
+
+The economic model is built around one constraint: PulsarFi must stay
+**spot-backed**. Custodians cannot mint pStock unless the corresponding IDX
+equity exposure is held or verified off-chain. This keeps pStock as an
+asset-backed receipt, not an unbacked synthetic derivative.
 
 ## Actors
 
@@ -20,7 +25,7 @@ on-chain world makes the receipt liquid and transferable.
 | Protocol admin | Configures protocol dependencies and fee parameters. |
 | Backend operator | Runs API, database, optional storage, and operational dashboards. |
 
-## Asset lifecycle
+## Spot-backed lifecycle
 
 ```text
 off-chain shares
@@ -34,6 +39,57 @@ off-chain shares
     -> pStock burn
     -> off-chain settlement
 ```
+
+## Market exit problem
+
+The product is designed around a practical market problem: Indonesian equities
+do not trade 24/7, while macro and micro risk can move outside local exchange
+hours.
+
+```text
+IDX market closes
+    -> global macro or issuer-specific news happens
+    -> user cannot exit through the exchange overnight
+    -> pre-open can gap down
+    -> lower auto-rejection / downside price limit can block executable sells
+    -> broker cash settlement remains tied to the securities settlement cycle
+```
+
+PulsarFi creates a secondary on-chain exit path through pStock/IDRX liquidity.
+The off-chain share remains custodied, but the receipt can trade against IDRX
+when the traditional exchange path is unavailable, delayed, or constrained by
+price bands.
+
+## Custodian-maintained soft peg
+
+PulsarFi uses a custodian-maintained soft peg to IDX reference prices. The pool
+price can move away from the IDX reference price because it is an AMM market, but
+custodians are responsible for keeping the system spot-backed and economically
+anchored.
+
+When pStock trades at a premium:
+
+```text
+custodian verifies or acquires underlying IDX exposure
+    -> requests backed mint
+    -> receives threshold approval
+    -> executes mint with IDRX liquidity
+    -> adds supply/liquidity near reference value
+```
+
+When pStock trades at a discount:
+
+```text
+market maker or approved actor buys discounted pStock
+    -> KYC-gated redeem path locks pStock
+    -> custodians approve redemption
+    -> pStock is burned
+    -> off-chain settlement process handles the underlying exit
+```
+
+This is why the peg is not purely algorithmic. A bot cannot safely mint unbacked
+supply. Custodian inventory and reserve attestations are part of the peg
+maintenance process.
 
 ## Mint flow
 
@@ -113,9 +169,33 @@ they compare pool prices to IDX reference prices.
 Price behavior:
 
 - The pool price can deviate from IDX prices.
-- Arbitrage is expected to pull the pool price back toward fair value.
+- Custodian-operated market making is expected to pull the pool price back toward fair value.
 - The UI can show both IDX-derived market price and pool price.
 - Slippage controls protect users from poor execution.
+
+## LP fee distribution
+
+Trading fees from pStock/IDRX pools compensate custodians for maintaining the
+soft peg and keeping the market spot-backed.
+
+LP fee economics:
+
+| Recipient | Allocation | Rationale |
+| --- | ---: | --- |
+| Protocol treasury | 20% | Platform operations, monitoring, and settlement coordination. |
+| Active custodians | 80% | Custody, reserve availability, approval operations, and peg maintenance. |
+
+With five active custodians, the custodian allocation is split equally:
+
+```text
+80% custodian pool / 5 custodians = 16% per custodian
+```
+
+The equal split is simple and reflects that each custodian participates in the
+approval committee and standby settlement process. A future allocation policy can
+weight the custodian share by reserve contribution, liquidity contribution, or
+operational uptime, but the core principle remains the same: custodians earn LP
+economics because they keep pStock spot-backed.
 
 ## Redemption flow
 
@@ -167,15 +247,16 @@ also submit manual attestations from the console.
 
 ## Revenue and fees
 
-The MVP supports two fee concepts:
+PulsarFi has two primary revenue paths:
 
-| Fee | Mechanism | Recipient |
+| Revenue path | Mechanism | Recipient |
 | --- | --- | --- |
-| Swap fee | Standard Uniswap V2 pool fee. | Accumulates inside pool reserves. |
-| Redeem fee | Optional fee charged in IDRX at redeem request time. | Treasury on successful redeem. |
+| LP fee economics | Trading fees generated by pStock/IDRX pools. | 80% active custodians, 20% protocol treasury. |
+| Redeem fee | IDRX fee charged when a user exits into off-chain settlement. | Protocol treasury. |
 
-There is no user mint fee in the current model. Custodians already fund IDRX
-liquidity during mint execution.
+The redeem fee is an exit-platform fee. It compensates the protocol treasury for
+the coordination cost of moving from an on-chain receipt into the off-chain
+securities settlement process.
 
 ## Operational controls
 
