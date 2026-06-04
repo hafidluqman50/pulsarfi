@@ -14,7 +14,7 @@
 
 [Explore Docs](https://pulsarfi-docs.vercel.app) · [Frontend](./frontend) · [Backend](./backend) · [Smart Contracts](./smart-contract)
 
-Demo custodian wallets and the operator flow for judging are documented in [Judge Demo Access](https://pulsarfi-docs.vercel.app/judge-demo-access). Custodian private keys are not published publicly; the trading flow remains self-serve with any Arbitrum Sepolia wallet.
+Demo custodian wallets and the operator flow for judging are documented in [Judge Demo Access](https://pulsarfi-docs.vercel.app/docs/judge-demo-access). Custodian private keys are not published publicly; the trading flow remains self-serve with any Arbitrum Sepolia wallet.
 
 <br/>
 
