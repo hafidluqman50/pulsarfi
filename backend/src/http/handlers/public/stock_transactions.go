@@ -4,19 +4,10 @@ import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
+	stocktransactionrequest "github.com/horizonlabs/pulsarfi-backend/src/http/request/public/stock_transaction"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
 	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
-
-type recordSwapRequest struct {
-	Ticker        string `json:"ticker"         binding:"required"`
-	TxHash        string `json:"tx_hash"        binding:"required"`
-	WalletAddress string `json:"wallet_address" binding:"required"`
-	Side          string `json:"side"           binding:"required,oneof=buy sell"`
-	IdrxAmount    string `json:"idrx_amount"    binding:"required"`
-	StockAmount   string `json:"stock_amount"   binding:"required"`
-	BlockNumber   int64  `json:"block_number"   binding:"required"`
-}
 
 func ListStockTransactionsHandler(c *gin.Context) {
 	if !ensureService(c, publicStockTransactionSvc) {
@@ -41,8 +32,8 @@ func RecordSwapHandler(c *gin.Context) {
 		return
 	}
 
-	var req recordSwapRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	req, err := stocktransactionrequest.NewSwapRequest(c)
+	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -55,6 +46,7 @@ func RecordSwapHandler(c *gin.Context) {
 		IdrxAmount:    req.IdrxAmount,
 		StockAmount:   req.StockAmount,
 		BlockNumber:   req.BlockNumber,
+		LogIndex:      req.LogIndex,
 	})
 	if errors.Is(err, publicsvc.ErrStockNotFound) {
 		response.NotFound(c, "stock not found")
@@ -75,4 +67,50 @@ func RecordSwapHandler(c *gin.Context) {
 	}
 
 	response.Created(c, "transaction recorded", tx)
+}
+
+func RecordTransferHandler(c *gin.Context) {
+	if !ensureService(c, publicStockTransactionSvc) {
+		return
+	}
+
+	req, err := stocktransactionrequest.NewSendRequest(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	result, created, err := publicStockTransactionSvc.RecordTransfer(c.Request.Context(), publicsvc.RecordTransferRequest{
+		Ticker:      req.Ticker,
+		TxHash:      req.TxHash,
+		FromAddress: req.FromAddress,
+		ToAddress:   req.ToAddress,
+		IdrxAmount:  req.IdrxAmount,
+		StockAmount: req.StockAmount,
+		BlockNumber: req.BlockNumber,
+		LogIndex:    req.LogIndex,
+	})
+	if errors.Is(err, publicsvc.ErrStockNotFound) {
+		response.NotFound(c, "stock not found")
+		return
+	}
+	if errors.Is(err, publicsvc.ErrTransferAddressRequired) || errors.Is(err, publicsvc.ErrTransferSameAddress) {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if errors.Is(err, publicsvc.ErrTransferRecordIncomplete) {
+		response.InternalError(c, "transfer record is incomplete")
+		return
+	}
+	if err != nil {
+		response.InternalError(c, "failed to record transfer")
+		return
+	}
+
+	if !created {
+		response.OK(c, "transfer already recorded", result)
+		return
+	}
+
+	response.Created(c, "transfer recorded", result)
 }

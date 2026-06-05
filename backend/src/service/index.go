@@ -6,6 +6,7 @@ import (
 	authsvc "github.com/horizonlabs/pulsarfi-backend/src/service/auth"
 	custodiansvc "github.com/horizonlabs/pulsarfi-backend/src/service/custodian"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
+	indexersvc "github.com/horizonlabs/pulsarfi-backend/src/service/indexer"
 	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
 
@@ -25,14 +26,16 @@ type Registry struct {
 	Storage                *external.StorageService
 	Stream                 *external.StreamService
 	Price                  *external.PriceService
+	TransferIndexer        *indexersvc.TransferIndexerService
 }
 
 type Config struct {
-	Repos          *repository.Registry
-	JwtConfig      auth.Config
-	NonceStore     *auth.NonceStore
-	EmailService   *external.EmailService
-	StorageService *external.StorageService
+	Repos                 *repository.Registry
+	JwtConfig             auth.Config
+	NonceStore            *auth.NonceStore
+	EmailService          *external.EmailService
+	StorageService        *external.StorageService
+	TransferIndexerConfig indexersvc.TransferIndexerConfig
 }
 
 func NewRegistry(cfg Config) *Registry {
@@ -89,5 +92,15 @@ func NewRegistry(cfg Config) *Registry {
 		Storage: cfg.StorageService,
 		Stream:  stream,
 		Price:   price,
+		TransferIndexer: &indexersvc.TransferIndexerService{
+			Stocks:      cfg.Repos.Stock,
+			Checkpoints: cfg.Repos.TransferCheckpoint,
+			Recorder: &publicsvc.StockTransactionService{
+				Stocks:       cfg.Repos.Stock,
+				Transactions: cfg.Repos.StockTransaction,
+			},
+			Price:  price,
+			Config: cfg.TransferIndexerConfig,
+		},
 	}
 }

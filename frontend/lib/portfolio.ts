@@ -69,7 +69,7 @@ export function buildCostBasis(transactions: StockTransaction[]): Record<string,
     const idrx = idrxAmount(tx.idrx_amount);
     const current = lots[ticker] ?? { qty: 0, cost: 0 };
 
-    if (tx.side === 'buy') {
+    if (tx.side === 'buy' || tx.side === 'transfer-in') {
       current.qty += stockQty;
       current.cost += idrx;
     } else if (current.qty > 0) {
@@ -189,6 +189,16 @@ export function buildActivityRows(transactions: StockTransaction[]): ActivityRow
         text = 'Redeem Cancelled';
         a = `${formatAmount(stockQty)} ${tx.ticker}`;
         b = 'Tokens returned to wallet';
+        break;
+      case 'transfer-in':
+        text = 'Received';
+        a = `${formatAmount(stockQty)} ${tx.ticker}`;
+        b = 'Estimated cost basis';
+        break;
+      case 'transfer-out':
+        text = 'Sent';
+        a = `${formatAmount(stockQty)} ${tx.ticker}`;
+        b = 'Cost basis reduced';
         break;
       default:
         text = tx.side;

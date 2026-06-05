@@ -8,9 +8,21 @@ export interface RecordStockTransactionInput {
   idrx_amount: string;
   stock_amount: string;
   block_number: number;
+  log_index?: number;
 }
 
-export type TransactionSide = 'buy' | 'sell' | 'request-redeem' | 'redeemed' | 'cancel-redeem';
+export interface RecordStockTransferInput {
+  ticker: string;
+  tx_hash: string;
+  from_address: string;
+  to_address: string;
+  idrx_amount: string;
+  stock_amount: string;
+  block_number: number;
+  log_index?: number;
+}
+
+export type TransactionSide = 'buy' | 'sell' | 'request-redeem' | 'redeemed' | 'cancel-redeem' | 'transfer-in' | 'transfer-out';
 
 export interface StockTransaction {
   id: number;
@@ -24,11 +36,16 @@ export interface StockTransaction {
   stock_amount: string;
   tx_hash: string;
   block_number: number;
+  log_index: number;
   created_at: string;
 }
 
 export async function recordStockTransaction(input: RecordStockTransactionInput) {
   await client.post('/public/stock-transactions', input);
+}
+
+export async function recordStockTransfer(input: RecordStockTransferInput) {
+  await client.post('/public/stock-transactions/transfers', input);
 }
 
 export async function getStockTransactions(walletAddress: string): Promise<StockTransaction[]> {

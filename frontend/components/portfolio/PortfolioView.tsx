@@ -10,7 +10,7 @@ import { useMarketStocks, useStockHistory, useStockTransactions } from '@/http/m
 import { useWalletTokenBalanceState } from '@/http/market/tokenHooks';
 import { useTransferToken } from '@/http/market/transferHooks';
 import { useRequestRedeem } from '@/http/market/redeemHooks';
-import { toMarketToken, unitsFromDecimalInput } from '@/lib/swap';
+import { toMarketToken, unitsFromDecimalInput, unitsFromNumber } from '@/lib/swap';
 import {
   ActivityRow,
   PortfolioPosition,
@@ -156,16 +156,19 @@ export function PortfolioView() {
     try {
       const txHash = await transferToken.mutateAsync({
         token_address: opts.token.address,
+        ticker: opts.token.ticker,
         from: address!,
         to: opts.to,
         amount: unitsFromDecimalInput(opts.amount, opts.token.isStable ? 2 : 18),
+        estimated_idrx_amount: opts.token.isStable ? undefined : unitsFromNumber((parseFloat(opts.amount) || 0) * opts.token.price, 2),
         is_stable: Boolean(opts.token.isStable),
       });
       toast.success("Transfer sent", { id: toastId, description: `Tx ${txHash.slice(0, 10)}...${txHash.slice(-6)}`, duration: 4500 });
       setTransferOpen(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Transfer failed";
-      toast.error("Transfer failed", { id: toastId, description: message.slice(0, 120), duration: 7000 });
+      const recordFailed = message.startsWith("Transfer confirmed");
+      toast.error(recordFailed ? "Portfolio record failed" : "Transfer failed", { id: toastId, description: message.slice(0, 160), duration: 8000 });
     }
   }
 
