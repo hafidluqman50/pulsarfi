@@ -137,8 +137,9 @@ export function useExecuteSwap() {
 
       return txHash;
     },
-    onSuccess: async () => {
+    onSuccess: async (_txHash, input) => {
       await queryClient.invalidateQueries({ queryKey: ['market-stocks'] });
+      await queryClient.invalidateQueries({ queryKey: ['stock-transactions', input.wallet_address] });
     },
   });
 }

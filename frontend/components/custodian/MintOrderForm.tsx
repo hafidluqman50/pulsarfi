@@ -53,7 +53,6 @@ export function MintOrderForm(): React.ReactNode {
       stockName: selectedStock.stock_name,
       idxTicker: activeIpoTicker,
       quantity,
-      idrPrice,
       idrTotal,
     });
   }
