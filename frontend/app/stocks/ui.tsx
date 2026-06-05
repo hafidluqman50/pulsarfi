@@ -96,8 +96,22 @@ export function StocksListPage(): React.ReactNode {
   const { data: ihsgData } = useStockPrice('IHSG');
   const { data: usdIdrData } = useStockPrice('USDIDR');
   const { data: ihsgHistory = [], isLoading: isIhsgHistoryLoading } = useStockHistory('IHSG', selectedTimeframe);
-  const ihsgValue  = ihsgData?.price ?? ihsgHistory[ihsgHistory.length - 1]?.value;
-  const ihsgChange = ihsgData?.change_24h ?? 0;
+  const ihsgStats = useMemo(() => {
+    const firstPoint = ihsgHistory[0];
+    const lastPoint = ihsgHistory[ihsgHistory.length - 1];
+    if (firstPoint && lastPoint && firstPoint.value > 0) {
+      return {
+        value: lastPoint.value,
+        change: ((lastPoint.value - firstPoint.value) / firstPoint.value) * 100,
+      };
+    }
+    return {
+      value: ihsgData?.price,
+      change: ihsgData?.change_24h ?? 0,
+    };
+  }, [ihsgData?.change_24h, ihsgData?.price, ihsgHistory]);
+  const ihsgValue = ihsgStats.value;
+  const ihsgChange = ihsgStats.change;
   const isIhsgPositive = ihsgChange >= 0;
 
   const sparklineData = useMemo(() =>
@@ -131,7 +145,7 @@ export function StocksListPage(): React.ReactNode {
                     {ihsgValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </span>
                   <span className={`mono text-[18px] ${isIhsgPositive ? 'text-[var(--positive)]' : 'text-[var(--negative)]'}`}>
-                    {fmtPct(ihsgChange)} 24h
+                    {fmtPct(ihsgChange)} {selectedTimeframe}
                   </span>
                 </>
               )}

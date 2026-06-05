@@ -30,7 +30,6 @@ export interface MintPipelineParams {
   stockName: string;
   idxTicker: string;
   quantity: string;
-  idrPrice: number;
   idrTotal: number;
 }
 
