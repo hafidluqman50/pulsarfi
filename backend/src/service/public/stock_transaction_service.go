@@ -12,6 +12,9 @@ import (
 
 var ErrInvalidTransactionSide = errors.New("invalid transaction side")
 var ErrWalletAddressRequired = errors.New("wallet address is required")
+var ErrTransferAddressRequired = errors.New("transfer from and to addresses are required")
+var ErrTransferSameAddress = errors.New("transfer from and to addresses must differ")
+var ErrTransferRecordIncomplete = errors.New("transfer transaction record is incomplete")
 
 type StockTransactionService struct {
 	Stocks       *repository.StockRepository
@@ -26,6 +29,23 @@ type RecordStockTransactionRequest struct {
 	IdrxAmount    string
 	StockAmount   string
 	BlockNumber   int64
+	LogIndex      int
+}
+
+type RecordTransferRequest struct {
+	Ticker      string
+	TxHash      string
+	FromAddress string
+	ToAddress   string
+	IdrxAmount  string
+	StockAmount string
+	BlockNumber int64
+	LogIndex    int
+}
+
+type TransferTransactionResponse struct {
+	Out StockTransactionResponse `json:"out"`
+	In  StockTransactionResponse `json:"in"`
 }
 
 type StockTransactionResponse struct {
@@ -40,6 +60,7 @@ type StockTransactionResponse struct {
 	StockAmount   string    `json:"stock_amount"`
 	TxHash        string    `json:"tx_hash"`
 	BlockNumber   int64     `json:"block_number"`
+	LogIndex      int       `json:"log_index"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -67,12 +88,13 @@ func (s *StockTransactionService) Record(ctx context.Context, req RecordStockTra
 
 	tx, err := s.Transactions.Create(ctx, repository.StockTransactionCreateInput{
 		StockID:       stock.ID,
-		WalletAddress: req.WalletAddress,
+		WalletAddress: strings.ToLower(strings.TrimSpace(req.WalletAddress)),
 		Side:          side,
 		IdrxAmount:    req.IdrxAmount,
 		StockAmount:   req.StockAmount,
 		TxHash:        req.TxHash,
 		BlockNumber:   req.BlockNumber,
+		LogIndex:      req.LogIndex,
 	})
 	return tx, err == nil, err
 }
@@ -94,6 +116,91 @@ func (s *StockTransactionService) ListByWallet(ctx context.Context, walletAddres
 	return items, nil
 }
 
+func (s *StockTransactionService) RecordTransfer(
+	ctx context.Context,
+	req RecordTransferRequest,
+) (TransferTransactionResponse, bool, error) {
+	fromAddress := strings.ToLower(strings.TrimSpace(req.FromAddress))
+	toAddress := strings.ToLower(strings.TrimSpace(req.ToAddress))
+	if fromAddress == "" || toAddress == "" {
+		return TransferTransactionResponse{}, false, ErrTransferAddressRequired
+	}
+	if fromAddress == toAddress {
+		return TransferTransactionResponse{}, false, ErrTransferSameAddress
+	}
+
+	stock, found, err := s.Stocks.FindByTickerOrIdxTicker(ctx, req.Ticker)
+	if err != nil {
+		return TransferTransactionResponse{}, false, err
+	}
+	if !found {
+		return TransferTransactionResponse{}, false, ErrStockNotFound
+	}
+
+	existingOut, outFound, err := s.Transactions.FindByTxHashLogWalletSide(
+		ctx,
+		req.TxHash,
+		req.LogIndex,
+		fromAddress,
+		"transfer-out",
+	)
+	if err != nil {
+		return TransferTransactionResponse{}, false, err
+	}
+	existingIn, inFound, err := s.Transactions.FindByTxHashLogWalletSide(
+		ctx,
+		req.TxHash,
+		req.LogIndex,
+		toAddress,
+		"transfer-in",
+	)
+	if err != nil {
+		return TransferTransactionResponse{}, false, err
+	}
+	if outFound && inFound {
+		return TransferTransactionResponse{
+			Out: stockTransactionResponse(existingOut),
+			In:  stockTransactionResponse(existingIn),
+		}, false, nil
+	}
+	if outFound || inFound {
+		return TransferTransactionResponse{}, false, ErrTransferRecordIncomplete
+	}
+
+	rows, err := s.Transactions.CreateMany(ctx, []repository.StockTransactionCreateInput{
+		{
+			StockID:       stock.ID,
+			WalletAddress: fromAddress,
+			Side:          "transfer-out",
+			IdrxAmount:    req.IdrxAmount,
+			StockAmount:   req.StockAmount,
+			TxHash:        req.TxHash,
+			BlockNumber:   req.BlockNumber,
+			LogIndex:      req.LogIndex,
+		},
+		{
+			StockID:       stock.ID,
+			WalletAddress: toAddress,
+			Side:          "transfer-in",
+			IdrxAmount:    req.IdrxAmount,
+			StockAmount:   req.StockAmount,
+			TxHash:        req.TxHash,
+			BlockNumber:   req.BlockNumber,
+			LogIndex:      req.LogIndex,
+		},
+	})
+	if err != nil {
+		return TransferTransactionResponse{}, false, err
+	}
+	rows[0].Stock = stock
+	rows[1].Stock = stock
+
+	return TransferTransactionResponse{
+		Out: stockTransactionResponse(rows[0]),
+		In:  stockTransactionResponse(rows[1]),
+	}, true, nil
+}
+
 func stockTransactionResponse(tx model.StockTransaction) StockTransactionResponse {
 	return StockTransactionResponse{
 		ID:            tx.ID,
@@ -107,6 +214,7 @@ func stockTransactionResponse(tx model.StockTransaction) StockTransactionRespons
 		StockAmount:   tx.StockAmount,
 		TxHash:        tx.TxHash,
 		BlockNumber:   tx.BlockNumber,
+		LogIndex:      tx.LogIndex,
 		CreatedAt:     tx.CreatedAt,
 	}
 }

@@ -65,6 +65,11 @@ export function TransferModal({ token, balance, onClose, onSubmit, busy }: Trans
             <DetailRow k="Network"     v="Arbitrum Sepolia" />
             <DetailRow k="Network fee" v="~$0.12" />
           </div>
+          {!token.isStable && (
+            <div className="border border-[var(--hairline)] bg-[var(--canvas-soft)] px-[12px] py-[10px] text-[12px] leading-[1.45] text-[var(--body)]">
+              Cost basis is tracked accurately for PulsarFi swaps. The recipient&apos;s average buy and P&amp;L may be estimated from the current IDX reference price.
+            </div>
+          )}
           <button
             className="btn btn-primary !w-full !p-[14px]"
             disabled={!ok}

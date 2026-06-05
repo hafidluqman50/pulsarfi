@@ -1,8 +1,11 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +18,7 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
+	indexersvc "github.com/horizonlabs/pulsarfi-backend/src/service/indexer"
 	"github.com/joho/godotenv"
 )
 
@@ -36,7 +40,9 @@ func buildHandler() (*gin.Engine, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("database: %w", err)
 	}
+	indexerCtx, stopIndexer := context.WithCancel(context.Background())
 	cleanup := func() {
+		stopIndexer()
 		if sqlDB, err := db.DB(); err == nil {
 			sqlDB.Close()
 		}
@@ -74,11 +80,12 @@ func buildHandler() (*gin.Engine, func(), error) {
 	}
 
 	svcs := service.NewRegistry(service.Config{
-		Repos:          repos,
-		JwtConfig:      jwtConfig,
-		NonceStore:     nonceStore,
-		EmailService:   emailSvc,
-		StorageService: storageSvc,
+		Repos:                 repos,
+		JwtConfig:             jwtConfig,
+		NonceStore:            nonceStore,
+		EmailService:          emailSvc,
+		StorageService:        storageSvc,
+		TransferIndexerConfig: transferIndexerConfig(),
 	})
 
 	authhandler.Configure(svcs.Auth)
@@ -94,5 +101,50 @@ func buildHandler() (*gin.Engine, func(), error) {
 	publicHandler.ConfigureRepos(repos)
 	publicHandler.ConfigureServices(svcs)
 
+	if transferIndexerEnabled() {
+		go svcs.TransferIndexer.Run(indexerCtx)
+	}
+
 	return routes.SetupRouter(db, jwtConfig), cleanup, nil
+}
+
+func transferIndexerEnabled() bool {
+	value := strings.ToLower(config.GetEnv("TRANSFER_INDEXER_ENABLED"))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+func transferIndexerConfig() indexersvc.TransferIndexerConfig {
+	rpcURL := config.GetEnv("ALCHEMY_RPC_URL")
+	if rpcURL == "" {
+		rpcURL = config.GetEnv("RPC_URL")
+	}
+
+	return indexersvc.TransferIndexerConfig{
+		RPCURL:        rpcURL,
+		PollInterval:  envSeconds("TRANSFER_INDEXER_INTERVAL_SECONDS"),
+		BatchSize:     envInt64("TRANSFER_INDEXER_BATCH_SIZE"),
+		Confirmations: envInt64("TRANSFER_INDEXER_CONFIRMATIONS"),
+		StartLookback: envInt64("TRANSFER_INDEXER_START_LOOKBACK_BLOCKS"),
+	}
+}
+
+func envInt64(key string) int64 {
+	value := config.GetEnv(key)
+	if value == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		log.Printf("invalid %s=%q, using default", key, value)
+		return 0
+	}
+	return parsed
+}
+
+func envSeconds(key string) time.Duration {
+	seconds := envInt64(key)
+	if seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }

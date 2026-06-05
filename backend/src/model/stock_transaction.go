@@ -11,6 +11,7 @@ type StockTransaction struct {
 	StockAmount   string    `gorm:"column:stock_amount;type:numeric"`
 	TxHash        string    `gorm:"column:tx_hash"`
 	BlockNumber   int64     `gorm:"column:block_number"`
+	LogIndex      int       `gorm:"column:log_index"`
 	CreatedAt     time.Time `gorm:"column:created_at;autoCreateTime"`
 
 	Stock Stock `gorm:"foreignKey:StockID"`
