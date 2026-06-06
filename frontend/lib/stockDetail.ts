@@ -1,6 +1,13 @@
 export const STOCK_TIMEFRAME_OPTIONS = ['1D', '1W', '1M', '3M', '1Y'] as const;
 export const STOCK_LOT_SIZE = 100;
 
+export type StockNewsItem = {
+  headline: string;
+  source: string;
+  time: string;
+  tag: string;
+};
+
 export function rawTokenToNumber(raw?: string, decimals = 18): number | null {
   if (!raw) return null;
   const clean = raw.replace(/[^0-9]/g, '') || '0';
@@ -11,7 +18,7 @@ export function rawTokenToNumber(raw?: string, decimals = 18): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-export const STOCK_NEWS: Record<string, { headline: string; source: string; time: string; tag: string }[]> = {
+export const STOCK_NEWS: Record<string, StockNewsItem[]> = {
   BUMIP: [
     { headline: 'Bumi Resources Coal Exports Hit 3.8Mt in April, Beating Consensus by 14%', source: 'IDX Daily', time: '2h ago', tag: 'Earnings' },
     { headline: 'South Sumatra Mining Corridor Eyes Capacity Expansion Amid Asian Demand Surge', source: 'Kontan', time: '5h ago', tag: 'Sector' },
