@@ -72,7 +72,7 @@ export function buildCostBasis(transactions: StockTransaction[]): Record<string,
     if (tx.side === 'buy' || tx.side === 'transfer-in') {
       current.qty += stockQty;
       current.cost += idrx;
-    } else if (current.qty > 0) {
+    } else if ((tx.side === 'sell' || tx.side === 'redeemed' || tx.side === 'transfer-out') && current.qty > 0) {
       const avg = current.cost / current.qty;
       const removedQty = Math.min(stockQty, current.qty);
       current.qty -= removedQty;
