@@ -114,7 +114,7 @@ func transferIndexerEnabled() bool {
 }
 
 func transferIndexerConfig() indexersvc.TransferIndexerConfig {
-	rpcURL := config.GetEnv("ALCHEMY_RPC_URL")
+	rpcURL := config.GetEnv("INFURA_RPC_URL")
 	if rpcURL == "" {
 		rpcURL = config.GetEnv("RPC_URL")
 	}
