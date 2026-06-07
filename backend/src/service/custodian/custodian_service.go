@@ -21,6 +21,31 @@ type CustodianService struct {
 	Price  *external.PriceService
 }
 
+type CustodianMemberResponse struct {
+	ID            int64   `json:"id"`
+	Name          string  `json:"name"`
+	WalletAddress string  `json:"wallet_address"`
+	Email         *string `json:"email,omitempty"`
+}
+
+func (s *CustodianService) ListMembers(ctx context.Context) ([]CustodianMemberResponse, error) {
+	models, err := s.Repos.Custodian.FindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var res []CustodianMemberResponse
+	for _, m := range models {
+		res = append(res, CustodianMemberResponse{
+			ID:            m.ID,
+			Name:          m.Name,
+			WalletAddress: m.WalletAddress,
+			Email:         m.Email,
+		})
+	}
+	return res, nil
+}
+
 type StatsResponse struct {
 	AssetsUnderCustodyIDR string `json:"assets_under_custody_idr"`
 	MintVolume24hIDRX     string `json:"mint_volume_24h_idrx"`
