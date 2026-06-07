@@ -28,6 +28,8 @@ Demo custodian wallets and the operator flow for judging are documented in [Judg
 
 ## Overview
 
+**A Note on Development:** This project was built with strict architectural oversight. While AI tools were leveraged to accelerate development, every line of code was explicitly directed, reviewed, and deeply understood. There is no 'vibecoding' here. AI acts solely as a velocity multiplier for a deliberately engineered system.
+
 PulsarFi tokenizes Indonesian public equities into pStock tokens on Arbitrum Sepolia. Each pStock represents custodian-backed IDX exposure, priced through IDX market data and traded against IDRX liquidity.
 
 The product surface is intentionally compact:
