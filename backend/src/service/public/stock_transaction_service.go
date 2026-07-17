@@ -22,14 +22,15 @@ type StockTransactionService struct {
 }
 
 type RecordStockTransactionRequest struct {
-	Ticker        string
-	TxHash        string
-	WalletAddress string
-	Side          string
-	IdrxAmount    string
-	StockAmount   string
-	BlockNumber   int64
-	LogIndex      int
+	Ticker          string
+	TxHash          string
+	WalletAddress   string
+	Side            string
+	IdrxAmount      string
+	StockAmount     string
+	ProtocolFeeIdrx string
+	BlockNumber     int64
+	LogIndex        int
 }
 
 type RecordTransferRequest struct {
@@ -49,19 +50,20 @@ type TransferTransactionResponse struct {
 }
 
 type StockTransactionResponse struct {
-	ID            int64     `json:"id"`
-	StockID       int64     `json:"stock_id"`
-	Ticker        string    `json:"ticker"`
-	StockName     string    `json:"stock_name"`
-	IdxTicker     string    `json:"idx_ticker"`
-	WalletAddress string    `json:"wallet_address"`
-	Side          string    `json:"side"`
-	IdrxAmount    string    `json:"idrx_amount"`
-	StockAmount   string    `json:"stock_amount"`
-	TxHash        string    `json:"tx_hash"`
-	BlockNumber   int64     `json:"block_number"`
-	LogIndex      int       `json:"log_index"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID              int64     `json:"id"`
+	StockID         int64     `json:"stock_id"`
+	Ticker          string    `json:"ticker"`
+	StockName       string    `json:"stock_name"`
+	IdxTicker       string    `json:"idx_ticker"`
+	WalletAddress   string    `json:"wallet_address"`
+	Side            string    `json:"side"`
+	IdrxAmount      string    `json:"idrx_amount"`
+	StockAmount     string    `json:"stock_amount"`
+	ProtocolFeeIdrx string    `json:"protocol_fee_idrx"`
+	TxHash          string    `json:"tx_hash"`
+	BlockNumber     int64     `json:"block_number"`
+	LogIndex        int       `json:"log_index"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 func (s *StockTransactionService) Record(ctx context.Context, req RecordStockTransactionRequest) (model.StockTransaction, bool, error) {
@@ -86,15 +88,21 @@ func (s *StockTransactionService) Record(ctx context.Context, req RecordStockTra
 		return model.StockTransaction{}, false, ErrStockNotFound
 	}
 
+	protocolFeeIdrx := req.ProtocolFeeIdrx
+	if protocolFeeIdrx == "" {
+		protocolFeeIdrx = "0"
+	}
+
 	tx, err := s.Transactions.Create(ctx, repository.StockTransactionCreateInput{
-		StockID:       stock.ID,
-		WalletAddress: strings.ToLower(strings.TrimSpace(req.WalletAddress)),
-		Side:          side,
-		IdrxAmount:    req.IdrxAmount,
-		StockAmount:   req.StockAmount,
-		TxHash:        req.TxHash,
-		BlockNumber:   req.BlockNumber,
-		LogIndex:      req.LogIndex,
+		StockID:         stock.ID,
+		WalletAddress:   strings.ToLower(strings.TrimSpace(req.WalletAddress)),
+		Side:            side,
+		IdrxAmount:      req.IdrxAmount,
+		StockAmount:     req.StockAmount,
+		ProtocolFeeIdrx: protocolFeeIdrx,
+		TxHash:          req.TxHash,
+		BlockNumber:     req.BlockNumber,
+		LogIndex:        req.LogIndex,
 	})
 	return tx, err == nil, err
 }
@@ -203,18 +211,19 @@ func (s *StockTransactionService) RecordTransfer(
 
 func stockTransactionResponse(tx model.StockTransaction) StockTransactionResponse {
 	return StockTransactionResponse{
-		ID:            tx.ID,
-		StockID:       tx.StockID,
-		Ticker:        tx.Stock.Ticker,
-		StockName:     tx.Stock.StockName,
-		IdxTicker:     tx.Stock.IdxTicker,
-		WalletAddress: tx.WalletAddress,
-		Side:          tx.Side,
-		IdrxAmount:    tx.IdrxAmount,
-		StockAmount:   tx.StockAmount,
-		TxHash:        tx.TxHash,
-		BlockNumber:   tx.BlockNumber,
-		LogIndex:      tx.LogIndex,
-		CreatedAt:     tx.CreatedAt,
+		ID:              tx.ID,
+		StockID:         tx.StockID,
+		Ticker:          tx.Stock.Ticker,
+		StockName:       tx.Stock.StockName,
+		IdxTicker:       tx.Stock.IdxTicker,
+		WalletAddress:   tx.WalletAddress,
+		Side:            tx.Side,
+		IdrxAmount:      tx.IdrxAmount,
+		StockAmount:     tx.StockAmount,
+		ProtocolFeeIdrx: tx.ProtocolFeeIdrx,
+		TxHash:          tx.TxHash,
+		BlockNumber:     tx.BlockNumber,
+		LogIndex:        tx.LogIndex,
+		CreatedAt:       tx.CreatedAt,
 	}
 }

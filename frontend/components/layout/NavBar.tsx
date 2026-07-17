@@ -13,7 +13,14 @@ import { useProtocolStats } from '@/http/market/hooks';
 export function NavBar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const pathname = usePathname();
-  const { isAuthenticated, role, signOut } = useSiweAuth();
+  const { isAuthenticated, role, signInPhase, signOut } = useSiweAuth();
+  const isSigningIn = signInPhase !== 'idle';
+  const signInPhaseLabel: Record<typeof signInPhase, string> = {
+    idle: '',
+    'requesting-nonce': 'Requesting…',
+    'awaiting-signature': 'Awaiting signature…',
+    verifying: 'Verifying…',
+  };
   const { data: protocolStats } = useProtocolStats();
   const idrUsdRate = protocolStats?.idr_usd_rate
     ? Math.round(protocolStats.idr_usd_rate).toLocaleString('en-US')
@@ -94,9 +101,16 @@ export function NavBar() {
                   type="button"
                   className="btn btn-outline inline-flex items-center gap-[10px] px-[14px] py-[10px]"
                   onClick={isAuthenticated ? signOut : openAccountModal}
+                  disabled={isSigningIn}
                 >
-                  <span className={`w-[8px] h-[8px] inline-block ${isAuthenticated ? 'bg-[#1f7a4b]' : 'bg-[var(--body)]'}`} />
-                  <span className="mono text-[12px]">{shortAddr(account.address)}</span>
+                  <span
+                    className={`w-[8px] h-[8px] inline-block ${
+                      isSigningIn ? 'bg-[#d1a917] animate-pulse' : isAuthenticated ? 'bg-[#1f7a4b]' : 'bg-[var(--body)]'
+                    }`}
+                  />
+                  <span className="mono text-[12px]">
+                    {isSigningIn ? signInPhaseLabel[signInPhase] : shortAddr(account.address)}
+                  </span>
                 </button>
               );
             }}

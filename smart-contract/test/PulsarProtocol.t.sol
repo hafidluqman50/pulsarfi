@@ -88,8 +88,8 @@ contract PulsarProtocolTest is Test {
         idrxToken.mint(trader, 50_000_000); // 500 000.00 IDRX for swap tests
         vm.stopPrank();
 
-        // KYC approve trader
-        vm.prank(admin);
+        // KYC approve trader (approveKYC requires CUSTODIAN_ROLE, not DEFAULT_ADMIN_ROLE)
+        vm.prank(cust1);
         protocol.approveKYC(trader);
     }
 
@@ -518,14 +518,32 @@ contract PulsarProtocolTest is Test {
         protocol.requestRedeem("BUMIP", 1e18);
     }
 
-    function test_requestRedeem_revertsIfCallerNotCustodian() public {
+    /// requestRedeem is permissionless: any KYC-approved wallet can call it directly,
+    /// it is not custodian-gated.
+    function test_requestRedeem_permissionlessForNonCustodianKycUser() public {
+        uint256 proposalId = _requestMint();
+        _reachThreshold(proposalId);
+        vm.startPrank(cust1);
+        idrxToken.approve(address(protocol), IDRX_AMOUNT);
+        protocol.executeMint(proposalId);
+        vm.stopPrank();
+
+        address stockAddress = protocol.stocks("BUMIP");
         address kycUser = makeAddr("kycUser");
         vm.prank(admin);
+        idrxToken.mint(kycUser, 100_000);
+        vm.prank(cust1);
         protocol.approveKYC(kycUser);
 
-        vm.prank(kycUser);
-        vm.expectRevert();
-        protocol.requestRedeem("BUMIP", 1e18);
+        vm.startPrank(kycUser);
+        idrxToken.approve(address(protocol), 100_000);
+        protocol.swap("BUMIP", 100_000, 0, true);
+        uint256 stockBalance = PulsarStock(stockAddress).balanceOf(kycUser);
+        PulsarStock(stockAddress).approve(address(protocol), stockBalance);
+        protocol.requestRedeem("BUMIP", stockBalance);
+        vm.stopPrank();
+
+        assertEq(protocol.redeemRequestCount(), 1, "non-custodian KYC user must be able to requestRedeem directly");
     }
 
     // ─── Access control ───────────────────────────────────────────────────────
@@ -536,10 +554,315 @@ contract PulsarProtocolTest is Test {
         protocol.requestMint("BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, ATTEST);
     }
 
-    function test_nonAdmin_cannotApproveKYC() public {
-        vm.prank(cust1);
+    function test_nonCustodian_cannotApproveKYC() public {
+        vm.prank(trader);
         vm.expectRevert();
         protocol.approveKYC(trader);
+    }
+
+    // ─── Swap fee ─────────────────────────────────────────────────────────────
+
+    function _mintAndPool() internal returns (address stockAddress) {
+        uint256 proposalId = _requestMint();
+        _reachThreshold(proposalId);
+        vm.startPrank(cust1);
+        idrxToken.approve(address(protocol), IDRX_AMOUNT);
+        protocol.executeMint(proposalId);
+        vm.stopPrank();
+        stockAddress = protocol.stocks("BUMIP");
+    }
+
+    function test_swap_buyStock_deductsProtocolFeeFromInput() public {
+        _mintAndPool();
+
+        vm.prank(admin);
+        protocol.setSwapFeeBps(20); // 0.2%
+
+        uint256 swapIn = 250_000; // 2 500.00 IDRX
+        uint256 expectedFee = (swapIn * 20) / 10_000;
+
+        vm.startPrank(trader);
+        idrxToken.approve(address(protocol), swapIn);
+        protocol.swap("BUMIP", swapIn, 0, true);
+        vm.stopPrank();
+
+        assertEq(protocol.accumulatedFees(), expectedFee, "buy-side protocol fee must be recorded exactly");
+    }
+
+    function test_swap_sellStock_deductsProtocolFeeFromOutput() public {
+        address stockAddress = _mintAndPool();
+
+        // Buy first (no fee yet) so trader holds stock to sell.
+        uint256 swapIn = 250_000;
+        vm.startPrank(trader);
+        idrxToken.approve(address(protocol), swapIn);
+        protocol.swap("BUMIP", swapIn, 0, true);
+        vm.stopPrank();
+
+        uint256 stockBalance = PulsarStock(stockAddress).balanceOf(trader);
+
+        vm.prank(admin);
+        protocol.setSwapFeeBps(20); // 0.2%
+
+        uint256 idrxBefore = idrxToken.balanceOf(trader);
+
+        vm.startPrank(trader);
+        PulsarStock(stockAddress).approve(address(protocol), stockBalance);
+        protocol.swap("BUMIP", stockBalance, 0, false);
+        vm.stopPrank();
+
+        uint256 received = idrxToken.balanceOf(trader) - idrxBefore;
+
+        assertGt(protocol.accumulatedFees(), 0, "sell-side protocol fee must be recorded");
+        assertGt(received, 0, "trader must still receive net IDRX after fee");
+    }
+
+    function test_swap_zeroFeeBps_doesNotTouchContractBalance() public {
+        address stockAddress = _mintAndPool();
+
+        // swapFeeBps stays at its default (0) — sell path must not try to
+        // forward funds the contract never received.
+        uint256 swapIn = 250_000;
+        vm.startPrank(trader);
+        idrxToken.approve(address(protocol), swapIn);
+        protocol.swap("BUMIP", swapIn, 0, true);
+        vm.stopPrank();
+
+        uint256 stockBalance = PulsarStock(stockAddress).balanceOf(trader);
+        uint256 idrxBefore = idrxToken.balanceOf(trader);
+
+        vm.startPrank(trader);
+        PulsarStock(stockAddress).approve(address(protocol), stockBalance);
+        protocol.swap("BUMIP", stockBalance, 0, false);
+        vm.stopPrank();
+
+        assertGt(idrxToken.balanceOf(trader), idrxBefore, "trader must receive IDRX with no protocol fee");
+        assertEq(protocol.accumulatedFees(), 0, "no fee should accrue when swapFeeBps is 0");
+    }
+
+    // ─── Fuzz: swap fee ───────────────────────────────────────────────────────
+
+    function testFuzz_swap_buyStock_feeMatchesFormula(uint256 feeBps, uint256 swapIn) public {
+        feeBps = bound(feeBps, 0, 1000); // max 10%, contract-enforced cap
+        swapIn = bound(swapIn, 10_000, 40_000_000); // 100.00 - 400 000.00 IDRX, within trader's balance
+
+        _mintAndPool();
+
+        vm.prank(admin);
+        protocol.setSwapFeeBps(feeBps);
+
+        uint256 expectedFee = (swapIn * feeBps) / 10_000;
+
+        vm.startPrank(trader);
+        idrxToken.approve(address(protocol), swapIn);
+        protocol.swap("BUMIP", swapIn, 0, true);
+        vm.stopPrank();
+
+        assertEq(protocol.accumulatedFees(), expectedFee, "buy-side fee must match bps formula for any feeBps/amount");
+        assertLe(expectedFee, swapIn, "fee must never exceed the swapped-in amount");
+    }
+
+    function testFuzz_swap_sellStock_feeMatchesFormula(uint256 feeBps) public {
+        feeBps = bound(feeBps, 0, 1000); // max 10%, contract-enforced cap
+
+        address stockAddress = _mintAndPool();
+
+        uint256 swapIn = 250_000;
+        vm.startPrank(trader);
+        idrxToken.approve(address(protocol), swapIn);
+        protocol.swap("BUMIP", swapIn, 0, true);
+        vm.stopPrank();
+
+        uint256 stockBalance = PulsarStock(stockAddress).balanceOf(trader);
+
+        vm.prank(admin);
+        protocol.setSwapFeeBps(feeBps);
+
+        uint256 idrxBefore = idrxToken.balanceOf(trader);
+
+        vm.startPrank(trader);
+        PulsarStock(stockAddress).approve(address(protocol), stockBalance);
+        protocol.swap("BUMIP", stockBalance, 0, false);
+        vm.stopPrank();
+
+        uint256 received = idrxToken.balanceOf(trader) - idrxBefore;
+        uint256 feeCollected = protocol.accumulatedFees();
+        uint256 rawOut = received + feeCollected;
+
+        assertEq(feeCollected, (rawOut * feeBps) / 10_000, "sell-side fee must match bps formula for any feeBps");
+        assertLe(feeCollected, rawOut, "fee must never exceed the raw swap output");
+    }
+
+    // ─── Fuzz: distributeFees conservation ─────────────────────────────────────
+
+    function testFuzz_distributeFees_conservesTotalAcrossFeeRates(uint256 feeBps) public {
+        feeBps = bound(feeBps, 1, 1000); // >0 so fees actually accrue
+
+        _mintAndPool();
+        vm.prank(admin);
+        protocol.setSwapFeeBps(feeBps);
+
+        uint256 swapIn = 250_000;
+        vm.startPrank(trader);
+        idrxToken.approve(address(protocol), swapIn);
+        protocol.swap("BUMIP", swapIn, 0, true);
+        vm.stopPrank();
+
+        uint256 fees = protocol.accumulatedFees();
+        vm.assume(fees > 0);
+
+        uint256 treasuryBefore = idrxToken.balanceOf(admin);
+        uint256 cust1Before = idrxToken.balanceOf(cust1);
+        uint256 cust2Before = idrxToken.balanceOf(cust2);
+        uint256 cust3Before = idrxToken.balanceOf(cust3);
+
+        protocol.distributeFees();
+
+        uint256 treasuryGain = idrxToken.balanceOf(admin) - treasuryBefore;
+        uint256 cust1Gain = idrxToken.balanceOf(cust1) - cust1Before;
+        uint256 cust2Gain = idrxToken.balanceOf(cust2) - cust2Before;
+        uint256 cust3Gain = idrxToken.balanceOf(cust3) - cust3Before;
+
+        assertEq(protocol.accumulatedFees(), 0, "must reset after distribution");
+        assertEq(
+            treasuryGain + cust1Gain + cust2Gain + cust3Gain,
+            fees,
+            "distribution must conserve the full fee total exactly, no dust lost or created, for any feeBps"
+        );
+        assertEq(cust1Gain, cust2Gain, "equal split among active custodians");
+        assertEq(cust2Gain, cust3Gain, "equal split among active custodians");
+    }
+
+    // ─── distributeFees ───────────────────────────────────────────────────────
+
+    function test_distributeFees_revertsBelowThreshold() public {
+        vm.prank(admin);
+        protocol.setMinimumDistributionThreshold(1_000_000);
+
+        vm.expectRevert(abi.encodeWithSelector(BelowDistributionThreshold.selector, 0, 1_000_000));
+        protocol.distributeFees();
+    }
+
+    function test_distributeFees_splitsToTreasuryAndActiveCustodians() public {
+        _mintAndPool();
+
+        vm.prank(admin);
+        protocol.setSwapFeeBps(20); // 0.2%
+
+        uint256 swapIn = 250_000;
+        vm.startPrank(trader);
+        idrxToken.approve(address(protocol), swapIn);
+        protocol.swap("BUMIP", swapIn, 0, true);
+        vm.stopPrank();
+
+        uint256 fees = protocol.accumulatedFees();
+        assertGt(fees, 0);
+
+        // Active custodians at this point: cust1 (requester) + cust2, cust3 (approvers) = 3.
+        uint256 expectedTreasuryShare = (fees * 30) / 100;
+        uint256 expectedCustodianPool = fees - expectedTreasuryShare;
+        uint256 expectedPerCustodian = expectedCustodianPool / 3;
+        uint256 expectedRemainder = expectedCustodianPool - (expectedPerCustodian * 3);
+
+        // treasury == admin per setUp's initialize(..., treasury_: admin)
+        uint256 treasuryBefore = idrxToken.balanceOf(admin);
+        uint256 cust1Before = idrxToken.balanceOf(cust1);
+
+        protocol.distributeFees();
+
+        assertEq(protocol.accumulatedFees(), 0, "accumulatedFees must reset after distribution");
+        uint256 treasuryGain = idrxToken.balanceOf(admin) - treasuryBefore;
+        uint256 cust1Gain = idrxToken.balanceOf(cust1) - cust1Before;
+        assertEq(treasuryGain, expectedTreasuryShare + expectedRemainder, "treasury gets 30% plus rounding remainder");
+        assertEq(cust1Gain, expectedPerCustodian, "active custodian (cust1) gets an equal 1/3 share");
+    }
+
+    /// The core safety invariant behind accumulatedFees: a redeem fee still
+    /// locked as pending escrow (not yet executed/rejected) must never be
+    /// swept by distributeFees, since it may still need to be refunded.
+    function test_distributeFees_doesNotTouchPendingRedeemEscrow() public {
+        address stockAddress = _mintAndPool();
+
+        vm.prank(admin);
+        protocol.setRedeemFeeBps(100); // 1% exit fee
+
+        uint256 swapIn = 250_000;
+        vm.startPrank(trader);
+        idrxToken.approve(address(protocol), swapIn);
+        protocol.swap("BUMIP", swapIn, 0, true);
+        vm.stopPrank();
+
+        uint256 stockBalance = PulsarStock(stockAddress).balanceOf(trader);
+
+        // trader requests redeem — locks stock + redeem fee IDRX as PENDING escrow,
+        // not yet added to accumulatedFees (only happens at executeRedeem).
+        vm.startPrank(trader);
+        PulsarStock(stockAddress).approve(address(protocol), stockBalance);
+        idrxToken.approve(address(protocol), type(uint256).max);
+        protocol.requestRedeem("BUMIP", stockBalance);
+        vm.stopPrank();
+
+        uint256 requestId = protocol.redeemRequestCount() - 1;
+        (,, , uint256 lockedFee,,,,,,) = protocol.redeemRequests(requestId);
+        assertGt(lockedFee, 0, "redeem fee must be locked pending a decision");
+        assertEq(protocol.accumulatedFees(), 0, "pending redeem fee must NOT be in accumulatedFees yet");
+
+        // Separately, generate real confirmed revenue via a swap fee.
+        vm.prank(admin);
+        protocol.setSwapFeeBps(20); // 0.2%
+        vm.startPrank(trader);
+        idrxToken.approve(address(protocol), swapIn);
+        protocol.swap("BUMIP", swapIn, 0, true);
+        vm.stopPrank();
+
+        uint256 confirmedFees = protocol.accumulatedFees();
+        assertGt(confirmedFees, 0, "swap fee must have accrued separately from the pending redeem escrow");
+
+        // distributeFees must only touch confirmed accumulatedFees, never the pending escrow.
+        protocol.distributeFees();
+        assertEq(protocol.accumulatedFees(), 0, "confirmed fees must be distributed");
+
+        // Reject the pending redeem — this must still be able to refund the FULL locked
+        // fee. If distributeFees had swept the escrow, this would revert with
+        // ERC20InsufficientBalance.
+        vm.prank(cust1);
+        protocol.rejectRedeem(requestId);
+        vm.prank(cust2);
+        protocol.rejectRedeem(requestId);
+        vm.prank(cust3);
+        protocol.rejectRedeem(requestId);
+
+        uint256 traderIdrxBefore = idrxToken.balanceOf(trader);
+        uint256 traderStockBefore = PulsarStock(stockAddress).balanceOf(trader);
+
+        vm.prank(cust1); // first rejecter
+        protocol.executeReject(requestId);
+
+        assertEq(
+            idrxToken.balanceOf(trader),
+            traderIdrxBefore + lockedFee,
+            "locked redeem fee must be fully refunded even after an unrelated distributeFees call"
+        );
+        assertEq(
+            PulsarStock(stockAddress).balanceOf(trader),
+            traderStockBefore + stockBalance,
+            "locked stock must be fully refunded"
+        );
+    }
+
+    function test_distributeFees_revertsWithNoActiveCustodians() public {
+        // Deploy a fresh protocol with no custodians ever having requested/approved a mint,
+        // so _activeCustodians is empty even though accumulatedFees could theoretically be nonzero.
+        address[] memory noCustodians = new address[](0);
+        PulsarProtocol freshImpl = new PulsarProtocol();
+        ERC1967Proxy freshProxy = new ERC1967Proxy(
+            address(freshImpl),
+            abi.encodeCall(PulsarProtocol.initialize, (admin, uniswapRouter, address(idrxToken), noCustodians, admin))
+        );
+        PulsarProtocol fresh = PulsarProtocol(address(freshProxy));
+
+        vm.expectRevert(NoActiveCustodians.selector);
+        fresh.distributeFees();
     }
 }
 
@@ -552,3 +875,5 @@ error ThresholdNotMet(uint256 proposalId, uint8 current, uint8 required);
 error ProposalAlreadyExecuted(uint256 proposalId);
 error NotMintRejectInitiator(uint256 proposalId, address caller);
 error KYCRequired(address wallet);
+error BelowDistributionThreshold(uint256 balance, uint256 threshold);
+error NoActiveCustodians();

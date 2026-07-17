@@ -39,14 +39,15 @@ func RecordSwapHandler(c *gin.Context) {
 	}
 
 	tx, created, err := publicStockTransactionSvc.Record(c.Request.Context(), publicsvc.RecordStockTransactionRequest{
-		Ticker:        req.Ticker,
-		TxHash:        req.TxHash,
-		WalletAddress: req.WalletAddress,
-		Side:          req.Side,
-		IdrxAmount:    req.IdrxAmount,
-		StockAmount:   req.StockAmount,
-		BlockNumber:   req.BlockNumber,
-		LogIndex:      req.LogIndex,
+		Ticker:          req.Ticker,
+		TxHash:          req.TxHash,
+		WalletAddress:   req.WalletAddress,
+		Side:            req.Side,
+		IdrxAmount:      req.IdrxAmount,
+		StockAmount:     req.StockAmount,
+		ProtocolFeeIdrx: req.ProtocolFeeIdrx,
+		BlockNumber:     req.BlockNumber,
+		LogIndex:        req.LogIndex,
 	})
 	if errors.Is(err, publicsvc.ErrStockNotFound) {
 		response.NotFound(c, "stock not found")

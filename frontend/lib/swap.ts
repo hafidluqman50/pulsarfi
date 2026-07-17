@@ -13,6 +13,7 @@ export interface SwapQuote {
   amountIn: bigint;
   amountOutMin: bigint;
   rateSummary: string;
+  protocolFeeBps: number;
 }
 
 export function toMarketToken(stock: MarketStock): MarketToken {
@@ -54,11 +55,17 @@ export function unitsFromDecimalInput(value: string, decimals: number): bigint {
   return parseUnits(normalized, decimals);
 }
 
-export function buildSwapQuote(input: Token, output: Token, rawAmount: string, slippage: number): SwapQuote {
+export function buildSwapQuote(
+  input: Token,
+  output: Token,
+  rawAmount: string,
+  slippage: number,
+  protocolFeeBps = 0,
+): SwapQuote {
   const inputAmount = parseFloat(rawAmount) || 0;
   const rate = output.price > 0 ? input.price / output.price : 0;
   const grossOutputAmount = inputAmount * rate;
-  const outputAmount = grossOutputAmount * (1 - 0.003);
+  const outputAmount = grossOutputAmount * (1 - 0.003) * (1 - protocolFeeBps / 10_000);
   const minReceived = outputAmount * (1 - slippage / 100);
   const rateSummary = output.price > 0 && input.isStable && !output.isStable
     ? `1 ${output.ticker} = ${fmtIDRX(output.price)}`
@@ -73,6 +80,7 @@ export function buildSwapQuote(input: Token, output: Token, rawAmount: string, s
     amountIn: unitsFromDecimalInput(rawAmount, tokenDecimals(input)),
     amountOutMin: unitsFromNumber(minReceived, tokenDecimals(output)),
     rateSummary,
+    protocolFeeBps,
   };
 }
 

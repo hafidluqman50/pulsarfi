@@ -28,7 +28,7 @@ All asset tokens use ALL-CAPS with a `P` suffix indicating Pulsar origin.
   - `MintDestination`: `OperatorWallet` (institutional) or `LiquidityPool`
   - Liquidity pool minting uses custodian-funded IDRX. The protocol must not mint IDRX internally; it pulls IDRX with ERC20 `transferFrom`, so the requester/funder must approve the protocol first.
   - Redeem 3/5 multisig: `requestRedeem(ticker, tokenAmount, userAddress)` — custodian only, KYC checked on userAddress → `approveRedeem` → `executeRedeem` OR `rejectRedeem` → `executeReject`
-  - `swap(ticker, amountIn, amountOutMin, buyStock)` — permissionless, no auth required
+  - `swap(ticker, amountIn, amountOutMin, buyStock)` — permissionless, no auth required. Takes `swapFeeBps` protocol fee in IDRX on top of Uniswap's native 0.3% (see §4a)
   - `approveKYC(userAddress)` / `revokeKYC(userAddress)` — admin only
 - **`PulsarStock.sol`** — Independent ERC20 per stock, owned by PulsarProtocol. Deployed lazily on first `executeMint`.
 - **`IDRX.sol`** — Mock stablecoin (2 decimals) for Arbitrum Sepolia. Production/mainnet must configure the real IDRX token and rely on user/custodian balances + allowances.
@@ -117,7 +117,7 @@ Custodian    →  requestRedeem(ticker, tokenAmount, userAddress)
                  └─ checks kycApproved[userAddress]
                  └─ locks user tokens + IDRX fee in contract
 Custodian    →  approveRedeem(requestId)  OR  rejectRedeem(requestId)
-First approver → executeRedeem(requestId)  ← after approvalCount >= 3, burns tokens + fee to treasury
+First approver → executeRedeem(requestId)  ← after approvalCount >= 3, burns tokens, fee joins accumulatedFees
 First rejecter → executeReject(requestId)  ← after rejectCount >= 3, returns tokens + fee to user
 ```
 
@@ -126,6 +126,15 @@ First rejecter → executeReject(requestId)  ← after rejectCount >= 3, returns
 User contacts operator off-chain (phone/email)
 Custodian → inputs wallet address in dashboard → approveKYC(userAddress) on-chain
 ```
+
+---
+
+## 4a. Fee Accounting & Distribution
+
+- `swapFeeBps` — protocol fee taken on every `swap()`, always in IDRX (from `amountIn` when buying, from output when selling). Separate from Uniswap's own 0.3% AMM fee, which stays in pool reserves untouched (protocol-owned liquidity, not revenue).
+- `accumulatedFees` — internal counter of *confirmed* protocol revenue (swap fee + executed redeem fee). Redeem fee only joins this counter at `executeRedeem`, never at `requestRedeem` time, so pending escrow that might still need refunding via `executeReject` is never at risk of being swept.
+- `distributeFees()` — permissionless, callable by anyone once `accumulatedFees >= minimumDistributionThreshold`. Splits 30% to `treasury`, 70% equally among custodians that have ever called `requestMint`/`approveMint` (tracked in `_activeCustodians`).
+- See `BUSINESS.md` for the full rationale and recommended default values.
 
 ---
 
@@ -140,7 +149,7 @@ Custodian → inputs wallet address in dashboard → approveKYC(userAddress) on-
 | `redeem_proposals` | Mirror of on-chain redeem requests; `user_address` = beneficiary |
 | `redeem_attestations` | Unified approve+reject votes per custodian per redeem |
 | `wallet_verifications` | KYC records managed by operator; `type`: retail/institution |
-| `stock_transactions` | Swap events: side buy/sell, idrx_amount, stock_amount (NUMERIC 78,0) |
+| `stock_transactions` | Swap events: side buy/sell, idrx_amount, stock_amount, protocol_fee_idrx (NUMERIC 78,0) |
 | `stock_attestations` | Proof of reserves per stock (operator-level, not per-custodian) |
 
 ---

@@ -58,6 +58,19 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "function",
+    "name": "accumulatedFees",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "approveKYC",
     "inputs": [
       {
@@ -92,6 +105,13 @@ export const PULSAR_PROTOCOL_ABI = [
         "internalType": "uint256"
       }
     ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "distributeFees",
+    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -402,6 +422,25 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "function",
+    "name": "isActiveCustodian",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "kycApproved",
     "inputs": [
       {
@@ -415,6 +454,19 @@ export const PULSAR_PROTOCOL_ABI = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "minimumDistributionThreshold",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -793,6 +845,19 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "function",
+    "name": "setMinimumDistributionThreshold",
+    "inputs": [
+      {
+        "name": "threshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setRedeemFeeBps",
     "inputs": [
       {
@@ -812,6 +877,19 @@ export const PULSAR_PROTOCOL_ABI = [
         "name": "router_",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setSwapFeeBps",
+    "inputs": [
+      {
+        "name": "feeBps",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -898,6 +976,19 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "function",
+    "name": "swapFeeBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "treasury",
     "inputs": [],
     "outputs": [
@@ -926,6 +1017,31 @@ export const PULSAR_PROTOCOL_ABI = [
     ],
     "outputs": [],
     "stateMutability": "payable"
+  },
+  {
+    "type": "event",
+    "name": "FeesDistributed",
+    "inputs": [
+      {
+        "name": "treasuryAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "custodianAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recipientCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1003,6 +1119,19 @@ export const PULSAR_PROTOCOL_ABI = [
       },
       {
         "name": "liquidity",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MinimumDistributionThresholdUpdated",
+    "inputs": [
+      {
+        "name": "threshold",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1395,6 +1524,44 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "event",
+    "name": "SwapFeeBpsUpdated",
+    "inputs": [
+      {
+        "name": "feeBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapFeeCollected",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "indexed": true,
+        "internalType": "string"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "feeIdrx",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TokensMinted",
     "inputs": [
       {
@@ -1578,6 +1745,22 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "error",
+    "name": "BelowDistributionThreshold",
+    "inputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "threshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ERC1967InvalidImplementation",
     "inputs": [
       {
@@ -1633,6 +1816,11 @@ export const PULSAR_PROTOCOL_ABI = [
         "internalType": "string"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "NoActiveCustodians",
+    "inputs": []
   },
   {
     "type": "error",

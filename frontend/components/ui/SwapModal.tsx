@@ -12,7 +12,7 @@ import {
   swapToastDescription,
   tokenAddress,
 } from '@/lib/swap';
-import { useExecuteSwap } from '@/http/market/swapHooks';
+import { useExecuteSwap, useSwapFeeBps } from '@/http/market/swapHooks';
 import { useMarketTokens, useWalletTokenBalances } from '@/http/market/tokenHooks';
 import { Icon } from './Icon';
 import { PStockMark } from './PStockMark';
@@ -27,6 +27,8 @@ interface SwapModalProps {
 export function SwapModal({ defaultOut, onClose }: SwapModalProps) {
   const { address, isConnected } = useAccount();
   const executeSwap = useExecuteSwap();
+  const { data: swapFeeBpsRaw } = useSwapFeeBps();
+  const swapFeeBps = Number(swapFeeBpsRaw ?? BigInt(0));
   const marketTokens = useMarketTokens();
   const walletBalances = useWalletTokenBalances(marketTokens);
 
@@ -56,7 +58,10 @@ export function SwapModal({ defaultOut, onClose }: SwapModalProps) {
   const idrxAddress = process.env.NEXT_PUBLIC_IDRX_ADDRESS as Address | undefined;
   const protocolAddress = process.env.NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS as Address | undefined;
   const inputAddress = tokenAddress(inputToken, idrxAddress);
-  const quote = useMemo(() => buildSwapQuote(inputToken, outputToken, amount, slippage), [amount, inputToken, outputToken, slippage]);
+  const quote = useMemo(
+    () => buildSwapQuote(inputToken, outputToken, amount, slippage, swapFeeBps),
+    [amount, inputToken, outputToken, slippage, swapFeeBps],
+  );
   const inputBalance = walletBalances[inputToken.ticker] ?? 0;
   const outputBalance = walletBalances[outputToken.ticker] ?? 0;
   const busy = executeSwap.isPending;
@@ -167,7 +172,13 @@ export function SwapModal({ defaultOut, onClose }: SwapModalProps) {
             <Accordion open={detailsOpen} onToggle={() => setDetailsOpen(open => !open)} summary={<span>{quote.rateSummary}</span>}>
               <DetailRow k="Min received" v={`${fmtNum(quote.minReceived, 4)} ${outputToken.ticker}`} hint={`${slippage}% slippage`} />
               <DetailRow k="LP fee" v={`${fmtNum(quote.inputAmount * 0.003, 4)} ${inputToken.ticker}`} hint="0.30%" />
-
+              {quote.protocolFeeBps > 0 && (
+                <DetailRow
+                  k="Protocol fee"
+                  v={`${fmtNum(quote.inputAmount * (quote.protocolFeeBps / 10_000), 4)} ${inputToken.ticker}`}
+                  hint={`${(quote.protocolFeeBps / 100).toFixed(2)}%`}
+                />
+              )}
             </Accordion>
           </div>
 
