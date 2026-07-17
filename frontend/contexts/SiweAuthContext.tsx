@@ -7,9 +7,12 @@ import { buildSiweMessage, fetchNonce, verifySignature } from '@/http/auth/siweA
 
 const ACCESS_TOKEN_KEY = 'access_token';
 
+export type SignInPhase = 'idle' | 'requesting-nonce' | 'awaiting-signature' | 'verifying';
+
 interface SiweAuthState {
   isAuthenticated: boolean;
   role: 'user' | 'custodian' | null;
+  signInPhase: SignInPhase;
   signIn: () => Promise<void>;
   signOut: () => void;
 }
@@ -17,6 +20,7 @@ interface SiweAuthState {
 const SiweAuthContext = createContext<SiweAuthState>({
   isAuthenticated: false,
   role: null,
+  signInPhase: 'idle',
   signIn: async () => {},
   signOut: () => {},
 });
@@ -86,9 +90,12 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [role, setRole] = useState<'user' | 'custodian' | null>(null);
+  const [signInPhase, setSignInPhase] = useState<SignInPhase>('idle');
 
   // track which address we've authed for so we don't double-trigger
   const authedAddressRef = useRef<string | null>(null);
+  // synchronous re-entrancy guard — signInPhase state is for UI feedback only,
+  // it can't be relied on for the guard check since setState isn't synchronous.
   const signingInRef = useRef(false);
 
   function clearAuth() {
@@ -159,9 +166,14 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
     if (!address || signingInRef.current) return;
     signingInRef.current = true;
     try {
+      setSignInPhase('requesting-nonce');
       const nonce = await fetchNonce(address);
       const message = buildSiweMessage(address, nonce);
+
+      setSignInPhase('awaiting-signature');
       const signature = await signMessageAsync({ message });
+
+      setSignInPhase('verifying');
       const token = await verifySignature(address, message, signature, nonce);
       applyToken(token, address);
       toast.success('Signed in', { description: `Wallet verified · ${address.slice(0, 6)}…${address.slice(-4)}` });
@@ -176,6 +188,7 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
       }
     } finally {
       signingInRef.current = false;
+      setSignInPhase('idle');
     }
   }
 
@@ -185,7 +198,7 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <SiweAuthContext.Provider value={{ isAuthenticated, role, signIn, signOut }}>
+    <SiweAuthContext.Provider value={{ isAuthenticated, role, signInPhase, signIn, signOut }}>
       {children}
     </SiweAuthContext.Provider>
   );

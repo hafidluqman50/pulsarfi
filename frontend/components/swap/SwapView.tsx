@@ -10,7 +10,7 @@ import { Icon } from "@/components/ui/Icon";
 import { PStockMark } from "@/components/ui/PStockMark";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { TokenSelectModal } from "@/components/ui/TokenSelectModal";
-import { useExecuteSwap } from "@/http/market/swapHooks";
+import { useExecuteSwap, useSwapFeeBps } from "@/http/market/swapHooks";
 import { useMarketTokens, useWalletTokenBalances } from "@/http/market/tokenHooks";
 import { useMarketStocks, useProtocolStats } from "@/http/market/hooks";
 import {
@@ -44,6 +44,8 @@ interface SwapViewProps {
 export function SwapView({ headline }: SwapViewProps) {
 	const { address, isConnected } = useAccount();
 	const executeSwap = useExecuteSwap();
+	const { data: swapFeeBpsRaw } = useSwapFeeBps();
+	const swapFeeBps = Number(swapFeeBpsRaw ?? BigInt(0));
 	const marketTokens = useMarketTokens();
 	const walletBalances = useWalletTokenBalances(marketTokens);
 	const { data: protocolStats } = useProtocolStats();
@@ -90,8 +92,8 @@ export function SwapView({ headline }: SwapViewProps) {
 	const inputAddress = tokenAddress(inputToken, idrxAddress);
 
 	const quote = useMemo(
-		() => buildSwapQuote(inputToken, outputToken ?? STABLES[0], amount, slippage),
-		[amount, inputToken, outputToken, slippage],
+		() => buildSwapQuote(inputToken, outputToken ?? STABLES[0], amount, slippage, swapFeeBps),
+		[amount, inputToken, outputToken, slippage, swapFeeBps],
 	);
 
 	const inputBalance = walletBalances[inputToken.ticker] ?? 0;
@@ -350,6 +352,13 @@ export function SwapView({ headline }: SwapViewProps) {
 								v={`${fmtNum(quote.inputAmount * 0.003, 4)} ${inputToken.ticker}`}
 								hint="0.30%"
 							/>
+							{quote.protocolFeeBps > 0 && (
+								<DetailRow
+									k="Protocol fee"
+									v={`${fmtNum(quote.inputAmount * (quote.protocolFeeBps / 10_000), 4)} ${inputToken.ticker}`}
+									hint={`${(quote.protocolFeeBps / 100).toFixed(2)}%`}
+								/>
+							)}
 							<DetailRow
 								k="Route"
 								v={

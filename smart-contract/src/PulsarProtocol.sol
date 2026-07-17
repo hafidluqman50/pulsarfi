@@ -28,6 +28,8 @@ error RedeemThresholdNotMet(uint256 requestId, uint8 current, uint8 required);
 error NotRedeemInitiator(uint256 requestId, address caller);
 error InvalidAddress();
 error InvalidAmount();
+error BelowDistributionThreshold(uint256 balance, uint256 threshold);
+error NoActiveCustodians();
 
 /// @notice Single entry point for all PulsarFi protocol operations.
 ///         UUPS upgradeable to support future Uniswap V4 migration.
@@ -90,6 +92,13 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     // proposals created before this upgrade. New proposals never write to this mapping.
     mapping(uint256 => uint256) public mintLiquidityFunding;
 
+    // New state below this line — appended, never inserted, to preserve UUPS storage layout.
+    uint256 public swapFeeBps;
+    uint256 public minimumDistributionThreshold;
+    uint256 public accumulatedFees;
+    mapping(address => bool) public isActiveCustodian;
+    address[] private _activeCustodians;
+
     event StockDeployed(string indexed ticker, address contractAddress);
     event TokensMinted(string indexed ticker, address indexed to, uint256 amount, bytes32 attestationHash);
     event PoolCreated(string indexed ticker, uint256 tokenAmount, uint256 idrxAmount, uint256 liquidity);
@@ -114,6 +123,10 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     event RedeemRejected(uint256 indexed requestId, address indexed initiator);
     event TreasuryUpdated(address indexed treasury);
     event RedeemFeeBpsUpdated(uint256 feeBps);
+    event SwapFeeBpsUpdated(uint256 feeBps);
+    event MinimumDistributionThresholdUpdated(uint256 threshold);
+    event SwapFeeCollected(string indexed ticker, address indexed user, uint256 feeIdrx);
+    event FeesDistributed(uint256 treasuryAmount, uint256 custodianAmount, uint256 recipientCount);
     event RouterUpdated(address indexed router);
     event IDRXUpdated(address indexed idrx);
 
@@ -163,6 +176,7 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         proposal.approvalCount = 1;
 
         hasApproved[proposalId][msg.sender] = true;
+        _markActiveCustodian(msg.sender);
 
         emit MintRequested(proposalId, msg.sender, ticker);
         emit MintApproved(proposalId, msg.sender, 1);
@@ -189,6 +203,7 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
         hasApproved[proposalId][msg.sender] = true;
         proposal.approvalCount++;
+        _markActiveCustodian(msg.sender);
 
         emit MintApproved(proposalId, msg.sender, proposal.approvalCount);
     }
@@ -321,8 +336,8 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         address stockAddress = stocks[req.ticker];
         PulsarStock(stockAddress).burn(address(this), req.tokenAmount, bytes32(0));
 
-        if (req.feeIdrx > 0 && treasury != address(0)) {
-            IERC20(idrx).safeTransfer(treasury, req.feeIdrx);
+        if (req.feeIdrx > 0) {
+            accumulatedFees += req.feeIdrx;
         }
 
         emit RedeemExecuted(requestId, msg.sender);
@@ -367,6 +382,10 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
 
     // ─── Swap ─────────────────────────────────────────────────────────────────
 
+    /// @notice Permissionless swap. Protocol fee (`swapFeeBps`) is always denominated
+    ///         in IDRX: taken from `amountIn` when buying stock, from the IDRX output
+    ///         when selling stock. Fee stays in this contract's own balance and is
+    ///         tracked in `accumulatedFees` until `distributeFees` is called.
     function swap(string calldata ticker, uint256 amountIn, uint256 amountOutMin, bool buyStock) external {
         address stockAddress = _requireStock(ticker);
 
@@ -374,16 +393,45 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         address tokenOut = buyStock ? stockAddress : idrx;
 
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-        IERC20(tokenIn).approve(address(router), amountIn);
+
+        uint256 feeAmount = buyStock ? _swapFeeAmount(amountIn) : 0;
+        uint256 swapAmountIn = amountIn - feeAmount;
+
+        IERC20(tokenIn).approve(address(router), swapAmountIn);
 
         address[] memory path = new address[](2);
         path[0] = tokenIn;
         path[1] = tokenOut;
 
-        uint256[] memory amounts =
-            router.swapExactTokensForTokens(amountIn, amountOutMin, path, msg.sender, block.timestamp + 15 minutes);
+        address outputRecipient = (!buyStock && swapFeeBps > 0) ? address(this) : msg.sender;
 
-        emit TokensSwapped(ticker, msg.sender, buyStock, amounts[0], amounts[amounts.length - 1]);
+        uint256[] memory amounts = router.swapExactTokensForTokens(
+            swapAmountIn, amountOutMin, path, outputRecipient, block.timestamp + 15 minutes
+        );
+
+        uint256 amountOut = amounts[amounts.length - 1];
+
+        if (!buyStock && swapFeeBps > 0) {
+            feeAmount = _swapFeeAmount(amountOut);
+            amountOut -= feeAmount;
+            IERC20(idrx).safeTransfer(msg.sender, amountOut);
+        }
+
+        _recordSwapFee(ticker, feeAmount);
+
+        emit TokensSwapped(ticker, msg.sender, buyStock, amounts[0], amountOut);
+    }
+
+    /// @notice Computes the protocol fee portion of `amount` given `swapFeeBps`.
+    function _swapFeeAmount(uint256 amount) internal view returns (uint256) {
+        return swapFeeBps == 0 ? 0 : (amount * swapFeeBps) / 10_000;
+    }
+
+    /// @notice Books a confirmed swap fee into accumulatedFees and emits it. No-op if zero.
+    function _recordSwapFee(string calldata ticker, uint256 feeAmount) internal {
+        if (feeAmount == 0) return;
+        accumulatedFees += feeAmount;
+        emit SwapFeeCollected(ticker, msg.sender, feeAmount);
     }
 
     // ─── KYC Management ──────────────────────────────────────────────────────
@@ -411,6 +459,17 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         emit RedeemFeeBpsUpdated(feeBps);
     }
 
+    function setSwapFeeBps(uint256 feeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(feeBps <= 1_000, "max 10%");
+        swapFeeBps = feeBps;
+        emit SwapFeeBpsUpdated(feeBps);
+    }
+
+    function setMinimumDistributionThreshold(uint256 threshold) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        minimumDistributionThreshold = threshold;
+        emit MinimumDistributionThresholdUpdated(threshold);
+    }
+
     function setRouter(address router_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (router_ == address(0)) revert InvalidAddress();
         router = IUniswapV2Router02(router_);
@@ -421,6 +480,38 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         if (idrx_ == address(0)) revert InvalidAddress();
         idrx = idrx_;
         emit IDRXUpdated(idrx_);
+    }
+
+    // ─── Fee Distribution ─────────────────────────────────────────────────────
+
+    /// @notice Permissionless: anyone can trigger distribution once accumulatedFees
+    ///         reaches minimumDistributionThreshold. 30% to treasury, 70% split
+    ///         equally among custodians that have ever approved/requested a mint.
+    function distributeFees() external {
+        uint256 balance = accumulatedFees;
+        if (balance < minimumDistributionThreshold) {
+            revert BelowDistributionThreshold(balance, minimumDistributionThreshold);
+        }
+
+        uint256 count = _activeCustodians.length;
+        if (count == 0) revert NoActiveCustodians();
+
+        accumulatedFees = 0;
+
+        uint256 treasuryShare = (balance * 30) / 100;
+        uint256 custodianPool = balance - treasuryShare;
+        uint256 perCustodian = custodianPool / count;
+        uint256 remainder = custodianPool - (perCustodian * count);
+
+        if (treasury != address(0)) {
+            IERC20(idrx).safeTransfer(treasury, treasuryShare + remainder);
+        }
+
+        for (uint256 i = 0; i < count; i++) {
+            IERC20(idrx).safeTransfer(_activeCustodians[i], perCustodian);
+        }
+
+        emit FeesDistributed(treasuryShare + remainder, perCustodian * count, count);
     }
 
     // ─── View ─────────────────────────────────────────────────────────────────
@@ -488,6 +579,13 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
             emit LiquidityAdded(ticker, actualToken, actualIdrx, liquidity);
         } else {
             emit PoolCreated(ticker, actualToken, actualIdrx, liquidity);
+        }
+    }
+
+    function _markActiveCustodian(address custodian) internal {
+        if (!isActiveCustodian[custodian]) {
+            isActiveCustodian[custodian] = true;
+            _activeCustodians.push(custodian);
         }
     }
 

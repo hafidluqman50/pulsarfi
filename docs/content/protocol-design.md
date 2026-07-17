@@ -12,9 +12,9 @@ upgradeable and owns every `PulsarStock` token contract it deploys.
 
 | Role | Capability |
 | --- | --- |
-| `DEFAULT_ADMIN_ROLE` | Configure treasury, router, IDRX address, redeem fee, and authorize upgrades. |
+| `DEFAULT_ADMIN_ROLE` | Configure treasury, router, IDRX address, redeem fee, swap fee, distribution threshold, and authorize upgrades. |
 | `CUSTODIAN_ROLE` | Create mint proposals, vote on mint/redeem, execute threshold operations, approve or revoke KYC. |
-| User wallet | Swap, request redeem if KYC-approved, transfer ERC-20 tokens. |
+| User wallet | Swap, request redeem if KYC-approved, transfer ERC-20 tokens, call `distributeFees()` (permissionless). |
 
 The custodian role is operational. The admin role is configurational. Keeping
 those responsibilities separate makes protocol operations easier to reason
@@ -30,6 +30,10 @@ about.
 | `redeemRequests[id]` | Stores redeem requests, locked token amount, fee, and vote counters. |
 | `hasApproved` / `hasRejected*` | Prevents duplicate votes. |
 | `hasPendingRequest[ticker]` | Prevents overlapping mint proposals per ticker. |
+| `swapFeeBps` | Protocol fee taken on every `swap()`, denominated in IDRX. |
+| `accumulatedFees` | Confirmed protocol revenue (swap fee + executed redeem fee) awaiting distribution. |
+| `minimumDistributionThreshold` | Minimum `accumulatedFees` balance before `distributeFees()` can run. |
+| `isActiveCustodian[custodian]` | Marks a custodian eligible for fee distribution once they've requested/approved a mint. |
 
 ## Mint lifecycle
 
@@ -110,7 +114,7 @@ executeRedeem
     - approvalCount >= 3
   effects:
     - burns locked pStock
-    - transfers fee to treasury
+    - adds locked fee to accumulatedFees (confirmed revenue, not yet distributed)
     - marks request approved and processed
 
 executeReject
@@ -126,13 +130,26 @@ executeReject
 ## Swap design
 
 `swap(ticker, amountIn, amountOutMin, buyStock)` provides a protocol-level
-wrapper around Uniswap V2 swaps.
+wrapper around Uniswap V2 swaps, plus an explicit protocol fee (`swapFeeBps`)
+kept separate from Uniswap's own 0.3% AMM fee.
+
+The AMM fee is never withdrawn — it compounds inside the Uniswap V2 pair's
+reserves as protocol-owned liquidity (`PulsarProtocol` is the sole LP on every
+pair). The protocol fee, by contrast, is realized immediately in IDRX and
+tracked in `accumulatedFees` for later distribution. See
+[Market & Revenue Model](/docs/business-flow) for the rationale.
 
 When `buyStock` is true:
 
 ```text
 tokenIn  = IDRX
 tokenOut = pStock
+
+effects:
+  - pulls amountIn of IDRX from the user
+  - if swapFeeBps > 0: cuts fee from amountIn before it reaches the router
+  - swaps the remainder through Uniswap V2, output sent directly to the user
+  - fee joins accumulatedFees; emits SwapFeeCollected
 ```
 
 When `buyStock` is false:
@@ -140,11 +157,32 @@ When `buyStock` is false:
 ```text
 tokenIn  = pStock
 tokenOut = IDRX
+
+effects:
+  - pulls amountIn of pStock from the user
+  - swaps the full amount through Uniswap V2, output routed to the protocol
+  - if swapFeeBps > 0: cuts fee from the IDRX output, forwards the remainder to the user
+  - fee joins accumulatedFees; emits SwapFeeCollected
 ```
 
-The user approves the input token to `PulsarProtocol`. The protocol pulls the
-input token, approves the router, executes the swap, and sends output directly to
-the user.
+The user approves the input token to `PulsarProtocol` in both directions.
+
+## Fee distribution lifecycle
+
+```text
+distributeFees
+  requirements:
+    - accumulatedFees >= minimumDistributionThreshold
+    - at least one active custodian exists
+  effects:
+    - resets accumulatedFees to 0
+    - transfers 30% (+ integer-division remainder) to treasury
+    - transfers 70% split equally across all active custodians
+    - emits FeesDistributed
+```
+
+Callable by anyone — including a custodian collecting its own share — so
+distribution never depends on the admin remembering to trigger it.
 
 ## Token units
 
@@ -169,6 +207,8 @@ The protocol should preserve these invariants:
 - Redeem rejection returns locked user tokens.
 - New mint supply goes through liquidity provisioning.
 - `tx_hash` should be unique in backend records for idempotency.
+- Redeem fee only joins `accumulatedFees` at `executeRedeem` (confirmed), never at `requestRedeem` — so a distribution can never sweep funds still owed back to a user whose redeem is later rejected.
+- The AMM's 0.3% fee is never withdrawn from pool reserves; only `accumulatedFees` (protocol swap fee + executed redeem fee) is ever distributed.
 
 ## Upgrade and router dependency
 

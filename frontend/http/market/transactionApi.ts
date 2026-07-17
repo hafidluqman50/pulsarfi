@@ -7,6 +7,7 @@ export interface RecordStockTransactionInput {
   side: 'buy' | 'sell';
   idrx_amount: string;
   stock_amount: string;
+  protocol_fee_idrx?: string;
   block_number: number;
   log_index?: number;
 }
@@ -34,6 +35,7 @@ export interface StockTransaction {
   side: TransactionSide;
   idrx_amount: string;
   stock_amount: string;
+  protocol_fee_idrx?: string;
   tx_hash: string;
   block_number: number;
   log_index: number;

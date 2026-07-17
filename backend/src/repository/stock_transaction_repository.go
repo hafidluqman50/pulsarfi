@@ -116,26 +116,28 @@ func (r *StockTransactionRepository) ComputeStats(ctx context.Context) (StatsRow
 }
 
 type StockTransactionCreateInput struct {
-	StockID       int64
-	WalletAddress string
-	Side          string
-	IdrxAmount    string
-	StockAmount   string
-	TxHash        string
-	BlockNumber   int64
-	LogIndex      int
+	StockID         int64
+	WalletAddress   string
+	Side            string
+	IdrxAmount      string
+	StockAmount     string
+	ProtocolFeeIdrx string
+	TxHash          string
+	BlockNumber     int64
+	LogIndex        int
 }
 
 func (r *StockTransactionRepository) Create(ctx context.Context, input StockTransactionCreateInput) (model.StockTransaction, error) {
 	tx := model.StockTransaction{
-		StockID:       input.StockID,
-		WalletAddress: input.WalletAddress,
-		Side:          input.Side,
-		IdrxAmount:    input.IdrxAmount,
-		StockAmount:   input.StockAmount,
-		TxHash:        input.TxHash,
-		BlockNumber:   input.BlockNumber,
-		LogIndex:      input.LogIndex,
+		StockID:         input.StockID,
+		WalletAddress:   input.WalletAddress,
+		Side:            input.Side,
+		IdrxAmount:      input.IdrxAmount,
+		StockAmount:     input.StockAmount,
+		ProtocolFeeIdrx: input.ProtocolFeeIdrx,
+		TxHash:          input.TxHash,
+		BlockNumber:     input.BlockNumber,
+		LogIndex:        input.LogIndex,
 	}
 	return tx, r.DB.WithContext(ctx).Create(&tx).Error
 }
@@ -147,14 +149,15 @@ func (r *StockTransactionRepository) CreateMany(
 	txs := make([]model.StockTransaction, 0, len(inputs))
 	for _, input := range inputs {
 		txs = append(txs, model.StockTransaction{
-			StockID:       input.StockID,
-			WalletAddress: input.WalletAddress,
-			Side:          input.Side,
-			IdrxAmount:    input.IdrxAmount,
-			StockAmount:   input.StockAmount,
-			TxHash:        input.TxHash,
-			BlockNumber:   input.BlockNumber,
-			LogIndex:      input.LogIndex,
+			StockID:         input.StockID,
+			WalletAddress:   input.WalletAddress,
+			Side:            input.Side,
+			IdrxAmount:      input.IdrxAmount,
+			StockAmount:     input.StockAmount,
+			ProtocolFeeIdrx: input.ProtocolFeeIdrx,
+			TxHash:          input.TxHash,
+			BlockNumber:     input.BlockNumber,
+			LogIndex:        input.LogIndex,
 		})
 	}
 

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { BaseError, ContractFunctionRevertedError, parseEventLogs, type Address } from 'viem';
-import { usePublicClient, useWriteContract } from 'wagmi';
+import { useReadContract, usePublicClient, useWriteContract } from 'wagmi';
 import { IDRX_ABI } from '@/lib/abi/idrx_abi';
 import { PULSAR_PROTOCOL_ABI } from '@/lib/abi/pulsar_protocol_abi';
 import { PULSAR_STOCK_ABI } from '@/lib/abi/pulsar_stock_abi';
@@ -43,6 +43,17 @@ function formatSwapError(error: unknown, ticker: string): string {
   if (error.shortMessage.includes('execution reverted')) return 'Swap simulation reverted. Check KYC, liquidity, and slippage.';
 
   return error.shortMessage;
+}
+
+export function useSwapFeeBps() {
+  const protocolAddress = process.env.NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS as Address | undefined;
+
+  return useReadContract({
+    address: protocolAddress,
+    abi: PULSAR_PROTOCOL_ABI,
+    functionName: 'swapFeeBps',
+    query: { enabled: Boolean(protocolAddress) },
+  });
 }
 
 export function useExecuteSwap() {
@@ -125,6 +136,13 @@ export function useExecuteSwap() {
         throw new Error('TokensSwapped event not found');
       }
 
+      const feeLogs = parseEventLogs({
+        abi: PULSAR_PROTOCOL_ABI,
+        eventName: 'SwapFeeCollected',
+        logs: receipt.logs,
+      });
+      const feeEvent = feeLogs[0]?.args as { feeIdrx?: bigint } | undefined;
+
       await recordStockTransaction({
         ticker: input.ticker,
         tx_hash: txHash,
@@ -132,6 +150,7 @@ export function useExecuteSwap() {
         side: event.buyStock ? 'buy' : 'sell',
         idrx_amount: (event.buyStock ? event.amountIn : event.amountOut).toString(),
         stock_amount: (event.buyStock ? event.amountOut : event.amountIn).toString(),
+        protocol_fee_idrx: (feeEvent?.feeIdrx ?? BigInt(0)).toString(),
         block_number: Number(receipt.blockNumber),
       });
 
