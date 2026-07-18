@@ -560,6 +560,74 @@ contract PulsarProtocolTest is Test {
         protocol.approveKYC(trader);
     }
 
+    // ─── Circuit breaker ────────────────────────────────────────────────────
+
+    function test_pause_blocksExecuteMint() public {
+        uint256 proposalId = _requestMint();
+        _reachThreshold(proposalId);
+
+        vm.prank(cust1);
+        protocol.pause();
+
+        vm.startPrank(cust1);
+        idrxToken.approve(address(protocol), IDRX_AMOUNT);
+        vm.expectRevert(); // EnforcedPause
+        protocol.executeMint(proposalId);
+        vm.stopPrank();
+    }
+
+    function test_pause_thenUnpause_restoresExecuteMint() public {
+        uint256 proposalId = _requestMint();
+        _reachThreshold(proposalId);
+
+        vm.prank(cust1);
+        protocol.pause();
+        vm.prank(admin);
+        protocol.unpause();
+
+        vm.startPrank(cust1);
+        idrxToken.approve(address(protocol), IDRX_AMOUNT);
+        protocol.executeMint(proposalId); // must succeed after unpause
+        vm.stopPrank();
+
+        assertFalse(protocol.paused());
+    }
+
+    function test_pause_onlyCustodian() public {
+        vm.prank(trader);
+        vm.expectRevert();
+        protocol.pause();
+    }
+
+    function test_unpause_onlyAdmin() public {
+        vm.prank(cust1);
+        protocol.pause();
+        // a custodian (non-admin) cannot unpause
+        vm.prank(cust1);
+        vm.expectRevert();
+        protocol.unpause();
+    }
+
+    /// Reject/refund path must stay OPEN while paused, so a mint can always be
+    /// cancelled and never gets stuck.
+    function test_pause_leavesRejectPathOpen() public {
+        uint256 proposalId = _requestMint();
+
+        vm.prank(cust1);
+        protocol.pause();
+
+        vm.prank(cust1);
+        protocol.rejectMint(proposalId);
+        vm.prank(cust2);
+        protocol.rejectMint(proposalId);
+        vm.prank(cust3);
+        protocol.rejectMint(proposalId);
+
+        vm.prank(cust1);
+        protocol.executeRejectMint(proposalId); // must work despite pause
+        assertFalse(protocol.hasPendingRequest("BUMIP"));
+    }
+
     // ─── Swap fee ─────────────────────────────────────────────────────────────
 
     function _mintAndPool() internal returns (address stockAddress) {

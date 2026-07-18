@@ -4,11 +4,31 @@ pragma solidity ^0.8.25;
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {Context} from "@openzeppelin/contracts/utils/Context.sol";
+import {ContextUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {PulsarStock} from "./PulsarStock.sol";
 import {IUniswapV2Router02} from "./interfaces/IUniswapV2Router02.sol";
 import {IUniswapV2Factory} from "./interfaces/IUniswapV2Factory.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
+import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {CurrencySettler} from "@openzeppelin/uniswap-hooks/utils/CurrencySettler.sol";
+import {LiquidityAmounts} from "@uniswap/v4-periphery/src/libraries/LiquidityAmounts.sol";
+
+interface IPulsarSwapHookControl {
+    function pause() external;
+    function registerPool(PoolKey calldata key, string calldata ticker) external;
+}
 
 error StockNotFound(string ticker);
 error KYCRequired(address wallet);
@@ -30,11 +50,19 @@ error InvalidAddress();
 error InvalidAmount();
 error BelowDistributionThreshold(uint256 balance, uint256 threshold);
 error NoActiveCustodians();
+error V4NotConfigured();
+error V4PoolExists(string ticker);
+error V4PoolNotFound(string ticker);
+error NotPoolManager();
+error SlippageExceeded(uint256 amountOut, uint256 minOut);
 
 /// @notice Single entry point for all PulsarFi protocol operations.
 ///         UUPS upgradeable to support future Uniswap V4 migration.
-contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
+contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, PausableUpgradeable, IUnlockCallback {
     using SafeERC20 for IERC20;
+    using StateLibrary for IPoolManager;
+    using CurrencySettler for Currency;
+    using PoolIdLibrary for PoolKey;
 
     bytes32 public constant CUSTODIAN_ROLE = keccak256("CUSTODIAN_ROLE");
     uint8 public constant THRESHOLD = 3;
@@ -98,6 +126,12 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     uint256 public accumulatedFees;
     mapping(address => bool) public isActiveCustodian;
     address[] private _activeCustodians;
+
+    // ─── V4 migration state (appended) ──────────────────────────────────────
+    IPoolManager public poolManager;
+    address public swapHook;
+    mapping(string => PoolKey) public poolKeys; // ticker => V4 pool key
+    mapping(string => bool) public isV4Migrated; // ticker => swaps route to V4
 
     event StockDeployed(string indexed ticker, address contractAddress);
     event TokensMinted(string indexed ticker, address indexed to, uint256 amount, bytes32 attestationHash);
@@ -211,7 +245,7 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     /// @notice Requester executes after 3/5 approvals.
     ///         Pulls idrxAmount from msg.sender at this point.
     ///         Caller must have approved this contract for idrxAmount IDRX beforehand.
-    function executeMint(uint256 proposalId) external onlyRole(CUSTODIAN_ROLE) {
+    function executeMint(uint256 proposalId) external onlyRole(CUSTODIAN_ROLE) whenNotPaused {
         MintProposal storage proposal = proposals[proposalId];
 
         if (proposal.approvalCount == 0 && !proposal.executed) revert ProposalNotFound(proposalId);
@@ -386,7 +420,7 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     ///         in IDRX: taken from `amountIn` when buying stock, from the IDRX output
     ///         when selling stock. Fee stays in this contract's own balance and is
     ///         tracked in `accumulatedFees` until `distributeFees` is called.
-    function swap(string calldata ticker, uint256 amountIn, uint256 amountOutMin, bool buyStock) external {
+    function swap(string calldata ticker, uint256 amountIn, uint256 amountOutMin, bool buyStock) external whenNotPaused {
         address stockAddress = _requireStock(ticker);
 
         address tokenIn  = buyStock ? idrx : stockAddress;
@@ -434,6 +468,202 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
         emit SwapFeeCollected(ticker, msg.sender, feeAmount);
     }
 
+    // ─── Uniswap V4 ─────────────────────────────────────────────────────────
+    //
+    // V4 pools carry PulsarSwapHook, which enforces the protocol swap fee at the
+    // pool level (in IDRX both directions). The protocol is the sole LP so it can
+    // unilaterally withdraw liquidity for the emergency escape plan. Liquidity and
+    // swaps go through PoolManager.unlock -> unlockCallback (flash accounting).
+
+    enum V4Action {
+        ADD_LIQUIDITY,
+        SWAP
+    }
+
+    struct V4CallbackData {
+        V4Action action;
+        string ticker;
+        uint256 amountA; // ADD: idrx amount   | SWAP: amountIn
+        uint256 amountB; // ADD: stock amount  | SWAP: minOut
+        bool buyStock; // SWAP only
+        address user; // SWAP output recipient
+    }
+
+    event V4Configured(address indexed poolManager, address indexed swapHook);
+    event V4PoolCreated(string indexed ticker, uint160 sqrtPriceX96);
+    event V4LiquidityAdded(string indexed ticker, uint256 idrxAmount, uint256 stockAmount);
+    event V4Swapped(string indexed ticker, address indexed user, bool buyStock, uint256 amountIn, uint256 amountOut);
+
+    function configureV4(address poolManager_, address swapHook_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (poolManager_ == address(0) || swapHook_ == address(0)) revert InvalidAddress();
+        poolManager = IPoolManager(poolManager_);
+        swapHook = swapHook_;
+        emit V4Configured(poolManager_, swapHook_);
+    }
+
+    /// @notice Initializes the V4 pool for `ticker` and registers it with the hook.
+    ///         Stock must already be deployed (via an earlier executeMint).
+    function createV4Pool(string calldata ticker, uint160 sqrtPriceX96, int24 tickSpacing, uint24 lpFee)
+        external
+        onlyRole(CUSTODIAN_ROLE)
+    {
+        if (address(poolManager) == address(0) || swapHook == address(0)) revert V4NotConfigured();
+        address stockAddress = stocks[ticker];
+        if (stockAddress == address(0)) revert StockNotFound(ticker);
+        if (address(poolKeys[ticker].hooks) != address(0)) revert V4PoolExists(ticker);
+
+        (Currency c0, Currency c1) = _sortCurrencies(idrx, stockAddress);
+        PoolKey memory key =
+            PoolKey({currency0: c0, currency1: c1, fee: lpFee, tickSpacing: tickSpacing, hooks: IHooks(swapHook)});
+        poolManager.initialize(key, sqrtPriceX96);
+        poolKeys[ticker] = key;
+        IPulsarSwapHookControl(swapHook).registerPool(key, ticker);
+        emit V4PoolCreated(ticker, sqrtPriceX96);
+    }
+
+    /// @notice Adds full-range liquidity to the V4 pool from the caller's funds.
+    ///         Once seeded, swaps for this ticker route to V4.
+    function addV4Liquidity(string calldata ticker, uint256 idrxAmount, uint256 stockAmount)
+        external
+        onlyRole(CUSTODIAN_ROLE)
+        whenNotPaused
+    {
+        _requireV4Pool(ticker);
+        if (idrxAmount == 0 || stockAmount == 0) revert InvalidAmount();
+
+        IERC20(idrx).safeTransferFrom(msg.sender, address(this), idrxAmount);
+        IERC20(stocks[ticker]).safeTransferFrom(msg.sender, address(this), stockAmount);
+
+        poolManager.unlock(
+            abi.encode(
+                V4CallbackData({
+                    action: V4Action.ADD_LIQUIDITY,
+                    ticker: ticker,
+                    amountA: idrxAmount,
+                    amountB: stockAmount,
+                    buyStock: false,
+                    user: msg.sender
+                })
+            )
+        );
+
+        isV4Migrated[ticker] = true;
+        emit V4LiquidityAdded(ticker, idrxAmount, stockAmount);
+    }
+
+    /// @notice Permissionless swap through the V4 pool. The hook charges the
+    ///         protocol fee automatically; no fee logic here.
+    function swapV4(string calldata ticker, uint256 amountIn, uint256 minOut, bool buyStock) external whenNotPaused {
+        _requireV4Pool(ticker);
+        if (amountIn == 0) revert InvalidAmount();
+
+        address tokenIn = buyStock ? idrx : stocks[ticker];
+        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+
+        poolManager.unlock(
+            abi.encode(
+                V4CallbackData({
+                    action: V4Action.SWAP,
+                    ticker: ticker,
+                    amountA: amountIn,
+                    amountB: minOut,
+                    buyStock: buyStock,
+                    user: msg.sender
+                })
+            )
+        );
+    }
+
+    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+        if (msg.sender != address(poolManager)) revert NotPoolManager();
+        V4CallbackData memory d = abi.decode(data, (V4CallbackData));
+        PoolKey memory key = poolKeys[d.ticker];
+        if (d.action == V4Action.ADD_LIQUIDITY) {
+            _v4AddLiquidity(key, d);
+        } else {
+            _v4Swap(key, d);
+        }
+        return "";
+    }
+
+    function _v4AddLiquidity(PoolKey memory key, V4CallbackData memory d) internal {
+        (uint160 sqrtP,,,) = poolManager.getSlot0(key.toId());
+        int24 tickLower = (TickMath.MIN_TICK / key.tickSpacing) * key.tickSpacing;
+        int24 tickUpper = (TickMath.MAX_TICK / key.tickSpacing) * key.tickSpacing;
+
+        (uint256 amount0, uint256 amount1) =
+            Currency.unwrap(key.currency0) == idrx ? (d.amountA, d.amountB) : (d.amountB, d.amountA);
+
+        uint128 liquidity = LiquidityAmounts.getLiquidityForAmounts(
+            sqrtP, TickMath.getSqrtPriceAtTick(tickLower), TickMath.getSqrtPriceAtTick(tickUpper), amount0, amount1
+        );
+
+        (BalanceDelta delta,) = poolManager.modifyLiquidity(
+            key,
+            ModifyLiquidityParams({
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                liquidityDelta: int256(uint256(liquidity)),
+                salt: bytes32(0)
+            }),
+            ""
+        );
+
+        _settleDelta(key, delta.amount0(), delta.amount1(), address(this));
+    }
+
+    function _v4Swap(PoolKey memory key, V4CallbackData memory d) internal {
+        bool idrxIs0 = Currency.unwrap(key.currency0) == idrx;
+        bool zeroForOne = d.buyStock ? idrxIs0 : !idrxIs0;
+
+        BalanceDelta delta = poolManager.swap(
+            key,
+            SwapParams({
+                zeroForOne: zeroForOne,
+                amountSpecified: -int256(d.amountA),
+                sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
+            }),
+            ""
+        );
+
+        int128 d0 = delta.amount0();
+        int128 d1 = delta.amount1();
+
+        // Settle inputs we owe (negative), send outputs owed to us (positive) to the user.
+        if (d0 < 0) key.currency0.settle(poolManager, address(this), uint256(uint128(-d0)), false);
+        if (d1 < 0) key.currency1.settle(poolManager, address(this), uint256(uint128(-d1)), false);
+
+        uint256 amountOut;
+        if (d0 > 0) {
+            amountOut = uint256(uint128(d0));
+            key.currency0.take(poolManager, d.user, amountOut, false);
+        }
+        if (d1 > 0) {
+            amountOut = uint256(uint128(d1));
+            key.currency1.take(poolManager, d.user, amountOut, false);
+        }
+
+        if (amountOut < d.amountB) revert SlippageExceeded(amountOut, d.amountB);
+        emit V4Swapped(d.ticker, d.user, d.buyStock, d.amountA, amountOut);
+    }
+
+    /// @dev Settles negative deltas (owed by us) and takes positive deltas (owed to us) to `to`.
+    function _settleDelta(PoolKey memory key, int128 d0, int128 d1, address to) internal {
+        if (d0 < 0) key.currency0.settle(poolManager, address(this), uint256(uint128(-d0)), false);
+        if (d1 < 0) key.currency1.settle(poolManager, address(this), uint256(uint128(-d1)), false);
+        if (d0 > 0) key.currency0.take(poolManager, to, uint256(uint128(d0)), false);
+        if (d1 > 0) key.currency1.take(poolManager, to, uint256(uint128(d1)), false);
+    }
+
+    function _sortCurrencies(address a, address b) internal pure returns (Currency, Currency) {
+        return a < b ? (Currency.wrap(a), Currency.wrap(b)) : (Currency.wrap(b), Currency.wrap(a));
+    }
+
+    function _requireV4Pool(string calldata ticker) internal view returns (PoolKey memory key) {
+        key = poolKeys[ticker];
+        if (address(key.hooks) == address(0)) revert V4PoolNotFound(ticker);
+    }
+
     // ─── KYC Management ──────────────────────────────────────────────────────
 
     function approveKYC(address wallet) external onlyRole(CUSTODIAN_ROLE) {
@@ -444,6 +674,19 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     function revokeKYC(address wallet) external onlyRole(CUSTODIAN_ROLE) {
         kycApproved[wallet] = false;
         emit KYCRevoked(wallet);
+    }
+
+    // ─── Circuit breaker ────────────────────────────────────────────────────
+
+    /// @notice Emergency stop. Any custodian can pause (fast incident response);
+    ///         only admin can unpause (deliberate all-clear). Refund/reject and
+    ///         withdrawal paths stay open while paused so funds are never trapped.
+    function pause() external onlyRole(CUSTODIAN_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
     }
 
     // ─── Admin Config ─────────────────────────────────────────────────────────
@@ -595,4 +838,23 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl {
     }
 
     function _authorizeUpgrade(address) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
+    // ─── Context resolution ─────────────────────────────────────────────────
+    // AccessControl (Context) and PausableUpgradeable (ContextUpgradeable) both
+    // define these. Both are stateless and identical, so we resolve explicitly.
+    // AccessControl stays non-upgradeable to preserve _roles at slot 0 on the
+    // already-deployed proxy (AccessControlUpgradeable would move it to a
+    // namespaced slot and orphan existing roles).
+
+    function _msgSender() internal view override(Context, ContextUpgradeable) returns (address) {
+        return msg.sender;
+    }
+
+    function _msgData() internal view override(Context, ContextUpgradeable) returns (bytes calldata) {
+        return msg.data;
+    }
+
+    function _contextSuffixLength() internal view override(Context, ContextUpgradeable) returns (uint256) {
+        return 0;
+    }
 }
