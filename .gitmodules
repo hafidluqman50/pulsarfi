@@ -7,3 +7,15 @@
 [submodule "smart-contract/lib/solidity-lib"]
 	path = smart-contract/lib/solidity-lib
 	url = https://github.com/Uniswap/solidity-lib
+[submodule "smart-contract/lib/v4-core"]
+	path = smart-contract/lib/v4-core
+	url = https://github.com/Uniswap/v4-core
+[submodule "smart-contract/lib/v4-periphery"]
+	path = smart-contract/lib/v4-periphery
+	url = https://github.com/Uniswap/v4-periphery
+[submodule "smart-contract/lib/openzeppelin-contracts-upgradeable"]
+	path = smart-contract/lib/openzeppelin-contracts-upgradeable
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable
+[submodule "smart-contract/lib/uniswap-hooks"]
+	path = smart-contract/lib/uniswap-hooks
+	url = https://github.com/OpenZeppelin/uniswap-hooks
