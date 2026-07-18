@@ -245,6 +245,9 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
     /// @notice Requester executes after 3/5 approvals.
     ///         Pulls idrxAmount from msg.sender at this point.
     ///         Caller must have approved this contract for idrxAmount IDRX beforehand.
+    /// @notice Requester executes after 3/5 approvals.
+    ///         Pulls idrxAmount from msg.sender at this point.
+    ///         Caller must have approved this contract for idrxAmount IDRX beforehand.
     function executeMint(uint256 proposalId) external onlyRole(CUSTODIAN_ROLE) whenNotPaused {
         MintProposal storage proposal = proposals[proposalId];
 
@@ -477,7 +480,8 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
 
     enum V4Action {
         ADD_LIQUIDITY,
-        SWAP
+        SWAP,
+        REMOVE_ALL_LIQUIDITY
     }
 
     struct V4CallbackData {
@@ -493,6 +497,8 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
     event V4PoolCreated(string indexed ticker, uint160 sqrtPriceX96);
     event V4LiquidityAdded(string indexed ticker, uint256 idrxAmount, uint256 stockAmount);
     event V4Swapped(string indexed ticker, address indexed user, bool buyStock, uint256 amountIn, uint256 amountOut);
+    event V2ToV4Migrated(string indexed ticker, uint256 idrxRecovered, uint256 stockRecovered);
+    event V4EmergencyWithdrawn(string indexed ticker, uint256 idrxRecovered, uint256 stockRecovered);
 
     function configureV4(address poolManager_, address swapHook_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (poolManager_ == address(0) || swapHook_ == address(0)) revert InvalidAddress();
@@ -501,12 +507,12 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         emit V4Configured(poolManager_, swapHook_);
     }
 
-    /// @notice Initializes the V4 pool for `ticker` and registers it with the hook.
-    ///         Stock must already be deployed (via an earlier executeMint).
-    function createV4Pool(string calldata ticker, uint160 sqrtPriceX96, int24 tickSpacing, uint24 lpFee)
-        external
-        onlyRole(CUSTODIAN_ROLE)
-    {
+    /// @dev Initializes the V4 pool for `ticker` and registers it with the hook.
+    ///      Stock must already be deployed (via an earlier executeMint). Internal:
+    ///      the only path to a V4 pool today is migrateV2ToV4, which enforces
+    ///      CUSTODIAN_ROLE. Add a tested external entrypoint if/when a greenfield
+    ///      V4 listing (a stock with no V2 pool) is ever required.
+    function _createV4Pool(string memory ticker, uint160 sqrtPriceX96, int24 tickSpacing, uint24 lpFee) internal {
         if (address(poolManager) == address(0) || swapHook == address(0)) revert V4NotConfigured();
         address stockAddress = stocks[ticker];
         if (stockAddress == address(0)) revert StockNotFound(ticker);
@@ -528,12 +534,17 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         onlyRole(CUSTODIAN_ROLE)
         whenNotPaused
     {
-        _requireV4Pool(ticker);
         if (idrxAmount == 0 || stockAmount == 0) revert InvalidAmount();
-
         IERC20(idrx).safeTransferFrom(msg.sender, address(this), idrxAmount);
         IERC20(stocks[ticker]).safeTransferFrom(msg.sender, address(this), stockAmount);
+        _provideV4Liquidity(ticker, idrxAmount, stockAmount);
+    }
 
+    /// @dev Seeds V4 liquidity from tokens the protocol already holds (no pull).
+    ///      Used by addV4Liquidity (after pulling) and migrateV2ToV4 (from
+    ///      recovered V2 liquidity).
+    function _provideV4Liquidity(string memory ticker, uint256 idrxAmount, uint256 stockAmount) internal {
+        _requireV4PoolMem(ticker);
         poolManager.unlock(
             abi.encode(
                 V4CallbackData({
@@ -542,13 +553,85 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
                     amountA: idrxAmount,
                     amountB: stockAmount,
                     buyStock: false,
-                    user: msg.sender
+                    user: address(this)
+                })
+            )
+        );
+        isV4Migrated[ticker] = true;
+        emit V4LiquidityAdded(ticker, idrxAmount, stockAmount);
+    }
+
+    /// @notice Migrates a ticker's liquidity from its V2 pool to a fresh V4 pool
+    ///         carrying the fee hook. Removes all protocol-owned V2 liquidity,
+    ///         creates the V4 pool at `sqrtPriceX96` (pass the current V2 price to
+    ///         avoid an arb gap), and re-seeds it with the recovered tokens.
+    ///         `sqrtPriceX96`/`tickSpacing`/`lpFee` are used only if the V4 pool
+    ///         does not exist yet.
+    function migrateV2ToV4(
+        string calldata ticker,
+        uint160 sqrtPriceX96,
+        int24 tickSpacing,
+        uint24 lpFee,
+        uint256 minIdrxOut,
+        uint256 minStockOut
+    ) external onlyRole(CUSTODIAN_ROLE) {
+        address stockAddress = stocks[ticker];
+        if (stockAddress == address(0)) revert StockNotFound(ticker);
+
+        // 1. Pull all protocol-owned V2 liquidity back into the protocol.
+        address pair = IUniswapV2Factory(router.factory()).getPair(stockAddress, idrx);
+        uint256 lp = pair == address(0) ? 0 : IERC20(pair).balanceOf(address(this));
+        if (lp > 0) {
+            IERC20(pair).approve(address(router), lp);
+            router.removeLiquidity(
+                stockAddress, idrx, lp, minStockOut, minIdrxOut, address(this), block.timestamp + 15 minutes
+            );
+        }
+
+        // 2. Ensure the V4 pool exists.
+        if (address(poolKeys[ticker].hooks) == address(0)) {
+            _createV4Pool(ticker, sqrtPriceX96, tickSpacing, lpFee);
+        }
+
+        // 3. Re-seed V4 with everything recovered.
+        uint256 idrxBal = IERC20(idrx).balanceOf(address(this));
+        uint256 stockBal = IERC20(stockAddress).balanceOf(address(this));
+        if (idrxBal == 0 || stockBal == 0) revert InvalidAmount();
+        _provideV4Liquidity(ticker, idrxBal, stockBal);
+
+        emit V2ToV4Migrated(ticker, idrxBal, stockBal);
+    }
+
+    /// @notice Escape hatch: pause the hook (halts all swaps on its pools) and
+    ///         pull the protocol's entire V4 liquidity for `ticker` back into the
+    ///         protocol. Callable during an incident; not blocked by the
+    ///         protocol pause. Requires the protocol to hold PAUSER_ROLE on the hook.
+    function emergencyWithdrawV4(string calldata ticker) external onlyRole(CUSTODIAN_ROLE) {
+        _requireV4Pool(ticker);
+        IPulsarSwapHookControl(swapHook).pause();
+
+        uint256 idrxBefore = IERC20(idrx).balanceOf(address(this));
+        uint256 stockBefore = IERC20(stocks[ticker]).balanceOf(address(this));
+
+        poolManager.unlock(
+            abi.encode(
+                V4CallbackData({
+                    action: V4Action.REMOVE_ALL_LIQUIDITY,
+                    ticker: ticker,
+                    amountA: 0,
+                    amountB: 0,
+                    buyStock: false,
+                    user: address(this)
                 })
             )
         );
 
-        isV4Migrated[ticker] = true;
-        emit V4LiquidityAdded(ticker, idrxAmount, stockAmount);
+        isV4Migrated[ticker] = false;
+        emit V4EmergencyWithdrawn(
+            ticker,
+            IERC20(idrx).balanceOf(address(this)) - idrxBefore,
+            IERC20(stocks[ticker]).balanceOf(address(this)) - stockBefore
+        );
     }
 
     /// @notice Permissionless swap through the V4 pool. The hook charges the
@@ -580,10 +663,37 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         PoolKey memory key = poolKeys[d.ticker];
         if (d.action == V4Action.ADD_LIQUIDITY) {
             _v4AddLiquidity(key, d);
-        } else {
+        } else if (d.action == V4Action.SWAP) {
             _v4Swap(key, d);
+        } else {
+            _v4RemoveAllLiquidity(key);
         }
         return "";
+    }
+
+    /// @dev Removes the protocol's entire full-range position and takes both
+    ///      tokens back to the protocol. Used by emergencyWithdrawV4.
+    function _v4RemoveAllLiquidity(PoolKey memory key) internal {
+        int24 tickLower = (TickMath.MIN_TICK / key.tickSpacing) * key.tickSpacing;
+        int24 tickUpper = (TickMath.MAX_TICK / key.tickSpacing) * key.tickSpacing;
+
+        bytes32 positionId =
+            keccak256(abi.encodePacked(address(this), tickLower, tickUpper, bytes32(0)));
+        uint128 liquidity = poolManager.getPositionLiquidity(key.toId(), positionId);
+        if (liquidity == 0) return;
+
+        (BalanceDelta delta,) = poolManager.modifyLiquidity(
+            key,
+            ModifyLiquidityParams({
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                liquidityDelta: -int256(uint256(liquidity)),
+                salt: bytes32(0)
+            }),
+            ""
+        );
+        // Removing liquidity yields positive deltas (owed to us) — take to protocol.
+        _settleDelta(key, delta.amount0(), delta.amount1(), address(this));
     }
 
     function _v4AddLiquidity(PoolKey memory key, V4CallbackData memory d) internal {
@@ -660,6 +770,11 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
     }
 
     function _requireV4Pool(string calldata ticker) internal view returns (PoolKey memory key) {
+        key = poolKeys[ticker];
+        if (address(key.hooks) == address(0)) revert V4PoolNotFound(ticker);
+    }
+
+    function _requireV4PoolMem(string memory ticker) internal view returns (PoolKey memory key) {
         key = poolKeys[ticker];
         if (address(key.hooks) == address(0)) revert V4PoolNotFound(ticker);
     }

@@ -102,9 +102,10 @@ contract PulsarSwapHook is BaseHookFee, AccessControl, Pausable {
         _unpause();
     }
 
-    /// @notice Registers a pool's ticker. Called by the protocol after it
-    ///         initializes the V4 pool for that ticker.
-    function registerPool(PoolKey calldata key, string calldata ticker) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    /// @notice Registers a pool's ticker. Called by the protocol (feeConfig)
+    ///         right after it initializes the V4 pool, or by an admin.
+    function registerPool(PoolKey calldata key, string calldata ticker) external {
+        if (msg.sender != address(feeConfig)) _checkRole(DEFAULT_ADMIN_ROLE);
         PoolId poolId = key.toId();
         poolTicker[poolId] = ticker;
         emit PoolRegistered(poolId, ticker);
