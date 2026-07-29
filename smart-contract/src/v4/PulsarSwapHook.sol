@@ -83,6 +83,10 @@ contract PulsarSwapHook is BaseHookFee, AccessControl, Pausable {
         idrx = Currency.wrap(idrx_);
         feeRecipient = admin;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        // feeConfig is always PulsarProtocol in practice — grant it admin too so
+        // it can drive pauseHook/unpauseHook (the pool-level circuit breaker) end
+        // to end, not just pause() via PAUSER_ROLE.
+        _grantRole(DEFAULT_ADMIN_ROLE, feeConfig_);
         _grantRole(PAUSER_ROLE, pauser);
     }
 

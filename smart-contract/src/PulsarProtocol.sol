@@ -17,17 +17,21 @@ import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockC
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
-import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
+import {FixedPoint96} from "@uniswap/v4-core/src/libraries/FixedPoint96.sol";
 import {CurrencySettler} from "@openzeppelin/uniswap-hooks/utils/CurrencySettler.sol";
 import {LiquidityAmounts} from "@uniswap/v4-periphery/src/libraries/LiquidityAmounts.sol";
 
 interface IPulsarSwapHookControl {
     function pause() external;
+    function unpause() external;
     function registerPool(PoolKey calldata key, string calldata ticker) external;
+    function handleHookFees(Currency[] calldata currencies) external;
 }
 
 error StockNotFound(string ticker);
@@ -62,10 +66,17 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
     using SafeERC20 for IERC20;
     using StateLibrary for IPoolManager;
     using CurrencySettler for Currency;
+    using CurrencyLibrary for Currency;
     using PoolIdLibrary for PoolKey;
 
     bytes32 public constant CUSTODIAN_ROLE = keccak256("CUSTODIAN_ROLE");
     uint8 public constant THRESHOLD = 3;
+
+    /// @dev V4 pool parameters for a first-mint pool. The 0.3% lpFee accrues to
+    ///      the protocol's own full-range position (protocol is the sole LP), so it
+    ///      grows protocol-owned liquidity and is separate from the hook fee.
+    int24 internal constant MINT_TICK_SPACING = 60;
+    uint24 internal constant MINT_LP_FEE = 3000;
 
     struct MintProposal {
         string ticker;
@@ -135,8 +146,6 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
 
     event StockDeployed(string indexed ticker, address contractAddress);
     event TokensMinted(string indexed ticker, address indexed to, uint256 amount, bytes32 attestationHash);
-    event PoolCreated(string indexed ticker, uint256 tokenAmount, uint256 idrxAmount, uint256 liquidity);
-    event LiquidityAdded(string indexed ticker, uint256 tokenAmount, uint256 idrxAmount, uint256 liquidity);
     event TokensRedeemed(string indexed ticker, address indexed from, uint256 amount);
     event KYCApproved(address indexed wallet);
     event KYCRevoked(address indexed wallet);
@@ -145,9 +154,6 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
     event MintExecuted(uint256 indexed proposalId);
     event MintRejectionVoted(uint256 indexed proposalId, address indexed custodian, uint8 rejectCount);
     event MintRejected(uint256 indexed proposalId, address indexed rejectInitiator);
-    event TokensSwapped(
-        string indexed ticker, address indexed user, bool buyStock, uint256 amountIn, uint256 amountOut
-    );
     event RedeemRequested(
         uint256 indexed requestId, address indexed user, string ticker, uint256 tokenAmount, uint256 feeIdrx
     );
@@ -159,7 +165,6 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
     event RedeemFeeBpsUpdated(uint256 feeBps);
     event SwapFeeBpsUpdated(uint256 feeBps);
     event MinimumDistributionThresholdUpdated(uint256 threshold);
-    event SwapFeeCollected(string indexed ticker, address indexed user, uint256 feeIdrx);
     event FeesDistributed(uint256 treasuryAmount, uint256 custodianAmount, uint256 recipientCount);
     event RouterUpdated(address indexed router);
     event IDRXUpdated(address indexed idrx);
@@ -242,13 +247,21 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         emit MintApproved(proposalId, msg.sender, proposal.approvalCount);
     }
 
-    /// @notice Requester executes after 3/5 approvals.
-    ///         Pulls idrxAmount from msg.sender at this point.
-    ///         Caller must have approved this contract for idrxAmount IDRX beforehand.
-    /// @notice Requester executes after 3/5 approvals.
-    ///         Pulls idrxAmount from msg.sender at this point.
-    ///         Caller must have approved this contract for idrxAmount IDRX beforehand.
-    function executeMint(uint256 proposalId) external onlyRole(CUSTODIAN_ROLE) whenNotPaused {
+    /// @notice Requester executes after 3/5 approvals. Mints the stock to the
+    ///         protocol, pulls idrxAmount from msg.sender, and provides both as
+    ///         full-range Uniswap V4 liquidity (creating the pool on the first mint
+    ///         for a ticker). Caller must have approved this contract for idrxAmount
+    ///         IDRX beforehand.
+    /// @param sqrtPriceX96 Canonical initial price for a first mint, encoded as
+    ///        `sqrt(IDRX_raw per 1 stock_raw) * 2^96` — orientation-independent, so
+    ///        the caller does not need the (lazily deployed) stock address. The
+    ///        contract flips it to the pool's currency ordering on-chain. Ignored
+    ///        once the ticker's V4 pool already exists.
+    function executeMint(uint256 proposalId, uint160 sqrtPriceX96)
+        external
+        onlyRole(CUSTODIAN_ROLE)
+        whenNotPaused
+    {
         MintProposal storage proposal = proposals[proposalId];
 
         if (proposal.approvalCount == 0 && !proposal.executed) revert ProposalNotFound(proposalId);
@@ -263,7 +276,16 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
 
         address stockAddress = _ensureStock(proposal.ticker, proposal.stockName, proposal.idxTicker);
         _mint(stockAddress, proposal.ticker, address(this), proposal.tokenAmount, proposal.attestationHash);
-        _provideToPool(proposalId, stockAddress, proposal.ticker, proposal.tokenAmount, proposal.idrxAmount);
+
+        // Pull IDRX from the requester. Any IDRX already funded via the legacy
+        // fundMintLiquidity path (pre-upgrade proposals only) is used first.
+        uint256 alreadyFunded = mintLiquidityFunding[proposalId];
+        if (alreadyFunded < proposal.idrxAmount) {
+            IERC20(idrx).safeTransferFrom(msg.sender, address(this), proposal.idrxAmount - alreadyFunded);
+        }
+        mintLiquidityFunding[proposalId] = 0;
+
+        _provideMintToV4(proposal.ticker, proposal.tokenAmount, proposal.idrxAmount, sqrtPriceX96);
         emit MintExecuted(proposalId);
     }
 
@@ -319,11 +341,8 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
 
         uint256 feeIdrx = 0;
         if (redeemFeeBps > 0) {
-            address[] memory path = new address[](2);
-            path[0] = stockAddress;
-            path[1] = idrx;
-            uint256[] memory amounts = router.getAmountsOut(tokenAmount, path);
-            feeIdrx = (amounts[1] * redeemFeeBps) / 10_000;
+            uint256 idrxValue = _quoteStockToIdrxV4(ticker, tokenAmount);
+            feeIdrx = (idrxValue * redeemFeeBps) / 10_000;
         }
 
         IERC20(stockAddress).safeTransferFrom(user, address(this), tokenAmount);
@@ -417,60 +436,6 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         emit RedeemRejected(requestId, msg.sender);
     }
 
-    // ─── Swap ─────────────────────────────────────────────────────────────────
-
-    /// @notice Permissionless swap. Protocol fee (`swapFeeBps`) is always denominated
-    ///         in IDRX: taken from `amountIn` when buying stock, from the IDRX output
-    ///         when selling stock. Fee stays in this contract's own balance and is
-    ///         tracked in `accumulatedFees` until `distributeFees` is called.
-    function swap(string calldata ticker, uint256 amountIn, uint256 amountOutMin, bool buyStock) external whenNotPaused {
-        address stockAddress = _requireStock(ticker);
-
-        address tokenIn  = buyStock ? idrx : stockAddress;
-        address tokenOut = buyStock ? stockAddress : idrx;
-
-        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-
-        uint256 feeAmount = buyStock ? _swapFeeAmount(amountIn) : 0;
-        uint256 swapAmountIn = amountIn - feeAmount;
-
-        IERC20(tokenIn).approve(address(router), swapAmountIn);
-
-        address[] memory path = new address[](2);
-        path[0] = tokenIn;
-        path[1] = tokenOut;
-
-        address outputRecipient = (!buyStock && swapFeeBps > 0) ? address(this) : msg.sender;
-
-        uint256[] memory amounts = router.swapExactTokensForTokens(
-            swapAmountIn, amountOutMin, path, outputRecipient, block.timestamp + 15 minutes
-        );
-
-        uint256 amountOut = amounts[amounts.length - 1];
-
-        if (!buyStock && swapFeeBps > 0) {
-            feeAmount = _swapFeeAmount(amountOut);
-            amountOut -= feeAmount;
-            IERC20(idrx).safeTransfer(msg.sender, amountOut);
-        }
-
-        _recordSwapFee(ticker, feeAmount);
-
-        emit TokensSwapped(ticker, msg.sender, buyStock, amounts[0], amountOut);
-    }
-
-    /// @notice Computes the protocol fee portion of `amount` given `swapFeeBps`.
-    function _swapFeeAmount(uint256 amount) internal view returns (uint256) {
-        return swapFeeBps == 0 ? 0 : (amount * swapFeeBps) / 10_000;
-    }
-
-    /// @notice Books a confirmed swap fee into accumulatedFees and emits it. No-op if zero.
-    function _recordSwapFee(string calldata ticker, uint256 feeAmount) internal {
-        if (feeAmount == 0) return;
-        accumulatedFees += feeAmount;
-        emit SwapFeeCollected(ticker, msg.sender, feeAmount);
-    }
-
     // ─── Uniswap V4 ─────────────────────────────────────────────────────────
     //
     // V4 pools carry PulsarSwapHook, which enforces the protocol swap fee at the
@@ -481,7 +446,8 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
     enum V4Action {
         ADD_LIQUIDITY,
         SWAP,
-        REMOVE_ALL_LIQUIDITY
+        REMOVE_ALL_LIQUIDITY,
+        COLLECT_FEES
     }
 
     struct V4CallbackData {
@@ -499,6 +465,7 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
     event V4Swapped(string indexed ticker, address indexed user, bool buyStock, uint256 amountIn, uint256 amountOut);
     event V2ToV4Migrated(string indexed ticker, uint256 idrxRecovered, uint256 stockRecovered);
     event V4EmergencyWithdrawn(string indexed ticker, uint256 idrxRecovered, uint256 stockRecovered);
+    event V4FeesCollected(uint256 idrxAmount);
 
     function configureV4(address poolManager_, address swapHook_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (poolManager_ == address(0) || swapHook_ == address(0)) revert InvalidAddress();
@@ -559,6 +526,31 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         );
         isV4Migrated[ticker] = true;
         emit V4LiquidityAdded(ticker, idrxAmount, stockAmount);
+    }
+
+    /// @dev Mint-time V4 provisioning. Creates the pool on the first mint for a
+    ///      ticker (at the caller's canonical price, oriented to the pool's currency
+    ///      ordering) and seeds full-range liquidity from tokens the protocol just
+    ///      minted/pulled. `canonicalSqrtPriceX96` is `sqrt(IDRX_raw per stock_raw)
+    ///      * 2^96`; it is ignored once the pool exists.
+    function _provideMintToV4(
+        string memory ticker,
+        uint256 tokenAmount,
+        uint256 idrxAmount,
+        uint160 canonicalSqrtPriceX96
+    ) internal {
+        if (address(poolManager) == address(0) || swapHook == address(0)) revert V4NotConfigured();
+        if (address(poolKeys[ticker].hooks) == address(0)) {
+            // The pool price is currency1/currency0 in raw units. Canonical price is
+            // IDRX/stock, so it matches directly when stock is currency0 and must be
+            // inverted (2^192 / s) when IDRX is currency0. No on-chain sqrt.
+            bool idrxIs0 = idrx < stocks[ticker];
+            uint160 poolSqrtPriceX96 = idrxIs0
+                ? uint160(FullMath.mulDiv(FixedPoint96.Q96, FixedPoint96.Q96, canonicalSqrtPriceX96))
+                : canonicalSqrtPriceX96;
+            _createV4Pool(ticker, poolSqrtPriceX96, MINT_TICK_SPACING, MINT_LP_FEE);
+        }
+        _provideV4Liquidity(ticker, idrxAmount, tokenAmount);
     }
 
     /// @notice Migrates a ticker's liquidity from its V2 pool to a fresh V4 pool
@@ -657,6 +649,38 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         );
     }
 
+    /// @notice Permissionless. Sweeps the hook's accrued IDRX swap-fee claims
+    ///         (ERC-6909) to this protocol, redeems them for real IDRX, and books
+    ///         them into `accumulatedFees` so `distributeFees` can split 30/70.
+    ///         Callable by anyone (fees only ever move to the protocol/treasury).
+    function collectV4Fees() external {
+        Currency[] memory currencies = new Currency[](1);
+        currencies[0] = Currency.wrap(idrx);
+        IPulsarSwapHookControl(swapHook).handleHookFees(currencies);
+
+        uint256 claim = poolManager.balanceOf(address(this), Currency.wrap(idrx).toId());
+        if (claim == 0) return;
+
+        uint256 balanceBefore = IERC20(idrx).balanceOf(address(this));
+        poolManager.unlock(
+            abi.encode(
+                V4CallbackData({
+                    action: V4Action.COLLECT_FEES,
+                    ticker: "",
+                    amountA: 0,
+                    amountB: 0,
+                    buyStock: false,
+                    user: address(this)
+                })
+            )
+        );
+        uint256 collected = IERC20(idrx).balanceOf(address(this)) - balanceBefore;
+        if (collected > 0) {
+            accumulatedFees += collected;
+            emit V4FeesCollected(collected);
+        }
+    }
+
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
         if (msg.sender != address(poolManager)) revert NotPoolManager();
         V4CallbackData memory d = abi.decode(data, (V4CallbackData));
@@ -665,8 +689,10 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
             _v4AddLiquidity(key, d);
         } else if (d.action == V4Action.SWAP) {
             _v4Swap(key, d);
-        } else {
+        } else if (d.action == V4Action.REMOVE_ALL_LIQUIDITY) {
             _v4RemoveAllLiquidity(key);
+        } else {
+            _v4CollectFees();
         }
         return "";
     }
@@ -694,6 +720,17 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         );
         // Removing liquidity yields positive deltas (owed to us) — take to protocol.
         _settleDelta(key, delta.amount0(), delta.amount1(), address(this));
+    }
+
+    /// @dev Redeems the protocol's IDRX ERC-6909 claims for real IDRX. `take`
+    ///      pulls the real tokens (negative delta); burning the claims via
+    ///      `settle(burn=true)` pays that debt, netting the unlock to zero.
+    function _v4CollectFees() internal {
+        Currency idrxCurrency = Currency.wrap(idrx);
+        uint256 claim = poolManager.balanceOf(address(this), idrxCurrency.toId());
+        if (claim == 0) return;
+        idrxCurrency.take(poolManager, address(this), claim, false);
+        idrxCurrency.settle(poolManager, address(this), claim, true);
     }
 
     function _v4AddLiquidity(PoolKey memory key, V4CallbackData memory d) internal {
@@ -804,6 +841,21 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         _unpause();
     }
 
+    /// @notice Pool-level circuit breaker: halts ALL V4 swaps for every pool
+    ///         (any entry point — this protocol, an aggregator, or Uniswap's own
+    ///         UI), without touching liquidity. Narrower than emergencyWithdrawV4,
+    ///         which pauses the hook AND pulls the ticker's liquidity out.
+    ///         Requires this protocol to hold PAUSER_ROLE on the hook.
+    function pauseHook() external onlyRole(CUSTODIAN_ROLE) {
+        IPulsarSwapHookControl(swapHook).pause();
+    }
+
+    /// @notice Deliberate all-clear for the pool-level breaker. Admin-only,
+    ///         mirroring the asymmetric pause/unpause split above.
+    function unpauseHook() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        IPulsarSwapHookControl(swapHook).unpause();
+    }
+
     // ─── Admin Config ─────────────────────────────────────────────────────────
 
     function setTreasury(address treasury_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -878,6 +930,14 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         return _tickers;
     }
 
+    /// @notice Spot value of `tokenAmount` raw stock in raw IDRX from the ticker's
+    ///         V4 pool price. Reverts if the ticker has no V4 pool. Intended for
+    ///         off-chain price feeds and UI quotes — identical math to the redeem
+    ///         fee quote, so on-chain and off-chain never drift.
+    function quoteStockToIdrx(string calldata ticker, uint256 tokenAmount) external view returns (uint256) {
+        return _quoteStockToIdrxV4(ticker, tokenAmount);
+    }
+
     // ─── Internal ─────────────────────────────────────────────────────────────
 
     function _ensureStock(string memory ticker, string memory stockName, string memory idxTicker)
@@ -901,42 +961,27 @@ contract PulsarProtocol is Initializable, UUPSUpgradeable, AccessControl, Pausab
         emit TokensMinted(ticker, to, amount, attestationHash);
     }
 
-    /// @notice Provides liquidity to the Uniswap V2 pool for a mint proposal.
-    ///         IDRX is pulled from msg.sender (= proposal.requester, enforced by executeMint).
-    ///         Any IDRX already funded via the legacy fundMintLiquidity path is used first.
-    function _provideToPool(
-        uint256 proposalId,
-        address stockAddress,
-        string memory ticker,
-        uint256 tokenAmount,
-        uint256 idrxAmount
-    ) internal {
-        bool poolExists = IUniswapV2Factory(router.factory()).getPair(stockAddress, idrx) != address(0);
+    /// @notice Values `tokenAmount` of stock in IDRX using the V4 pool spot price
+    ///         (`getSlot0`). The pool holds raw balances, so its price already
+    ///         encodes the IDRX(2)/stock(18) decimal gap — the result is in raw
+    ///         IDRX units with no extra scaling. Uses `FullMath.mulDiv` so the
+    ///         `sqrtP^2` term never overflows.
+    function _quoteStockToIdrxV4(string calldata ticker, uint256 tokenAmount) internal view returns (uint256) {
+        PoolKey memory key = poolKeys[ticker];
+        if (address(key.hooks) == address(0)) revert V4PoolNotFound(ticker);
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(key.toId());
 
-        // Use any pre-funded IDRX (legacy proposals), pull the remainder from msg.sender.
-        uint256 alreadyFunded = mintLiquidityFunding[proposalId];
-        if (alreadyFunded < idrxAmount) {
-            IERC20(idrx).safeTransferFrom(msg.sender, address(this), idrxAmount - alreadyFunded);
-        }
-        mintLiquidityFunding[proposalId] = 0;
-
-        IERC20(stockAddress).approve(address(router), tokenAmount);
-        IERC20(idrx).approve(address(router), idrxAmount);
-
-        (uint256 actualToken, uint256 actualIdrx, uint256 liquidity) = router.addLiquidity(
-            stockAddress, idrx, tokenAmount, idrxAmount, 0, 0, address(this), block.timestamp + 15 minutes
-        );
-
-        // Refund any IDRX not consumed by addLiquidity (pool ratio may not need the full amount).
-        uint256 idrxExcess = idrxAmount - actualIdrx;
-        if (idrxExcess > 0) {
-            IERC20(idrx).safeTransfer(msg.sender, idrxExcess);
-        }
-
-        if (poolExists) {
-            emit LiquidityAdded(ticker, actualToken, actualIdrx, liquidity);
+        // pool price P = (sqrtP/2^96)^2 = currency1 per currency0 (raw units).
+        if (Currency.unwrap(key.currency0) == idrx) {
+            // idrx = currency0, stock = currency1: P = stock per idrx.
+            // idrxOut = tokenAmount / P = tokenAmount * 2^192 / sqrtP^2.
+            uint256 half = FullMath.mulDiv(tokenAmount, FixedPoint96.Q96, sqrtPriceX96);
+            return FullMath.mulDiv(half, FixedPoint96.Q96, sqrtPriceX96);
         } else {
-            emit PoolCreated(ticker, actualToken, actualIdrx, liquidity);
+            // stock = currency0, idrx = currency1: P = idrx per stock.
+            // idrxOut = tokenAmount * P = tokenAmount * sqrtP^2 / 2^192.
+            uint256 half = FullMath.mulDiv(tokenAmount, sqrtPriceX96, FixedPoint96.Q96);
+            return FullMath.mulDiv(half, sqrtPriceX96, FixedPoint96.Q96);
         }
     }
 

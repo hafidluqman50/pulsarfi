@@ -7,36 +7,32 @@ import {PulsarProtocol} from "../../src/PulsarProtocol.sol";
 import {PulsarStock} from "../../src/PulsarStock.sol";
 import {PulsarSwapHook} from "../../src/v4/PulsarSwapHook.sol";
 import {IDRX} from "../../src/mocks/IDRX.sol";
-import {IUniswapV2Factory} from "../../src/interfaces/IUniswapV2Factory.sol";
 
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 
-interface IV2Pair {
-    function getReserves() external view returns (uint112, uint112, uint32);
-    function token0() external view returns (address);
-    function balanceOf(address) external view returns (uint256);
-}
-
-/// @notice End-to-end fork test of the full V4 migration path against the REAL
-///         Uniswap V4 PoolManager on Arbitrum Sepolia: mint on V2 -> migrate the
-///         liquidity to a V4 pool with the fee hook -> swap as a retail investor
-///         (fee charged in IDRX by the hook) -> emergency withdraw (pause + pull
-///         liquidity back). Runs only when RPC_URL is set.
+/// @notice End-to-end fork test of the V4-native live path against the REAL
+///         Uniswap V4 PoolManager on Arbitrum Sepolia: multisig mint that creates
+///         the V4 pool with the fee hook and seeds full-range liquidity -> retail
+///         buy (fee charged in IDRX by the hook) -> collectV4Fees (redeem the
+///         hook's ERC-6909 claims into accumulatedFees) -> emergency withdraw
+///         (pause the hook + pull liquidity back). Runs only when RPC_URL is set.
+///
+///         migrateV2ToV4 is exercised only against pre-existing V2 pools (the live
+///         proxy's BUMIP/ENRGP); it can't be reconstructed on a fresh protocol
+///         because stocks only ever come from executeMint, which is now V4-native.
 contract PulsarProtocolV4ForkTest is Test {
     address constant POOL_MANAGER = 0xFB3e0C6F74eB1a21CC1Da29aeC80D2Dfe6C9a317;
 
     uint256 constant TOKEN_AMOUNT = 1_000 * 1e18;
-    uint256 constant IDRX_AMOUNT = 2_500_000;
-    int24 constant TICK_SPACING = 60;
-    uint24 constant LP_FEE = 0;
+    uint256 constant IDRX_AMOUNT = 2_500_000; // 25 000.00 IDRX
+    uint256 constant SWAP_FEE_BPS = 20; // 0.2%
 
     PulsarProtocol protocol;
     IDRX idrxToken;
     PulsarSwapHook hook;
-    address uniswapFactory;
-    address uniswapRouter;
 
     address admin = makeAddr("admin");
     address cust1 = makeAddr("cust1");
@@ -47,15 +43,7 @@ contract PulsarProtocolV4ForkTest is Test {
     address retail = makeAddr("retail");
 
     bool forked;
-
-    function _deployFromArtifact(string memory path, bytes memory args) internal returns (address deployed) {
-        bytes memory bytecode = vm.parseJsonBytes(vm.readFile(path), ".bytecode");
-        bytes memory creationCode = abi.encodePacked(bytecode, args);
-        assembly {
-            deployed := create(0, add(creationCode, 0x20), mload(creationCode))
-        }
-        require(deployed != address(0) && deployed.code.length > 0, "artifact deploy failed");
-    }
+    uint256 idrxId;
 
     function _sqrt(uint256 x) internal pure returns (uint256 y) {
         if (x == 0) return 0;
@@ -67,18 +55,20 @@ contract PulsarProtocolV4ForkTest is Test {
         }
     }
 
+    /// Canonical initial price for executeMint: sqrt(IDRX_raw / stock_raw) * 2^96.
+    function _canonicalSqrtPriceX96(uint256 idrxAmt, uint256 stockAmt) internal pure returns (uint160) {
+        return uint160(_sqrt(FullMath.mulDiv(idrxAmt, uint256(1) << 192, stockAmt)));
+    }
+
     function setUp() public {
         string memory rpc = vm.envOr("RPC_URL", string(""));
         if (bytes(rpc).length == 0) return;
         vm.createSelectFork(rpc);
         forked = true;
 
-        uniswapFactory = _deployFromArtifact("script/artifacts/UniswapV2Factory.json", abi.encode(address(0)));
-        uniswapRouter =
-            _deployFromArtifact("script/artifacts/UniswapV2Router02.json", abi.encode(uniswapFactory, address(1)));
-
         vm.prank(admin);
         idrxToken = new IDRX(admin);
+        idrxId = uint256(uint160(address(idrxToken)));
 
         address[] memory custodians = new address[](5);
         custodians[0] = cust1;
@@ -87,29 +77,17 @@ contract PulsarProtocolV4ForkTest is Test {
         custodians[3] = cust4;
         custodians[4] = cust5;
 
+        // Router is unused on the V4-native path — placeholder address is fine.
         PulsarProtocol impl = new PulsarProtocol();
         ERC1967Proxy proxy = new ERC1967Proxy(
             address(impl),
-            abi.encodeCall(PulsarProtocol.initialize, (admin, uniswapRouter, address(idrxToken), custodians, admin))
+            abi.encodeCall(PulsarProtocol.initialize, (admin, makeAddr("router"), address(idrxToken), custodians, admin))
         );
         protocol = PulsarProtocol(address(proxy));
 
         vm.startPrank(admin);
         idrxToken.mint(cust1, 100_000_000);
         idrxToken.mint(retail, 50_000_000);
-        vm.stopPrank();
-
-        // Mint BUMIP on V2 (deploys stock, creates V2 pool, protocol holds LP).
-        vm.prank(cust1);
-        uint256 pid =
-            protocol.requestMint("BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, keccak256("a"));
-        vm.prank(cust2);
-        protocol.approveMint(pid);
-        vm.prank(cust3);
-        protocol.approveMint(pid);
-        vm.startPrank(cust1);
-        idrxToken.approve(address(protocol), IDRX_AMOUNT);
-        protocol.executeMint(pid);
         vm.stopPrank();
 
         // Deploy the hook at a mined address; feeConfig = protocol (reads swapFeeBps),
@@ -129,38 +107,38 @@ contract PulsarProtocolV4ForkTest is Test {
 
         vm.startPrank(admin);
         protocol.configureV4(POOL_MANAGER, address(hook));
-        protocol.setSwapFeeBps(20); // 0.2%
+        protocol.setSwapFeeBps(SWAP_FEE_BPS);
+        hook.setFeeRecipient(address(protocol));
         vm.stopPrank();
     }
 
-    function _currentV2SqrtPriceX96() internal view returns (uint160) {
-        address stock = protocol.stocks("BUMIP");
-        address pair = IUniswapV2Factory(uniswapFactory).getPair(stock, address(idrxToken));
-        (uint112 r0, uint112 r1,) = IV2Pair(pair).getReserves();
-        // order reserves to (currency0, currency1) as V4 sorts by address
-        bool idrxIs0 = address(idrxToken) < stock;
-        (uint256 res0, uint256 res1) = IV2Pair(pair).token0() == address(idrxToken)
-            ? (uint256(r0), uint256(r1))
-            : (uint256(r1), uint256(r0));
-        // if v4 currency0 != v2 token0 ordering differs, but both sort by address identically
-        idrxIs0; // silence
-        uint256 ratioX192 = (res1 << 192) / res0;
-        return uint160(_sqrt(ratioX192));
+    /// Full multisig mint that creates the V4 pool and seeds full-range liquidity.
+    function _mintV4() internal returns (address stock) {
+        vm.prank(cust1);
+        uint256 pid =
+            protocol.requestMint("BUMIP", "Pulsar Bumi Resources", "BUMI", TOKEN_AMOUNT, IDRX_AMOUNT, keccak256("a"));
+        vm.prank(cust2);
+        protocol.approveMint(pid);
+        vm.prank(cust3);
+        protocol.approveMint(pid);
+
+        vm.startPrank(cust1);
+        idrxToken.approve(address(protocol), IDRX_AMOUNT);
+        protocol.executeMint(pid, _canonicalSqrtPriceX96(IDRX_AMOUNT, TOKEN_AMOUNT));
+        vm.stopPrank();
+
+        stock = protocol.stocks("BUMIP");
     }
 
-    function test_migrate_swap_emergency_endToEnd() public {
+    function test_mint_swap_collect_emergency_endToEnd() public {
         if (!forked) return;
 
-        address stock = protocol.stocks("BUMIP");
-        uint160 sqrtPriceX96 = _currentV2SqrtPriceX96();
-
-        // ── Migrate V2 -> V4 (custodian) ──
-        vm.prank(cust1);
-        protocol.migrateV2ToV4("BUMIP", sqrtPriceX96, TICK_SPACING, LP_FEE, 0, 0);
-        assertTrue(protocol.isV4Migrated("BUMIP"), "ticker must be marked migrated");
+        // ── V4-native mint (custodian) creates + seeds the pool ──
+        address stock = _mintV4();
+        assertTrue(protocol.isV4Migrated("BUMIP"), "ticker must be V4-native after mint");
 
         // ── Retail buy on V4 (permissionless); hook charges 0.2% in IDRX ──
-        uint256 amountIn = 1_000_000; // 10,000.00 IDRX
+        uint256 amountIn = 1_000_000; // 10 000.00 IDRX
         uint256 stockBefore = PulsarStock(stock).balanceOf(retail);
 
         vm.startPrank(retail);
@@ -169,11 +147,18 @@ contract PulsarProtocolV4ForkTest is Test {
         vm.stopPrank();
 
         assertGt(PulsarStock(stock).balanceOf(retail) - stockBefore, 0, "retail must receive pStock");
-        // fee accrued to the hook as IDRX ERC-6909 claim (feeRecipient = protocol)
-        uint256 feeClaim = IPoolManager(POOL_MANAGER).balanceOf(
-            address(hook), uint256(uint160(address(idrxToken)))
+
+        uint256 expectedFee = (amountIn * SWAP_FEE_BPS) / 10_000;
+        assertEq(
+            IPoolManager(POOL_MANAGER).balanceOf(address(hook), idrxId),
+            expectedFee,
+            "hook must hold exactly the 0.2% IDRX fee claim"
         );
-        assertEq(feeClaim, (amountIn * 20) / 10_000, "hook must hold exactly the 0.2% IDRX fee claim");
+
+        // ── Collect fees: sweep the hook's claims, redeem to real IDRX, book them ──
+        protocol.collectV4Fees();
+        assertEq(protocol.accumulatedFees(), expectedFee, "collectV4Fees must book the exact buy-side fee");
+        assertEq(IPoolManager(POOL_MANAGER).balanceOf(address(hook), idrxId), 0, "hook claim swept");
 
         // ── Emergency withdraw (custodian): pause hook + pull liquidity ──
         uint256 protoStockBefore = PulsarStock(stock).balanceOf(address(protocol));
@@ -184,9 +169,7 @@ contract PulsarProtocolV4ForkTest is Test {
 
         assertTrue(hook.paused(), "hook must be paused after emergency");
         assertFalse(protocol.isV4Migrated("BUMIP"), "migration flag cleared");
-        assertGt(
-            PulsarStock(stock).balanceOf(address(protocol)) - protoStockBefore, 0, "protocol recovers pStock"
-        );
+        assertGt(PulsarStock(stock).balanceOf(address(protocol)) - protoStockBefore, 0, "protocol recovers pStock");
         assertGt(idrxToken.balanceOf(address(protocol)) - protoIdrxBefore, 0, "protocol recovers IDRX");
 
         // ── Swaps must be halted while paused ──
