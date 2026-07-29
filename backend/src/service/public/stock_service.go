@@ -41,10 +41,9 @@ func (s *StockService) ListMarketStocks(ctx context.Context) ([]MarketStockRespo
 		}
 		poolPriceValue := 0.0
 		if stock.ContractAddress != nil {
-			poolPrice, err := s.Price.GetOnchainPrice(
-				*stock.ContractAddress,
-				os.Getenv("IDRX_ADDRESS"),
-				os.Getenv("UNISWAP_V2_FACTORY"),
+			poolPrice, err := s.Price.GetOnchainPriceV4(
+				os.Getenv("PULSAR_PROTOCOL"),
+				stock.Ticker,
 				os.Getenv("ALCHEMY_RPC_URL"),
 			)
 			if err == nil {
