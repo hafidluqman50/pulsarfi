@@ -14,19 +14,6 @@ import { appChainId } from "@/lib/wagmi";
 import { buildAttestationHash } from "@/http/custodian/contractHooks";
 import { recordRedeemRequest } from "./redeemApi";
 
-const UNISWAP_V2_ROUTER_ABI = [
-	{
-		type: "function",
-		name: "getAmountsOut",
-		stateMutability: "view",
-		inputs: [
-			{ name: "amountIn", type: "uint256" },
-			{ name: "path", type: "address[]" },
-		],
-		outputs: [{ name: "amounts", type: "uint256[]" }],
-	},
-] as const;
-
 export interface RequestRedeemInput {
 	ticker: string;
 	tokenAmount: bigint;
@@ -123,21 +110,19 @@ export function useRequestRedeem() {
 					})) as bigint;
 
 					if (feeBps > BigInt(0)) {
-						const routerAddress = (await publicClient.readContract({
+						// Quote the stock's IDRX value from the V4 pool spot price — the
+						// same math the contract uses to compute the on-chain redeem fee.
+						const idrxValue = (await publicClient.readContract({
 							address: protocolAddress,
 							abi: PULSAR_PROTOCOL_ABI,
-							functionName: "router",
-						})) as Address;
-						const amounts = (await publicClient.readContract({
-							address: routerAddress,
-							abi: UNISWAP_V2_ROUTER_ABI,
-							functionName: "getAmountsOut",
-							args: [
-								input.tokenAmount,
-								[input.stockContractAddress, idrxAddress],
-							],
-						})) as readonly bigint[];
-						const feeIdrx = ((amounts[1] ?? BigInt(0)) * feeBps) / BigInt(10_000);
+							functionName: "quoteStockToIdrx",
+							args: [input.ticker, input.tokenAmount],
+						})) as bigint;
+						const feeIdrx = (idrxValue * feeBps) / BigInt(10_000);
+						// Approve with a 2% buffer so a spot-price move between this quote
+						// and execution can't underfund the fee. The contract pulls only
+						// its exact on-chain fee, so over-approval is harmless.
+						const feeAllowanceTarget = (feeIdrx * BigInt(102)) / BigInt(100);
 
 						const idrxAllowance = (await publicClient.readContract({
 							address: idrxAddress,
@@ -146,13 +131,13 @@ export function useRequestRedeem() {
 							args: [input.walletAddress, protocolAddress],
 						})) as bigint;
 
-						if (feeIdrx > BigInt(0) && idrxAllowance < feeIdrx) {
+						if (feeIdrx > BigInt(0) && idrxAllowance < feeAllowanceTarget) {
 							const { request: idrxApproveReq } =
 								await publicClient.simulateContract({
 									address: idrxAddress,
 									abi: IDRX_ABI,
 									functionName: "approve",
-									args: [protocolAddress, feeIdrx],
+									args: [protocolAddress, feeAllowanceTarget],
 									account: input.walletAddress,
 								});
 							const idrxApproveHash = await writeContractAsync({

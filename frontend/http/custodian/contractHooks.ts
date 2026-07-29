@@ -27,6 +27,31 @@ export function buildAttestationHash(ticker: string, quantity: string, idrxAmoun
   ));
 }
 
+/** Integer square root (Newton's method) for bigints. */
+function sqrtBigInt(value: bigint): bigint {
+  if (value < BigInt(0)) throw new Error('sqrt of negative');
+  if (value < BigInt(2)) return value;
+  let x = value;
+  let y = (x + BigInt(1)) / BigInt(2);
+  while (y < x) {
+    x = y;
+    y = (x + value / x) / BigInt(2);
+  }
+  return x;
+}
+
+/**
+ * Canonical initial price for executeMint: sqrt(IDRX_raw / stock_raw) * 2^96.
+ * Orientation-independent (PulsarProtocol flips it to the pool's currency order
+ * on-chain), so it needs no knowledge of the lazily deployed stock address. Only
+ * used on the first mint for a ticker; ignored once the V4 pool exists.
+ */
+export function canonicalSqrtPriceX96(idrxAmount: bigint, tokenAmount: bigint): bigint {
+  if (tokenAmount <= BigInt(0)) return BigInt(0);
+  const ratioX192 = (idrxAmount << BigInt(192)) / tokenAmount;
+  return sqrtBigInt(ratioX192);
+}
+
 function shortAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
@@ -276,6 +301,7 @@ export function useExecuteMint() {
         args: [proposalId],
       });
       const ticker = proposal[0] as string;
+      const tokenAmount = proposal[3] as bigint;
       const idrxAmount = proposal[4] as bigint;
       const requester = proposal[7] as `0x${string}`;
       const approvalCount = Number(proposal[8]);
@@ -304,11 +330,15 @@ export function useExecuteMint() {
           });
         }
 
+        // First mint for a ticker creates its V4 pool at this canonical price;
+        // ignored on later mints (pool already exists).
+        const sqrtPriceX96 = canonicalSqrtPriceX96(idrxAmount, tokenAmount);
+
         const { request } = await publicClient.simulateContract({
           address: PROTOCOL_ADDRESS,
           abi: PULSAR_PROTOCOL_ABI,
           functionName: 'executeMint',
-          args: [proposalId],
+          args: [proposalId, sqrtPriceX96],
           account: address,
         });
 

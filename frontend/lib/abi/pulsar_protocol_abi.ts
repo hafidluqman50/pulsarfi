@@ -71,6 +71,29 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "function",
+    "name": "addV4Liquidity",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "idrxAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "stockAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "approveKYC",
     "inputs": [
       {
@@ -110,8 +133,46 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "function",
+    "name": "collectV4Fees",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "configureV4",
+    "inputs": [
+      {
+        "name": "poolManager_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "swapHook_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "distributeFees",
     "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "emergencyWithdrawV4",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -123,6 +184,11 @@ export const PULSAR_PROTOCOL_ABI = [
         "name": "proposalId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "sqrtPriceX96",
+        "type": "uint160",
+        "internalType": "uint160"
       }
     ],
     "outputs": [],
@@ -441,6 +507,25 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "function",
+    "name": "isV4Migrated",
+    "inputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "kycApproved",
     "inputs": [
       {
@@ -457,6 +542,44 @@ export const PULSAR_PROTOCOL_ABI = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "migrateV2ToV4",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "sqrtPriceX96",
+        "type": "uint160",
+        "internalType": "uint160"
+      },
+      {
+        "name": "tickSpacing",
+        "type": "int24",
+        "internalType": "int24"
+      },
+      {
+        "name": "lpFee",
+        "type": "uint24",
+        "internalType": "uint24"
+      },
+      {
+        "name": "minIdrxOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minStockOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -486,6 +609,85 @@ export const PULSAR_PROTOCOL_ABI = [
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pause",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "pauseHook",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "paused",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "poolKeys",
+    "inputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "currency0",
+        "type": "address",
+        "internalType": "Currency"
+      },
+      {
+        "name": "currency1",
+        "type": "address",
+        "internalType": "Currency"
+      },
+      {
+        "name": "fee",
+        "type": "uint24",
+        "internalType": "uint24"
+      },
+      {
+        "name": "tickSpacing",
+        "type": "int24",
+        "internalType": "int24"
+      },
+      {
+        "name": "hooks",
+        "type": "address",
+        "internalType": "contract IHooks"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "poolManager",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IPoolManager"
       }
     ],
     "stateMutability": "view"
@@ -586,6 +788,30 @@ export const PULSAR_PROTOCOL_ABI = [
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quoteStockToIdrx",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "tokenAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -948,7 +1174,33 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "function",
-    "name": "swap",
+    "name": "swapFeeBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "swapHook",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "swapV4",
     "inputs": [
       {
         "name": "ticker",
@@ -961,7 +1213,7 @@ export const PULSAR_PROTOCOL_ABI = [
         "internalType": "uint256"
       },
       {
-        "name": "amountOutMin",
+        "name": "minOut",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -976,19 +1228,6 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "function",
-    "name": "swapFeeBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "treasury",
     "inputs": [],
     "outputs": [
@@ -999,6 +1238,39 @@ export const PULSAR_PROTOCOL_ABI = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "unlockCallback",
+    "inputs": [
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unpause",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unpauseHook",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1091,37 +1363,6 @@ export const PULSAR_PROTOCOL_ABI = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidityAdded",
-    "inputs": [
-      {
-        "name": "ticker",
-        "type": "string",
-        "indexed": true,
-        "internalType": "string"
-      },
-      {
-        "name": "tokenAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "idrxAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "liquidity",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1248,31 +1489,13 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "event",
-    "name": "PoolCreated",
+    "name": "Paused",
     "inputs": [
       {
-        "name": "ticker",
-        "type": "string",
-        "indexed": true,
-        "internalType": "string"
-      },
-      {
-        "name": "tokenAmount",
-        "type": "uint256",
+        "name": "account",
+        "type": "address",
         "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "idrxAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "liquidity",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1537,31 +1760,6 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "event",
-    "name": "SwapFeeCollected",
-    "inputs": [
-      {
-        "name": "ticker",
-        "type": "string",
-        "indexed": true,
-        "internalType": "string"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "feeIdrx",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "TokensMinted",
     "inputs": [
       {
@@ -1618,7 +1816,172 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "event",
-    "name": "TokensSwapped",
+    "name": "TreasuryUpdated",
+    "inputs": [
+      {
+        "name": "treasury",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Unpaused",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Upgraded",
+    "inputs": [
+      {
+        "name": "implementation",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "V2ToV4Migrated",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "indexed": true,
+        "internalType": "string"
+      },
+      {
+        "name": "idrxRecovered",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "stockRecovered",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "V4Configured",
+    "inputs": [
+      {
+        "name": "poolManager",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "swapHook",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "V4EmergencyWithdrawn",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "indexed": true,
+        "internalType": "string"
+      },
+      {
+        "name": "idrxRecovered",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "stockRecovered",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "V4FeesCollected",
+    "inputs": [
+      {
+        "name": "idrxAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "V4LiquidityAdded",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "indexed": true,
+        "internalType": "string"
+      },
+      {
+        "name": "idrxAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "stockAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "V4PoolCreated",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "indexed": true,
+        "internalType": "string"
+      },
+      {
+        "name": "sqrtPriceX96",
+        "type": "uint160",
+        "indexed": false,
+        "internalType": "uint160"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "V4Swapped",
     "inputs": [
       {
         "name": "ticker",
@@ -1649,32 +2012,6 @@ export const PULSAR_PROTOCOL_ABI = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TreasuryUpdated",
-    "inputs": [
-      {
-        "name": "treasury",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Upgraded",
-    "inputs": [
-      {
-        "name": "implementation",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1777,6 +2114,16 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "error",
+    "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpectedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FailedCall",
     "inputs": []
   },
@@ -1842,6 +2189,11 @@ export const PULSAR_PROTOCOL_ABI = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "NotPoolManager",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1985,6 +2337,22 @@ export const PULSAR_PROTOCOL_ABI = [
   },
   {
     "type": "error",
+    "name": "SlippageExceeded",
+    "inputs": [
+      {
+        "name": "amountOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "StockNotFound",
     "inputs": [
       {
@@ -2028,6 +2396,33 @@ export const PULSAR_PROTOCOL_ABI = [
         "name": "slot",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "V4NotConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "V4PoolExists",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "V4PoolNotFound",
+    "inputs": [
+      {
+        "name": "ticker",
+        "type": "string",
+        "internalType": "string"
       }
     ]
   }
