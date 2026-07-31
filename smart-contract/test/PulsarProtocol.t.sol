@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Test, console} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {PulsarProtocol} from "../src/PulsarProtocol.sol";
+import {PulsarProtocolOps} from "../src/PulsarProtocolOps.sol";
 import {PulsarStock} from "../src/PulsarStock.sol";
 import {PulsarSwapHook} from "../src/v4/PulsarSwapHook.sol";
 import {IDRX} from "../src/mocks/IDRX.sol";
@@ -95,6 +96,9 @@ contract PulsarProtocolTest is Test {
         protocol.configureV4(address(poolManager), address(hook));
         // Route swept hook fees to the protocol so collectV4Fees can redeem them.
         hook.setFeeRecipient(address(protocol));
+        // Wire the ops delegatecall target (see PulsarProtocolStorage's docs —
+        // several functions moved out to keep PulsarProtocol under EIP-170).
+        protocol.setOpsContract(address(new PulsarProtocolOps()));
         vm.stopPrank();
 
         // Fund cust1 and trader with IDRX
@@ -943,6 +947,9 @@ contract PulsarProtocolTest is Test {
             abi.encodeCall(PulsarProtocol.initialize, (admin, makeAddr("router"), address(idrxToken), noCustodians, admin))
         );
         PulsarProtocol fresh = PulsarProtocol(address(freshProxy));
+        PulsarProtocolOps freshOps = new PulsarProtocolOps();
+        vm.prank(admin);
+        fresh.setOpsContract(address(freshOps));
 
         vm.expectRevert(NoActiveCustodians.selector);
         fresh.distributeFees();

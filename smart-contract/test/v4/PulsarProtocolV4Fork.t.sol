@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {PulsarProtocol} from "../../src/PulsarProtocol.sol";
+import {PulsarProtocolOps} from "../../src/PulsarProtocolOps.sol";
 import {PulsarStock} from "../../src/PulsarStock.sol";
 import {PulsarSwapHook} from "../../src/v4/PulsarSwapHook.sol";
 import {IDRX} from "../../src/mocks/IDRX.sol";
@@ -107,6 +108,7 @@ contract PulsarProtocolV4ForkTest is Test {
 
         vm.startPrank(admin);
         protocol.configureV4(POOL_MANAGER, address(hook));
+        protocol.setOpsContract(address(new PulsarProtocolOps()));
         protocol.setSwapFeeBps(SWAP_FEE_BPS);
         hook.setFeeRecipient(address(protocol));
         vm.stopPrank();
