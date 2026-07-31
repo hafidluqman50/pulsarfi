@@ -615,6 +615,19 @@
   },
   {
     "type": "function",
+    "name": "opsContract",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pause",
     "inputs": [],
     "outputs": [],
@@ -1084,6 +1097,19 @@
   },
   {
     "type": "function",
+    "name": "setOpsContract",
+    "inputs": [
+      {
+        "name": "opsContract_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setRedeemFeeBps",
     "inputs": [
       {
@@ -1483,6 +1509,19 @@
         "type": "string",
         "indexed": false,
         "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OpsContractUpdated",
+    "inputs": [
+      {
+        "name": "opsContract",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -2050,54 +2089,6 @@
   },
   {
     "type": "error",
-    "name": "AlreadyApproved",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "custodian",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "AlreadyRejectedMint",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "custodian",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "BelowDistributionThreshold",
-    "inputs": [
-      {
-        "name": "balance",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "threshold",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ERC1967InvalidImplementation",
     "inputs": [
       {
@@ -2166,50 +2157,13 @@
   },
   {
     "type": "error",
-    "name": "NoActiveCustodians",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NotInitializing",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "NotMintRejectInitiator",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NotPoolManager",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotRedeemInitiator",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2226,6 +2180,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "OpsNotConfigured",
+    "inputs": []
   },
   {
     "type": "error",
@@ -2246,81 +2205,6 @@
         "name": "proposalId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RedeemAlreadyApproved",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "custodian",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RedeemAlreadyRejected",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "custodian",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RedeemRequestAlreadyProcessed",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RedeemRequestNotFound",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RedeemThresholdNotMet",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "current",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "required",
-        "type": "uint8",
-        "internalType": "uint8"
       }
     ]
   },
