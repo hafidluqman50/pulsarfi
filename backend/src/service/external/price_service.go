@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 type PriceEntry struct {
@@ -115,9 +118,19 @@ func (s *PriceService) GetYahooIDXHistory(idxTicker string, rangeName string) ([
 	return s.fetchYahooHistory(idxTicker+".JK", "IDRX", rangeParam, interval)
 }
 
-// GetOnchainPrice reads the AMM spot price from the Uniswap V2 pair for stockAddr/IDRX.
-func (s *PriceService) GetOnchainPrice(stockAddr, idrxAddr, factoryAddr, rpcURL string) (PriceEntry, error) {
-	cacheKey := "onchain:" + strings.ToLower(stockAddr)
+// oneWholeStock is 1e18 raw units (PulsarStock has 18 decimals).
+var oneWholeStock = new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+
+// quoteStockToIdrxSelector is the 4-byte selector of
+// PulsarProtocol.quoteStockToIdrx(string,uint256).
+var quoteStockToIdrxSelector = crypto.Keccak256([]byte("quoteStockToIdrx(string,uint256)"))[:4]
+
+// GetOnchainPriceV4 reads the Uniswap V4 pool spot price (IDRX per whole stock) by
+// calling PulsarProtocol.quoteStockToIdrx(ticker, 1 whole stock). The contract
+// returns raw IDRX (2 decimals) using the same math as the on-chain redeem-fee
+// quote, so on-chain and off-chain prices never drift. price = raw / 100.
+func (s *PriceService) GetOnchainPriceV4(protocolAddr, ticker, rpcURL string) (PriceEntry, error) {
+	cacheKey := "onchainv4:" + strings.ToUpper(ticker)
 	s.cacheMu.RLock()
 	cached, hit := s.cache[cacheKey]
 	s.cacheMu.RUnlock()
@@ -125,49 +138,68 @@ func (s *PriceService) GetOnchainPrice(stockAddr, idrxAddr, factoryAddr, rpcURL 
 		return cached, nil
 	}
 
-	pairAddr, err := s.getPairAddress(rpcURL, factoryAddr, idrxAddr, stockAddr)
+	data, err := encodeQuoteStockToIdrx(ticker, oneWholeStock)
 	if err != nil {
-		return PriceEntry{}, fmt.Errorf("getPair: %w", err)
-	}
-	zero := "0x0000000000000000000000000000000000000000"
-	if strings.EqualFold(pairAddr, zero) {
-		return PriceEntry{}, fmt.Errorf("no liquidity pair for %s", stockAddr)
+		return PriceEntry{}, fmt.Errorf("encode quote: %w", err)
 	}
 
-	reserve0, reserve1, err := s.getReserves(rpcURL, pairAddr)
+	result, err := s.ethCall(rpcURL, protocolAddr, data)
 	if err != nil {
-		return PriceEntry{}, fmt.Errorf("getReserves: %w", err)
+		return PriceEntry{}, fmt.Errorf("quoteStockToIdrx: %w", err)
 	}
 
-	var idrxReserve, stockReserve *big.Int
-	if strings.ToLower(idrxAddr) < strings.ToLower(stockAddr) {
-		idrxReserve, stockReserve = reserve0, reserve1
-	} else {
-		stockReserve, idrxReserve = reserve0, reserve1
+	raw, err := decodeUint256(result)
+	if err != nil {
+		return PriceEntry{}, fmt.Errorf("decode quote: %w", err)
+	}
+	if raw.Sign() == 0 {
+		return PriceEntry{}, fmt.Errorf("zero pool price for %s", ticker)
 	}
 
-	if stockReserve.Sign() == 0 {
-		return PriceEntry{}, fmt.Errorf("zero stock reserve in pair")
-	}
-
-	// price (IDRX per stock) = (idrxReserve / 1e2) / (stockReserve / 1e18)
-	//                        = idrxReserve * 1e16 / stockReserve
-	multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(16), nil)
-	num := new(big.Int).Mul(idrxReserve, multiplier)
-	priceInt := new(big.Int).Div(num, stockReserve)
-	price, _ := new(big.Float).SetInt(priceInt).Float64()
+	// IDRX has 2 decimals, so raw IDRX per whole stock / 100 is the display price.
+	price, _ := new(big.Float).Quo(new(big.Float).SetInt(raw), big.NewFloat(100)).Float64()
 
 	entry := PriceEntry{
 		Price:     price,
 		Change24h: 0,
 		Currency:  "IDRX",
-		Source:    "onchain",
+		Source:    "onchain-v4",
 		FetchedAt: time.Now(),
 	}
 	s.cacheMu.Lock()
 	s.cache[cacheKey] = entry
 	s.cacheMu.Unlock()
 	return entry, nil
+}
+
+// encodeQuoteStockToIdrx ABI-encodes the calldata for quoteStockToIdrx(string,uint256).
+func encodeQuoteStockToIdrx(ticker string, amount *big.Int) (string, error) {
+	stringType, err := abi.NewType("string", "", nil)
+	if err != nil {
+		return "", err
+	}
+	uint256Type, err := abi.NewType("uint256", "", nil)
+	if err != nil {
+		return "", err
+	}
+	arguments := abi.Arguments{{Type: stringType}, {Type: uint256Type}}
+	packed, err := arguments.Pack(ticker, amount)
+	if err != nil {
+		return "", err
+	}
+	return "0x" + hex.EncodeToString(append(append([]byte{}, quoteStockToIdrxSelector...), packed...)), nil
+}
+
+func decodeUint256(result string) (*big.Int, error) {
+	trimmed := strings.TrimPrefix(result, "0x")
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("empty result")
+	}
+	decoded, err := hex.DecodeString(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	return new(big.Int).SetBytes(decoded), nil
 }
 
 func (s *PriceService) fetchFromYahoo(symbol, currency string) (PriceEntry, error) {
@@ -393,39 +425,6 @@ func derivedChangePercent(currentPrice float64, closes []float64) float64 {
 	return ((currentPrice - basePrice) / basePrice) * 100
 }
 
-func (s *PriceService) getPairAddress(rpcURL, factoryAddr, tokenA, tokenB string) (string, error) {
-	data := "0xe6a43905" + padAddr(tokenA) + padAddr(tokenB)
-	result, err := s.ethCall(rpcURL, factoryAddr, data)
-	if err != nil {
-		return "", err
-	}
-	result = strings.TrimPrefix(result, "0x")
-	if len(result) < 40 {
-		return "", fmt.Errorf("short getPair result")
-	}
-	return "0x" + result[len(result)-40:], nil
-}
-
-func (s *PriceService) getReserves(rpcURL, pairAddr string) (*big.Int, *big.Int, error) {
-	result, err := s.ethCall(rpcURL, pairAddr, "0x0902f1ac")
-	if err != nil {
-		return nil, nil, err
-	}
-	h := strings.TrimPrefix(result, "0x")
-	if len(h) < 128 {
-		return nil, nil, fmt.Errorf("short getReserves result")
-	}
-	b0, err := hex.DecodeString(h[0:64])
-	if err != nil {
-		return nil, nil, err
-	}
-	b1, err := hex.DecodeString(h[64:128])
-	if err != nil {
-		return nil, nil, err
-	}
-	return new(big.Int).SetBytes(b0), new(big.Int).SetBytes(b1), nil
-}
-
 func (s *PriceService) ethCall(rpcURL, to, data string) (string, error) {
 	payload := rpcRequest{
 		JSONRPC: "2.0",
@@ -447,9 +446,4 @@ func (s *PriceService) ethCall(rpcURL, to, data string) (string, error) {
 		return "", fmt.Errorf("rpc: %s", rpcResp.Error.Message)
 	}
 	return rpcResp.Result, nil
-}
-
-func padAddr(addr string) string {
-	addr = strings.TrimPrefix(strings.ToLower(addr), "0x")
-	return fmt.Sprintf("%064s", addr)
 }

@@ -42,10 +42,9 @@ func (s *PriceService) GetStockPrice(ctx context.Context, ticker string, source 
 		return s.Price.GetYahooIDX(stock.IdxTicker)
 	}
 
-	entry, err := s.Price.GetOnchainPrice(
-		*stock.ContractAddress,
-		os.Getenv("IDRX_ADDRESS"),
-		os.Getenv("UNISWAP_V2_FACTORY"),
+	entry, err := s.Price.GetOnchainPriceV4(
+		os.Getenv("PULSAR_PROTOCOL"),
+		stock.Ticker,
 		os.Getenv("ALCHEMY_RPC_URL"),
 	)
 	if err != nil {

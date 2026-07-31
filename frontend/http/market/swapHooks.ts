@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { BaseError, ContractFunctionRevertedError, parseEventLogs, type Address } from 'viem';
+import { BaseError, ContractFunctionRevertedError, parseEventLogs, type Address, type Log } from 'viem';
 import { useReadContract, usePublicClient, useWriteContract } from 'wagmi';
 import { IDRX_ABI } from '@/lib/abi/idrx_abi';
 import { PULSAR_PROTOCOL_ABI } from '@/lib/abi/pulsar_protocol_abi';
@@ -7,6 +7,34 @@ import { PULSAR_STOCK_ABI } from '@/lib/abi/pulsar_stock_abi';
 import { useEnsureAppChain } from '@/lib/useEnsureAppChain';
 import { appChainId } from '@/lib/wagmi';
 import { recordStockTransaction } from './transactionApi';
+
+// PulsarSwapHook fee events. The hook takes the protocol fee (always in IDRX) as
+// an ERC-6909 claim and emits it: BuySideFeeTaken on a buy (IDRX is the input),
+// HookFee on a sell (IDRX is the output). Parsed from the receipt by event
+// signature, so the hook address is not needed here.
+const HOOK_FEE_EVENTS_ABI = [
+  {
+    type: 'event',
+    name: 'BuySideFeeTaken',
+    inputs: [
+      { name: 'poolId', type: 'bytes32', indexed: true },
+      { name: 'sender', type: 'address', indexed: true },
+      { name: 'feeIdrx', type: 'uint256', indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'HookFee',
+    inputs: [
+      { name: 'poolId', type: 'bytes32', indexed: true },
+      { name: 'sender', type: 'address', indexed: true },
+      { name: 'feeAmount0', type: 'uint128', indexed: false },
+      { name: 'feeAmount1', type: 'uint128', indexed: false },
+    ],
+    anonymous: false,
+  },
+] as const;
 
 export interface ExecuteSwapInput {
   ticker: string;
@@ -20,6 +48,21 @@ export interface ExecuteSwapInput {
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+/**
+ * Reads the exact protocol fee (in raw IDRX) the hook took for this swap, from the
+ * receipt's hook events: BuySideFeeTaken.feeIdrx on a buy, HookFee's non-zero
+ * amount on a sell. Returns 0n when swapFeeBps is 0 (no fee event emitted).
+ */
+function extractHookFeeIdrx(logs: Log[], buyStock: boolean): bigint {
+  if (buyStock) {
+    const buyLogs = parseEventLogs({ abi: HOOK_FEE_EVENTS_ABI, eventName: 'BuySideFeeTaken', logs });
+    return (buyLogs[0]?.args as { feeIdrx?: bigint } | undefined)?.feeIdrx ?? BigInt(0);
+  }
+  const sellLogs = parseEventLogs({ abi: HOOK_FEE_EVENTS_ABI, eventName: 'HookFee', logs });
+  const args = sellLogs[0]?.args as { feeAmount0?: bigint; feeAmount1?: bigint } | undefined;
+  return (args?.feeAmount0 ?? BigInt(0)) + (args?.feeAmount1 ?? BigInt(0));
 }
 
 function formatSwapError(error: unknown, ticker: string): string {
@@ -103,7 +146,7 @@ export function useExecuteSwap() {
         const { request } = await publicClient.simulateContract({
           address: protocolAddress,
           abi: PULSAR_PROTOCOL_ABI,
-          functionName: 'swap',
+          functionName: 'swapV4',
           args: [
             input.ticker,
             input.amount_in,
@@ -123,25 +166,21 @@ export function useExecuteSwap() {
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
       const logs = parseEventLogs({
         abi: PULSAR_PROTOCOL_ABI,
-        eventName: 'TokensSwapped',
+        eventName: 'V4Swapped',
         logs: receipt.logs,
       });
+      // amountOut is the net amount the user received (the hook's IDRX fee is
+      // already skimmed on the sell side before the protocol forwards it).
       const event = logs[0]?.args as {
-        ticker?: string;
         buyStock?: boolean;
         amountIn?: bigint;
         amountOut?: bigint;
       } | undefined;
       if (!event || event.amountIn === undefined || event.amountOut === undefined || event.buyStock === undefined) {
-        throw new Error('TokensSwapped event not found');
+        throw new Error('V4Swapped event not found');
       }
 
-      const feeLogs = parseEventLogs({
-        abi: PULSAR_PROTOCOL_ABI,
-        eventName: 'SwapFeeCollected',
-        logs: receipt.logs,
-      });
-      const feeEvent = feeLogs[0]?.args as { feeIdrx?: bigint } | undefined;
+      const protocolFeeIdrx = extractHookFeeIdrx(receipt.logs, event.buyStock);
 
       await recordStockTransaction({
         ticker: input.ticker,
@@ -150,7 +189,7 @@ export function useExecuteSwap() {
         side: event.buyStock ? 'buy' : 'sell',
         idrx_amount: (event.buyStock ? event.amountIn : event.amountOut).toString(),
         stock_amount: (event.buyStock ? event.amountOut : event.amountIn).toString(),
-        protocol_fee_idrx: (feeEvent?.feeIdrx ?? BigInt(0)).toString(),
+        protocol_fee_idrx: protocolFeeIdrx.toString(),
         block_number: Number(receipt.blockNumber),
       });
 
