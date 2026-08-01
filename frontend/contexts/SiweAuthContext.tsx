@@ -94,8 +94,7 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
 
   // track which address we've authed for so we don't double-trigger
   const authedAddressRef = useRef<string | null>(null);
-  // synchronous re-entrancy guard — signInPhase state is for UI feedback only,
-  // it can't be relied on for the guard check since setState isn't synchronous.
+  // synchronous re-entrancy guard
   const signingInRef = useRef(false);
 
   function clearAuth() {
@@ -122,61 +121,69 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
     });
   }
 
-  function deferApplySession(session: StoredSession) {
-    window.setTimeout(() => applySession(session), 0);
-  }
-
-  function deferClearAuth() {
-    window.setTimeout(() => clearAuth(), 0);
-  }
-
-  // restore from localStorage on mount
-  useEffect(() => {
-    const session = readStoredSession();
-    if (session) deferApplySession(session);
-    else if (hasStoredToken()) deferClearAuth();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // restore session or auto-trigger SIWE when wallet connects
   useEffect(() => {
-    if (!isConnected || !address) return;
-
-    const walletAddress = address.toLowerCase();
-    const session = readStoredSession();
-
-    if (session?.walletAddress === walletAddress) {
-      deferApplySession(session);
+    if (!isConnected || !address) {
+      if (authedAddressRef.current !== null || isAuthenticated) {
+        clearAuth();
+      }
       return;
     }
 
-    if (session || hasStoredToken()) {
-      deferClearAuth();
+    const walletAddress = address.toLowerCase();
+
+    // Already authed in memory for this exact wallet address
+    if (authedAddressRef.current === walletAddress && isAuthenticated) {
+      return;
     }
 
+    // Check stored session in localStorage
+    const session = readStoredSession();
+    if (session?.walletAddress === walletAddress) {
+      applySession(session);
+      return;
+    }
+
+    // If stored session is for another address or expired, clear it
+    if (session || hasStoredToken()) {
+      clearAuth();
+    }
+
+    // Don't trigger if already signing in
     if (signingInRef.current) return;
 
-    // slight delay so RainbowKit modal closes first
-    const timer = setTimeout(() => signIn(), 400);
+    // Slight delay so RainbowKit modal closes first
+    const timer = setTimeout(() => {
+      signIn();
+    }, 400);
+
     return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, address]);
+  }, [isConnected, address, isAuthenticated]);
 
   async function signIn() {
     if (!address || signingInRef.current) return;
+    const targetAddress = address.toLowerCase();
+
+    // Skip if already authed for this address
+    if (authedAddressRef.current === targetAddress && isAuthenticated) return;
+
     signingInRef.current = true;
     try {
       setSignInPhase('requesting-nonce');
-      const nonce = await fetchNonce(address);
-      const message = buildSiweMessage(address, nonce);
+      const nonce = await fetchNonce(targetAddress);
+      const message = buildSiweMessage(targetAddress, nonce);
 
       setSignInPhase('awaiting-signature');
       const signature = await signMessageAsync({ message });
 
       setSignInPhase('verifying');
-      const token = await verifySignature(address, message, signature, nonce);
-      applyToken(token, address);
-      toast.success('Signed in', { description: `Wallet verified · ${address.slice(0, 6)}…${address.slice(-4)}` });
+      const token = await verifySignature(targetAddress, message, signature, nonce);
+
+      if (address?.toLowerCase() === targetAddress) {
+        applyToken(token, targetAddress);
+        toast.success('Signed in', { description: `Wallet verified · ${targetAddress.slice(0, 6)}…${targetAddress.slice(-4)}` });
+      }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'Sign-in failed';
       // user rejected the signature — disconnect so UI resets cleanly
