@@ -369,7 +369,7 @@ export function SwapView({ headline }: SwapViewProps) {
 											{outputToken?.ticker ?? ""}
 										</span>
 										<span className="ml-[6px] text-[var(--body)]">
-											· Uniswap V2
+											· Uniswap V4
 										</span>
 									</span>
 								}
