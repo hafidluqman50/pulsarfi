@@ -4,7 +4,6 @@ console.log(process.env.NEXT_PUBLIC_BACKEND_URL)
 
 const client = axios.create({
   baseURL: `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/v1`,
-  headers: { 'Content-Type': 'application/json' },
 });
 
 client.interceptors.request.use((config) => {

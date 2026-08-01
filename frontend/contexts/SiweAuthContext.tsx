@@ -83,6 +83,8 @@ function hasStoredToken() {
   return typeof window !== 'undefined' && Boolean(localStorage.getItem(ACCESS_TOKEN_KEY));
 }
 
+let globalInFlightAddress: string | null = null;
+
 export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
@@ -102,6 +104,7 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticated(false);
     setRole(null);
     authedAddressRef.current = null;
+    globalInFlightAddress = null;
   }
 
   function applySession(session: StoredSession) {
@@ -149,26 +152,44 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
       clearAuth();
     }
 
-    // Don't trigger if already signing in
-    if (signingInRef.current) return;
+    // Don't trigger if already signing in globally or in ref
+    if (signingInRef.current || globalInFlightAddress === walletAddress) return;
+
+    // Lock immediately so no other effect/timer can trigger
+    globalInFlightAddress = walletAddress;
 
     // Slight delay so RainbowKit modal closes first
     const timer = setTimeout(() => {
       signIn();
     }, 400);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      if (!signingInRef.current && globalInFlightAddress === walletAddress) {
+        globalInFlightAddress = null;
+      }
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, address, isAuthenticated]);
 
   async function signIn() {
-    if (!address || signingInRef.current) return;
+    if (!address) {
+      globalInFlightAddress = null;
+      return;
+    }
     const targetAddress = address.toLowerCase();
 
     // Skip if already authed for this address
-    if (authedAddressRef.current === targetAddress && isAuthenticated) return;
+    if (authedAddressRef.current === targetAddress && isAuthenticated) {
+      globalInFlightAddress = null;
+      return;
+    }
+
+    if (signingInRef.current) return;
 
     signingInRef.current = true;
+    globalInFlightAddress = targetAddress;
+
     try {
       setSignInPhase('requesting-nonce');
       const nonce = await fetchNonce(targetAddress);
@@ -195,6 +216,7 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
       }
     } finally {
       signingInRef.current = false;
+      globalInFlightAddress = null;
       setSignInPhase('idle');
     }
   }
