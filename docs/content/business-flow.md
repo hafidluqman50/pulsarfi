@@ -33,8 +33,8 @@ off-chain shares
     -> mint proposal
     -> 3-of-5 approval
     -> pStock mint
-    -> IDRX-pStock liquidity pool
-    -> user trading
+    -> IDRX-pStock V4 liquidity pool
+    -> user trading (swapV4, hook-enforced fee)
     -> KYC-gated redemption
     -> pStock burn
     -> off-chain settlement
@@ -73,7 +73,7 @@ When pStock trades at a premium:
 custodian verifies or acquires underlying IDX exposure
     -> requests backed mint
     -> receives threshold approval
-    -> executes mint with IDRX liquidity
+    -> executes mint with IDRX liquidity into the V4 pool
     -> adds supply/liquidity near reference value
 ```
 
@@ -120,7 +120,10 @@ The requester submits `requestMint`. The proposal stores:
 | `requester` | Custodian wallet that can execute after approval. |
 
 The requester automatically becomes the first approver. Two more approvals are
-required before execution.
+required before execution. Approving/rejecting a mint proposal executes via
+`PulsarProtocolOps` behind the scenes ([the ops
+split](/docs/protocol-design#the-ops-split)) — invisible to the requester, who
+still calls the exact same function names on the same proxy address.
 
 ### 3. Approval or rejection
 
@@ -145,7 +148,9 @@ Execution does four things:
 1. Deploys the stock token if it does not exist yet.
 2. Mints pStock to the protocol.
 3. Pulls IDRX from the requester.
-4. Adds both assets to the Uniswap V2 pool.
+4. On the ticker's first mint, creates its Uniswap V4 pool at the requester's
+   quoted price and seeds full-range liquidity with both assets; later mints
+   just add to the existing pool.
 
 The business outcome is that new pStock supply is not released without matching
 pool liquidity.
@@ -155,7 +160,7 @@ pool liquidity.
 Trading is intentionally simple:
 
 ```text
-user wallet -> approve token -> protocol swap -> Uniswap V2 pool -> output token to user
+user wallet -> approve token -> protocol swapV4 -> Uniswap V4 pool -> output token to user
 ```
 
 No KYC is required for trading. The product uses a stablecoin-like compliance
@@ -173,23 +178,30 @@ Price behavior:
 - The UI can show both IDX-derived market price and pool price.
 - Slippage controls protect users from poor execution.
 
-Every trade pays two fees, always denominated in IDRX: Uniswap's native 0.3%
-(stays in the pool as protocol-owned liquidity) and an explicit `swapFeeBps`
-protocol fee (realized immediately toward the treasury/custodian split — see
-[Fee distribution](#fee-distribution)).
+Every trade pays two fees, always denominated in IDRX: the V4 pool's own LP
+fee (stays in the pool as protocol-owned liquidity, since `PulsarProtocol` is
+the sole LP) and an explicit `swapFeeBps` protocol fee, enforced by
+`PulsarSwapHook` at the pool level — realized immediately toward the
+treasury/custodian split — see [Fee distribution](#fee-distribution)). Because
+the fee lives in the hook, not in the protocol's own swap function, it applies
+to every swap against a registered pool regardless of entry point — the
+protocol UI, an aggregator, or Uniswap's own interface.
 
 ## Fee distribution
 
 PulsarFi deliberately keeps two kinds of fee growth separate:
 
-- **AMM LP fee (0.3%, Uniswap V2 native)** — never withdrawn. It compounds
-  inside each pStock/IDRX pool's reserves. Since `PulsarProtocol` is the sole
-  LP on every pair, this growth is 100% protocol-owned, but its value is
-  realized indirectly: deeper pools mean less slippage, more volume, and a
-  stronger buffer during redemption runs. Extracting it would mean removing
-  liquidity from the very pool that backs the peg, so it stays untouched.
-- **Protocol fee (`swapFeeBps` + `redeemFeeBps`)** — realized immediately in
-  IDRX and tracked in `accumulatedFees`. This is the actual revenue that gets
+- **AMM LP fee (pool-level, Uniswap V4)** — never withdrawn. It compounds
+  inside each pStock/IDRX pool's full-range position. Since `PulsarProtocol`
+  is the sole LP on every pool, this growth is 100% protocol-owned, but its
+  value is realized indirectly: deeper pools mean less slippage, more volume,
+  and a stronger buffer during redemption runs. Extracting it would mean
+  removing liquidity from the very pool that backs the peg, so it stays
+  untouched.
+- **Protocol fee (`swapFeeBps` + `redeemFeeBps`)** — enforced by
+  `PulsarSwapHook` at the pool level (swap) or quoted from the pool's own
+  price (redeem), realized as an ERC-6909 claim swept via `collectV4Fees()`
+  and tracked in `accumulatedFees`. This is the actual revenue that gets
   distributed to the treasury and custodians.
 
 Distribution economics, once `accumulatedFees` reaches

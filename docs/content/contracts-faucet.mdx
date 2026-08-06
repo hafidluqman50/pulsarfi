@@ -26,8 +26,23 @@ stay aligned with `smart-contract/.env` and `frontend/.env.local`.
     </tr>
     <tr>
       <td>PulsarProtocol implementation</td>
-      <td><code>0x14c54E6cade1A13c73685c239aE895A7d37DC3df</code></td>
-      <td>Verified UUPS implementation.</td>
+      <td><code>0x529Cf96BD1Ea34C8B9fA931aBbaD70812A4ea10e</code></td>
+      <td>V4-native UUPS implementation.</td>
+    </tr>
+    <tr>
+      <td>PulsarProtocolOps</td>
+      <td><code>0xF6C640e11D6507bfEa8B1E15972790ba74b0Fef4</code></td>
+      <td>Delegatecall target for ~20 relocated functions — not a proxy, never called standalone with real effect. See <a href="/docs/protocol-design#the-ops-split">the ops split</a>.</td>
+    </tr>
+    <tr>
+      <td>PulsarSwapHook</td>
+      <td><code>0x793bAC5e3CE0e42E719883b1C7038a8743dc00Cc</code></td>
+      <td>Enforces the protocol swap fee at the V4 pool level. Immutable by design.</td>
+    </tr>
+    <tr>
+      <td>Uniswap V4 PoolManager</td>
+      <td><code>0xFB3e0C6F74eB1a21CC1Da29aeC80D2Dfe6C9a317</code></td>
+      <td>Official Uniswap deployment on Arbitrum Sepolia — not deployed by PulsarFi.</td>
     </tr>
     <tr>
       <td>IDRX mock</td>
@@ -35,24 +50,24 @@ stay aligned with `smart-contract/.env` and `frontend/.env.local`.
       <td>Testnet stablecoin with 2 decimals.</td>
     </tr>
     <tr>
-      <td>UniswapV2Factory</td>
-      <td><code>0x4254378E95dBD9816a1a18428A81B4E1fBe5C296</code></td>
-      <td>Custom factory on Arbitrum Sepolia.</td>
-    </tr>
-    <tr>
-      <td>UniswapV2Router02</td>
-      <td><code>0xFEf655B2A0742134242711b80899d0b543A74223</code></td>
-      <td>Router used for liquidity and swaps.</td>
-    </tr>
-    <tr>
       <td>IDRXFaucet</td>
       <td><code>0x286954bE9b8a2B52f2A61432Fa448C5287e4dDEA</code></td>
       <td>Testnet IDRX faucet.</td>
     </tr>
     <tr>
+      <td>UniswapV2Factory</td>
+      <td><code>0x4254378E95dBD9816a1a18428A81B4E1fBe5C296</code></td>
+      <td>Legacy — no longer part of the live swap/mint path. Kept only for the one-time <code>migrateV2ToV4</code> runbook step on tickers with V2 history (BUMIP, ENRGP).</td>
+    </tr>
+    <tr>
+      <td>UniswapV2Router02</td>
+      <td><code>0xFEf655B2A0742134242711b80899d0b543A74223</code></td>
+      <td>Legacy — same as above.</td>
+    </tr>
+    <tr>
       <td>WETH</td>
       <td><code>0x980B62Da83eFf3D4576C647993b0c1D7faf17c73</code></td>
-      <td>External Arbitrum Sepolia dependency.</td>
+      <td>External Arbitrum Sepolia dependency (V2-only).</td>
     </tr>
   </tbody>
 </table>
@@ -94,20 +109,26 @@ The smart contract scripts use:
 
 ```text
 PULSAR_PROTOCOL_PROXY=0x204488318C0E75978B3c851382Aa83f3065a8f5A
-PULSAR_PROTOCOL_IMPL=0x14c54E6cade1A13c73685c239aE895A7d37DC3df
+PULSAR_PROTOCOL_IMPL=0x529Cf96BD1Ea34C8B9fA931aBbaD70812A4ea10e
+PULSAR_PROTOCOL_OPS=0xF6C640e11D6507bfEa8B1E15972790ba74b0Fef4
 IDRX=0x03b53A71C5517907006EAb512A31C1eD5a56Ae64
 UNISWAP_V2_FACTORY=0x4254378E95dBD9816a1a18428A81B4E1fBe5C296
 UNISWAP_V2_ROUTER=0xFEf655B2A0742134242711b80899d0b543A74223
 WETH=0x980B62Da83eFf3D4576C647993b0c1D7faf17c73
 ```
 
+`UNISWAP_V2_FACTORY`/`UNISWAP_V2_ROUTER`/`WETH` are legacy — only relevant if
+you're re-running `migrateV2ToV4` against a ticker that still has V2 history.
+
 ## Verification checklist
 
 Before a demo or review session, verify:
 
-- `PulsarProtocol.router()` equals the deployed Uniswap V2 router.
-- `UniswapV2Router02.factory()` equals the deployed factory.
+- `PulsarProtocol.poolManager()` equals the official Uniswap V4 PoolManager.
+- `PulsarProtocol.swapHook()` equals the deployed PulsarSwapHook.
+- `PulsarProtocol.opsContract()` equals the deployed PulsarProtocolOps — every delegated function (`approveMint`, `distributeFees`, etc.) reverts with `OpsNotConfigured` otherwise.
 - `PulsarProtocol.idrx()` equals the mock IDRX token.
+- `PulsarProtocol.isV4Migrated(ticker)` is `true` for every listed ticker.
 - The frontend env points to the same protocol and IDRX addresses.
 - The faucet has enough IDRX balance.
-- At least one pStock has been minted and has a usable pool.
+- At least one pStock has been minted and has a usable V4 pool.
