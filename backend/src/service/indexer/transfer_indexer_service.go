@@ -218,6 +218,9 @@ func (s *TransferIndexerService) recordTransferLog(
 		StockAmount: stockAmount,
 		BlockNumber: int64(eventLog.BlockNumber),
 		LogIndex:    int(eventLog.Index),
+		// Trusted internal caller — it already derived FromAddress from a
+		// real, filtered on-chain Transfer log, not a client request.
+		AuthenticatedWallet: fromAddress.Hex(),
 	})
 	return created, err
 }

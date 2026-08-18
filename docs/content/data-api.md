@@ -60,9 +60,10 @@ deployment should move nonce state to shared storage.
 | `GET /api/v1/public/stats` | Protocol-level public stats. |
 | `GET /api/v1/public/reserves` | Latest proof-of-reserves records. |
 | `GET /api/v1/public/stock-transactions` | Wallet transaction history. |
-| `POST /api/v1/public/stock-transactions` | Record a confirmed swap. |
-| `POST /api/v1/public/wallet-verifications` | Submit wallet verification intent. |
-| `POST /api/v1/public/redeem-requests` | Record a confirmed redeem request. |
+| `POST /api/v1/public/stock-transactions` | Record a confirmed swap. Requires `Authorization: Bearer <SIWE token>`; the token's wallet must match `wallet_address`. |
+| `POST /api/v1/public/stock-transactions/transfers` | Record a confirmed token transfer (both legs). Requires a Bearer token whose wallet matches `from_address`. |
+| `POST /api/v1/public/wallet-verifications` | Submit wallet verification intent. Requires `Authorization: Bearer <SIWE token>`; the record is bound to the token's wallet, not a client-supplied address. |
+| `POST /api/v1/public/redeem-requests` | Record a confirmed redeem request. Requires a Bearer token whose wallet matches `user_address`. |
 | `GET /api/v1/public/redeem-requests` | List redeem requests for a wallet. |
 
 ## Custodian API surface
