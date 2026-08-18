@@ -35,7 +35,7 @@ func SetupRouter(db *gorm.DB, jwtConfig auth.Config) *gin.Engine {
 	api.POST("/auth/verify", authhandler.VerifyHandler)
 
 	custodianRoutes.RegisterRoutes(api.Group("/custodian"), jwtConfig)
-	publicRoutes.RegisterRoutes(api.Group("/public"))
+	publicRoutes.RegisterRoutes(api.Group("/public"), jwtConfig)
 
 	return router
 }
