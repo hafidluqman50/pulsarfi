@@ -22,9 +22,10 @@ import (
 )
 
 var (
-	ErrReceiptNotFound = errors.New("chainverify: transaction receipt not found")
-	ErrTxFailed        = errors.New("chainverify: transaction reverted")
-	ErrEventNotFound   = errors.New("chainverify: expected event not found in receipt logs")
+	ErrReceiptNotFound   = errors.New("chainverify: transaction receipt not found")
+	ErrTxFailed          = errors.New("chainverify: transaction reverted")
+	ErrEventNotFound     = errors.New("chainverify: expected event not found in receipt logs")
+	ErrNotDirectTransfer = errors.New("chainverify: transaction target is not the stock token (not a direct transfer)")
 )
 
 var redeemRequestedTopic = crypto.Keccak256Hash([]byte("RedeemRequested(uint256,address,string,uint256,uint256)"))
@@ -165,10 +166,25 @@ type TransferEvent struct {
 	Amount *big.Int
 }
 
+// VerifyTransfer only accepts DIRECT transfers — the transaction's own `to`
+// must be the token contract itself (a plain transfer()/transferFrom() call).
+// Without this, a Transfer log that's just a side effect of some other
+// contract call (e.g. swapV4 pulling the seller's stock into the protocol,
+// PulsarProtocol.sol's swapV4) would pass the log-decode check too, letting
+// a seller double-record their own sell as an extra fabricated transfer.
 func (s *ChainVerifyService) VerifyTransfer(ctx context.Context, txHash string, tokenAddress common.Address, logIndex int) (*TransferEvent, error) {
 	receipt, err := s.receiptOK(ctx, txHash)
 	if err != nil {
 		return nil, err
+	}
+
+	tx, _, err := s.client.TransactionByHash(ctx, common.HexToHash(strings.TrimSpace(txHash)))
+	if err != nil {
+		return nil, fmt.Errorf("chainverify: transaction lookup: %w", err)
+	}
+	to := tx.To()
+	if to == nil || *to != tokenAddress {
+		return nil, ErrNotDirectTransfer
 	}
 
 	for _, l := range receipt.Logs {
