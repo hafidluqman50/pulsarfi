@@ -252,12 +252,25 @@ func buildWorkflowCard(taskID int64, reply string, toolCalls []ToolCallTrace) Wo
 	return WorkflowCard{TaskID: taskID, Reply: reply, ContentType: "text"}
 }
 
+// unwrapReplyJSON handles more than one observed shape — the model isn't
+// consistent about which key it wraps its reply in when it (incorrectly)
+// emits JSON instead of plain text: {"reply": "..."} and
+// {"path": "...", "message": "..."} have both been seen live. Checked in
+// this priority order; "path"/other metadata keys are deliberately not
+// candidates, only the ones that are actually the human-facing text.
 func unwrapReplyJSON(reply string) string {
 	var wrapped struct {
-		Reply string `json:"reply"`
+		Reply    string `json:"reply"`
+		Message  string `json:"message"`
+		Response string `json:"response"`
+		Answer   string `json:"answer"`
 	}
-	if err := json.Unmarshal([]byte(reply), &wrapped); err == nil && wrapped.Reply != "" {
-		return wrapped.Reply
+	if err := json.Unmarshal([]byte(reply), &wrapped); err == nil {
+		for _, candidate := range []string{wrapped.Reply, wrapped.Message, wrapped.Response, wrapped.Answer} {
+			if candidate != "" {
+				return candidate
+			}
+		}
 	}
 	return reply
 }

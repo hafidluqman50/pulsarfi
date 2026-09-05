@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"strings"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
@@ -61,12 +63,25 @@ type ToolCallTrace struct {
 // the way, in call order. Never returns a partial/empty final text on
 // success — an agent run that produces no assistant message is treated as
 // an error, matching runAgentOnce's existing contract.
+//
+// lastAssistant tracks literally the last Assistant-role event seen;
+// lastNonEmptyAssistant tracks the last one whose Content is non-blank.
+// These differ on a real, observed failure mode: after a tool-calling
+// turn, the Assistant-role event carrying the tool-call REQUEST itself
+// (function-calling APIs commonly emit this with empty Content, the
+// arguments live elsewhere on the message) can end up being the last
+// Assistant event the iterator produces, ahead of whatever closing
+// synthesis the model would otherwise add — observed live as a
+// hash-chain-correct run whose persisted final reply was blank. Preferring
+// lastNonEmptyAssistant fixes that without discarding a genuinely
+// empty-on-purpose reply that never happens in practice (every role's own
+// instructions require a closing summary).
 func RunAgentWithTrace(ctx context.Context, a adk.Agent, prompt string) (finalText string, toolCalls []ToolCallTrace, err error) {
 	iterator := a.Run(ctx, &adk.AgentInput{
 		Messages: []adk.Message{schema.UserMessage(prompt)},
 	})
 
-	var final *schema.Message
+	var lastAssistant, lastNonEmptyAssistant *schema.Message
 	for {
 		event, ok := iterator.Next()
 		if !ok {
@@ -84,13 +99,24 @@ func RunAgentWithTrace(ctx context.Context, a adk.Agent, prompt string) (finalTe
 		}
 		switch event.Output.MessageOutput.Role {
 		case schema.Assistant:
-			final = msg
+			lastAssistant = msg
+			if strings.TrimSpace(msg.Content) != "" {
+				lastNonEmptyAssistant = msg
+			}
 		case schema.Tool:
 			toolCalls = append(toolCalls, ToolCallTrace{ToolName: msg.ToolName, Result: msg.Content})
 		}
 	}
+
+	final := lastNonEmptyAssistant
+	if final == nil {
+		final = lastAssistant
+	}
 	if final == nil {
 		return "", nil, fmt.Errorf("agent: no final response message")
+	}
+	if strings.TrimSpace(final.Content) == "" {
+		slog.WarnContext(ctx, "agent: final assistant message has empty content even after preferring non-empty", "tool_calls", len(toolCalls))
 	}
 	return final.Content, toolCalls, nil
 }
