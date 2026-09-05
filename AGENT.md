@@ -98,6 +98,39 @@ The router's factory must equal `UNISWAP_V2_FACTORY`, the protocol router must e
 
 ---
 
+## 3a. AI Trading Agent
+
+Chat-first, self-custodied AI agent — see `docs/plans/agent-role-architecture.md` and `docs/plans/agent-task-manager-rebuild.md`/`agent-task-manager-code-implementation.md` for the full design. Ground-up rebuild, not an evolution of the old Trader/Fund Manager split: **Task** (any request needing data fetched/searched, informational or actionable — a greeting is not a Task), **Sub Task** (one hash-chained step, written by whichever role actually did it), **Trade** (an actual fill, zero-to-many per Task, never pre-locked to ticker/direction).
+
+Three roles, Supervisor is the mandatory entry point for every chat message:
+
+- **Supervisor** — recognizes a new Task (`create_task` tool) and routes to Analyzer and/or Executor.
+- **Analyzer** — gathers news/technical evidence for a trigger condition, *and* answers portfolio/chart questions (`get_portfolio_snapshot`, a closed 5-lens catalog, prompt-injection-hardened: lens is enum-validated server-side, chart data is always fetched fresh, never LLM-supplied).
+- **Executor** — decides sell/buy/hold and submits on-chain when it decides to act (`submit_trade`; ticker/side/amount are call-time, never pre-locked to the Task).
+
+**Smart contract** — `smart-contract/src/AgentTaskManager.sol`, `AGENT_ROLE`-gated `createTask`/`grantTradePermission`/`recordSubTasks`/`executeTrade`, owner-or-agent `cancelTask`. Custody: owner `approve()`s the contract directly, agent wallet never holds funds. **Deployed on Arbitrum Sepolia at `0x15080823e6d91DfE37593Fb4CE91E08bb294B01f`** (`smart-contract/script/DeployAgentTaskManager.s.sol`), `AGENT_ROLE` granted to `AGENT_WALLET`; fork-tested (`smart-contract/test/AgentTaskManagerFork.t.sol`, 17/17 passing against the live `PulsarProtocol` proxy).
+
+**Backend pipeline** (`backend/src/service/agent/`), `github.com/cloudwego/eino` (`adk` agent framework, agents as callable tools rather than a fixed graph). `analyzer/`, `executor/`, `supervisor/` are each an agent's own package (own `index.go`, `instructions.go`, `tools_service.go`); every non-`index.go`/`instructions.go` file ends `_service.go`. `backend/src/onchain/agenttaskmanager/` is the real on-chain Go client (abigen-generated binding + a hand-written signer using `AGENT_WALLET_PRIVATE_KEY`) — `CreateTask`/`GrantTradePermission`/`RecordSubTasks`/`CancelTask`/`TradePermissionRemaining` are real; `ExecuteTrade` is not yet (the `TaskExecutor` interface is missing subTaskId/token/minimumOutputAmount/summary, `executor.StubTaskExecutor` still stands in for it). `backend/src/service/agent/task_service.go` is the HTTP↔Supervisor boundary: `HandleChatMessage` (chat intake), `ArmTask`/`DisarmTask`/`PauseTask`/`ResumeTask` (Task lifecycle), `Evaluate` (scheduler-driven re-check tick for an armed Task — not yet wired to an actual scheduler).
+
+**API** (`/api/v1/agent`, see `backend/src/http/routes/agent/router.go`):
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /agent/chats` | wallet owner | Open a new chat thread |
+| `GET /agent/chats` | wallet owner | List own chats |
+| `GET /agent/chats/:id/messages` | wallet owner | Chat transcript |
+| `POST /agent/chats/:id/messages` | wallet owner | Send a prompt — Supervisor may open a Task (`create_task`) as a side effect |
+| `GET /agent/tasks` | wallet owner | List own Tasks |
+| `POST /agent/tasks/:id/arm` | wallet owner | `createTask` + (if actionable) `grantTradePermission` on-chain |
+| `POST /agent/tasks/:id/disarm` | wallet owner | `cancelTask` on-chain (frontend separately zeroes the ERC20 allowance) |
+| `POST /agent/tasks/:id/pause`, `/resume` | wallet owner | Off-chain only — skips/resumes the evaluation tick, no on-chain call |
+| `GET /agent/tasks/:id/trades` | wallet owner | On-chain Trade ledger for the Task |
+| `GET /agent/tasks/:id/reasoning` | public, no auth | Full Sub Task hash chain — anyone can recompute and verify against the on-chain `reasoningHash` |
+
+**Known open items**: the scheduler that periodically calls `Evaluate` for armed Tasks does not exist yet; chart rendering (echarts + a lens→option mapping) is not wired on the frontend (placeholder only); a multi-tool-call chat turn sometimes returns a blank final reply (reasoning chain is still correct) — root cause not yet found.
+
+---
+
 ## 4. Custodian Flows (3/5 Multisig)
 
 ### Mint
@@ -151,6 +184,7 @@ Custodian → inputs wallet address in dashboard → approveKYC(userAddress) on-
 | `wallet_verifications` | KYC records managed by operator; `type`: retail/institution |
 | `stock_transactions` | Swap events: side buy/sell, idrx_amount, stock_amount, protocol_fee_idrx (NUMERIC 78,0) |
 | `stock_attestations` | Proof of reserves per stock (operator-level, not per-custodian) |
+| `agent_tasks`, `agent_sub_tasks`, `agent_trades`, `agent_chats`, `agent_chat_messages` | AI Trading Agent (§3a) — Task/Sub Task/Trade, chat threads. `agent_sub_tasks.reasoning`/`.output` are exact bytes whose keccak256 is the on-chain `reasoningHash`/`outputHash`, stored verbatim and never re-serialized |
 
 ---
 
@@ -171,3 +205,96 @@ Custodian → inputs wallet address in dashboard → approveKYC(userAddress) on-
 
 - **MVP**: Uniswap V2, custom-deployed on Arbitrum Sepolia
 - **Production**: Uniswap V4 with `beforeSwap` KYC hooks via Horizon Labs Identity Registry
+
+---
+
+## 8. Project Structure
+
+```
+pulsarfi/
+├── AGENT.md, BUSINESS.md, README.md
+├── docs/
+├── smart-contract/              Foundry — Solidity contracts, tests, deploy scripts
+│   ├── src/
+│   │   ├── PulsarProtocol.sol
+│   │   ├── PulsarProtocolOps.sol
+│   │   ├── PulsarProtocolStorage.sol
+│   │   ├── PulsarStock.sol
+│   │   ├── AgentTaskManager.sol      Trade model (§3a) — not yet deployed
+│   │   ├── v4/                       Uniswap V4 upgrade path (beforeSwap KYC hooks)
+│   │   ├── interfaces/
+│   │   ├── helpers/
+│   │   └── mocks/
+│   ├── test/
+│   │   └── AgentTaskManagerFork.t.sol   fork tests vs. the live proxy
+│   └── script/                        deploy/upgrade scripts + official Uniswap V2 artifacts
+│
+├── backend/                     Go + Gin + GORM + PostgreSQL
+│   ├── migrations/               001..015_*.sql
+│   └── src/
+│       ├── app/                   bootstrap, gin engine wiring
+│       ├── auth/                  SIWE, JWT, nonce store
+│       ├── config/
+│       ├── http/
+│       │   ├── handlers/{agent,auth,custodian,public}/
+│       │   ├── middleware/{custodian,user}/
+│       │   ├── request/, response/
+│       │   └── routes/{agent,custodian,public}/
+│       ├── model/                 AgentTask, Stock, MintProposal, RedeemProposal, ...
+│       ├── repository/
+│       ├── service/
+│       │   ├── agent/               AI Trading Agent (§3a) — Task/Sub Task/Trade, chat-first
+│       │   │   ├── state_service.go       TradeIntent, TradeSide
+│       │   │   ├── run_context_service.go RunContext (per-run data threaded through nested tool calls)
+│       │   │   ├── sub_task_recorder_service.go  hash-chained agent_sub_tasks writer
+│       │   │   ├── hashchain_service.go   GenesisHash/DecisionHash
+│       │   │   ├── llm_service.go         InvokeAgentStructured/RunAgentWithTrace over adk.Agent.Run
+│       │   │   ├── task_service.go        HandleChatMessage/ArmTask/DisarmTask/PauseTask/ResumeTask/Evaluate
+│       │   │   ├── subtask_retry_service.go  retries unconfirmed recordSubTasks batches
+│       │   │   ├── supervisor/        entry point for every chat message — create_task, routes to analyzer/executor
+│       │   │   ├── analyzer/          evidence-gathering + get_portfolio_snapshot (chart lens catalog)
+│       │   │   └── executor/          decides sell/buy/hold, submit_trade
+│       │   ├── auth/, custodian/, public/, indexer/
+│       │   └── external/            DeepSeek (Eino ChatModel), price/email/storage/stream
+│       ├── onchain/agenttaskmanager/  real on-chain Go client (abigen binding + signer)
+│       └── logger/
+│   └── test/                     unit tests live here, never colocated with src/ (no agent/ tests yet)
+│
+└── frontend/                    Next.js + Tailwind + RainbowKit
+    ├── /swap                     permissionless swap view
+    └── /custodian                multisig mint dashboard, KYC management, pending proposals
+```
+
+---
+
+## 9. Planning Mode Guidelines
+
+When asked to create an implementation plan (Planning Mode), follow these rules strictly:
+
+1. **No code during Planning Mode.** Do not write or modify any code, run any state-changing command, or otherwise alter the repository until the user has explicitly approved the plan or given explicit instructions to start implementing. The only output during this phase is the plan document itself.
+2. **Version every plan document.** State the document version at the top. Any change to the document, however small, must bump the version — and any other plan document covering a correlated/dependent part of the same feature under development must be updated to stay consistent with it.
+3. **English only.** Plan documents are written entirely in English, regardless of the language used in conversation while producing them.
+4. **Problem Statement.** What the problem is, and why it needs solving.
+5. **Definition of Done.** The concrete, checkable conditions under which this feature is considered complete.
+6. **Feature Description.** What is being built or changed.
+7. **Impacted Files.** Every file expected to be created or modified.
+8. **UI/UX Changes (Lo-Fi).** A low-fidelity description/wireframe of any UI/UX change. State "N/A" explicitly when the feature has no UI/UX surface.
+9. **Flowchart.** A flowchart (e.g. Mermaid) of the feature's flow.
+10. **Verification Plan.** How the feature will be verified once implemented — automated tests and manual checks.
+
+### Plan Document Header
+
+Every plan document opens with:
+
+```markdown
+# <Feature Name>
+
+| | |
+|---|---|
+| **Version** | 1.0 |
+| **Status** | Draft |
+| **Date Created** | 2026-08-28 |
+| **Last Updated** | 2026-08-28 |
+```
+
+Plans are saved under `docs/plans/<feature-name-kebab-case>.md`.

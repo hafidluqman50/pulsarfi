@@ -135,6 +135,16 @@ export function buildStables(balances: Balances): StablePosition[] {
   return qty > 0 ? [{ ticker: 'IDRX', name: 'Indonesian Rupiah X', qty, value: qty }] : [];
 }
 
+// buildPortfolioSeries approximates portfolio value over time as running
+// net capital deployed (buys/transfers-in add, sells/transfers-out/
+// redeems subtract), replayed from real transaction history — not
+// historical mark-to-market, which would need per-ticker historical
+// prices merged across time rather than the single currentValue this
+// function receives. The final point is always pinned to the real, live
+// currentValue so the chart's latest reading matches the summary stat
+// exactly. This is what makes the 1W/1M/3M/1Y/ALL range buttons actually
+// differ — the previous version only ever returned 2 flat points, so
+// every range showed the same line.
 export function buildPortfolioSeries(currentValue: number, transactions: StockTransaction[]): TimePoint[] {
   const now = Date.now();
   if (currentValue <= 0) {
@@ -144,15 +154,32 @@ export function buildPortfolioSeries(currentValue: number, transactions: StockTr
     ];
   }
 
-  const firstTxTime = transactions.length > 0
-    ? Math.min(...transactions.map(tx => Date.parse(tx.created_at)).filter(Number.isFinite))
-    : now - 60 * 60_000;
-  const start = Number.isFinite(firstTxTime) ? firstTxTime : now - 60 * 60_000;
+  const sorted = [...transactions].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
 
-  return [
-    { timestamp: Math.min(start, now - 60_000), value: currentValue },
-    { timestamp: now, value: currentValue },
-  ];
+  let runningValue = 0;
+  const points: TimePoint[] = [];
+  for (const tx of sorted) {
+    const timestamp = Date.parse(tx.created_at);
+    if (!Number.isFinite(timestamp)) continue;
+
+    const idrx = idrxAmount(tx.idrx_amount);
+    if (tx.side === 'buy' || tx.side === 'transfer-in') {
+      runningValue += idrx;
+    } else if (tx.side === 'sell' || tx.side === 'redeemed' || tx.side === 'transfer-out') {
+      runningValue = Math.max(0, runningValue - idrx);
+    }
+    points.push({ timestamp, value: runningValue });
+  }
+
+  if (points.length === 0) {
+    return [
+      { timestamp: now - 60 * 60_000, value: currentValue },
+      { timestamp: now, value: currentValue },
+    ];
+  }
+
+  points.push({ timestamp: now, value: currentValue });
+  return points;
 }
 
 export function buildActivityRows(transactions: StockTransaction[]): ActivityRow[] {

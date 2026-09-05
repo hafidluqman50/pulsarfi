@@ -327,11 +327,13 @@ function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded,
   onTransfer: (t: TransferToken) => void;
   onRedeem: (t: RedeemToken) => void;
 }) {
+  const totalValue = positions.reduce((sum, position) => sum + position.value, 0);
+
   return (
     <div>
-      <div className="hairline table-head-desktop grid grid-cols-[auto_2fr_1fr_1fr_1fr_1fr_1fr_220px] gap-[16px] py-[14px]">
-        {["", "Stock", "Holdings", "Avg buy", "IDX lot", "Market value", "Unrealized P&L", ""].map((h, i) => (
-          <div key={i} className={`eyebrow !text-[var(--body)] ${i >= 2 && i <= 6 ? "text-right" : "text-left"}`}>{h}</div>
+      <div className="hairline table-head-desktop grid grid-cols-[auto_2fr_1fr_1fr_1fr_1fr_1fr_1fr_220px] gap-[16px] py-[14px]">
+        {["", "Stock", "Holdings", "Avg buy", "IDX lot", "Market value", "% Portfolio", "Unrealized P&L", ""].map((h, i) => (
+          <div key={i} className={`eyebrow !text-[var(--body)] ${i >= 2 && i <= 7 ? "text-right" : "text-left"}`}>{h}</div>
         ))}
       </div>
       {positions.map(p => {
@@ -358,6 +360,7 @@ function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded,
                 <RowCell label="Avg buy" align="right"><span className="mono text-[14px]">{fmtIDRX(p.avg)}</span></RowCell>
                 <RowCell label="Last" align="right"><span className="mono text-[14px]">{fmtIDRX(p.price)}</span></RowCell>
                 <RowCell label="Market value" align="right"><span className="mono text-[15px] font-medium">{fmtIDRX(p.value)}</span></RowCell>
+                <RowCell label="% Portfolio" align="right"><span className="mono text-[14px]">{fmtPct(totalValue ? (p.value / totalValue) * 100 : 0)}</span></RowCell>
                 <RowCell label="Unrealized P&L" align="right">
                   <div className={`mono text-[14px] font-medium ${pos ? "text-[var(--positive)]" : "text-[var(--negative)]"}`}>
                     {pos ? "+" : "−"}{fmtIDRX(Math.abs(p.pnl))}
@@ -411,6 +414,7 @@ function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded,
             <RowCell label="Avg buy" align="right"><span className="mono text-[14px]">1 IDRX</span></RowCell>
             <RowCell label="Last" align="right"><span className="mono text-[14px]">1 IDRX</span></RowCell>
             <RowCell label="Market value" align="right"><span className="mono text-[15px]">{fmtIDRX(s.value)}</span></RowCell>
+            <RowCell label="% Portfolio" align="right"><span className="mono text-[13px] text-[var(--body)]">—</span></RowCell>
             <RowCell label="Unrealized P&L" align="right"><span className="mono text-[13px] text-[var(--body)]">—</span></RowCell>
           </div>
           <div className="pos-actions">

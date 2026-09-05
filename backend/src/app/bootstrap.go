@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/horizonlabs/pulsarfi-backend/src/auth"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
+	agentHandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/agent"
 	authhandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/auth"
 	custodianHandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/custodian"
 	publicHandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/public"
@@ -100,9 +101,13 @@ func buildHandler() (*gin.Engine, func(), error) {
 	})
 	publicHandler.ConfigureRepos(repos)
 	publicHandler.ConfigureServices(svcs)
+	agentHandler.ConfigureServices(svcs)
 
 	if transferIndexerEnabled() {
 		go svcs.TransferIndexer.Run(indexerCtx)
+	}
+	if svcs.AgentSubTaskRetry != nil {
+		go svcs.AgentSubTaskRetry.Run(indexerCtx)
 	}
 
 	return routes.SetupRouter(db, jwtConfig), cleanup, nil
