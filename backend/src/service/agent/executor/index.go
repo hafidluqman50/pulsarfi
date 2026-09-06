@@ -62,7 +62,14 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, portfolio Po
 	if err != nil {
 		return nil, fmt.Errorf("executor: build submit_trade tool: %w", err)
 	}
-	tools := append([]tool.BaseTool{holdingsTool, submitTool}, extraTools...)
+	tools := []tool.BaseTool{agent.WrapToolGraceful(holdingsTool), agent.WrapToolGraceful(submitTool)}
+	for _, t := range extraTools {
+		if it, ok := t.(tool.InvokableTool); ok {
+			tools = append(tools, agent.WrapToolGraceful(it))
+		} else {
+			tools = append(tools, t)
+		}
+	}
 
 	executorAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        "executor_agent",
@@ -70,6 +77,8 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, portfolio Po
 		Instruction: instructions,
 		Model:       chatModel,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools}},
+		// See supervisor/index.go's own MaxIterations comment.
+		MaxIterations: 10,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("executor: build agent: %w", err)

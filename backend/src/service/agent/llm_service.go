@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 
@@ -11,19 +12,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// InvokeAgentStructured runs a real Eino Agent (adk.NewChatModelAgent — see
-// service/agent/analyzer, .../executor, and .../supervisor, each built with
-// Name/Description/Instruction/Model — some equipped with real tools, e.g.
-// Executor's get_portfolio_holdings) with a single user message and
-// unmarshals its FINAL response message content as JSON into out.
-// Retries once on a failed/malformed call, then gives up and calls
-// onFailure to decide the safe default — mirrors the bounded-retry-then-
-// degrade pattern used for CATAT's liaison node (router/model.ts's
-// invokeStructured): a parse failure must never crash the graph, it must
-// always resolve to a safe, explicit fallback state instead. Shared so
-// every LLM-backed role uses the same retry policy, mirroring
-// router/model.ts being shared plumbing imported by multiple
-// router/<role>.ts files, not owned by any one role.
 func InvokeAgentStructured(ctx context.Context, a adk.Agent, prompt string, out any, onFailure func()) {
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
@@ -34,51 +22,30 @@ func InvokeAgentStructured(ctx context.Context, a adk.Agent, prompt string, out 
 	onFailure()
 }
 
-// runAgentOnce iterates every event the run produces — not just the first
-// — because a tool-equipped agent's first event is the tool-call request
-// (empty content), not its answer. The LAST assistant-role message is the
-// agent's actual final synthesis after any tool round-trips; that is what
-// gets parsed.
 func runAgentOnce(ctx context.Context, a adk.Agent, prompt string, out any) error {
-	final, _, err := RunAgentWithTrace(ctx, a, prompt)
+	final, _, err := RunAgentWithTrace(ctx, a, prompt, nil)
 	if err != nil {
 		return err
 	}
 	return json.Unmarshal([]byte(final), out)
 }
 
-// ToolCallTrace is one adk.AgentTool invocation observed during a run —
-// which sub-agent (analyzer_agent, executor_agent) was called, and the
-// final text it returned. Used by service/agent/supervisor's driver to
-// reconstruct which nodes Supervisor actually routed to this turn, since
-// Eino's AgentTool only surfaces this as ordinary tool-role messages in the
-// event stream, not as a separate structured log.
 type ToolCallTrace struct {
 	ToolName string
 	Result   string
 }
 
-// RunAgentWithTrace runs a (Chat)Agent to completion and returns its final
-// assistant message content plus every tool-role message observed along
-// the way, in call order. Never returns a partial/empty final text on
-// success — an agent run that produces no assistant message is treated as
-// an error, matching runAgentOnce's existing contract.
-//
-// lastAssistant tracks literally the last Assistant-role event seen;
-// lastNonEmptyAssistant tracks the last one whose Content is non-blank.
-// These differ on a real, observed failure mode: after a tool-calling
-// turn, the Assistant-role event carrying the tool-call REQUEST itself
-// (function-calling APIs commonly emit this with empty Content, the
-// arguments live elsewhere on the message) can end up being the last
-// Assistant event the iterator produces, ahead of whatever closing
-// synthesis the model would otherwise add — observed live as a
-// hash-chain-correct run whose persisted final reply was blank. Preferring
-// lastNonEmptyAssistant fixes that without discarding a genuinely
-// empty-on-purpose reply that never happens in practice (every role's own
-// instructions require a closing summary).
-func RunAgentWithTrace(ctx context.Context, a adk.Agent, prompt string) (finalText string, toolCalls []ToolCallTrace, err error) {
+func RunAgentWithTrace(ctx context.Context, a adk.Agent, prompt string, onTextDelta func(string)) (finalText string, toolCalls []ToolCallTrace, err error) {
+	return RunAgentWithHistory(ctx, a, []*schema.Message{schema.UserMessage(prompt)}, onTextDelta)
+}
+
+func RunAgentWithHistory(ctx context.Context, a adk.Agent, messages []*schema.Message, onTextDelta func(string)) (finalText string, toolCalls []ToolCallTrace, err error) {
+	agentMessages := make([]adk.Message, len(messages))
+	for i, m := range messages {
+		agentMessages[i] = m
+	}
 	iterator := a.Run(ctx, &adk.AgentInput{
-		Messages: []adk.Message{schema.UserMessage(prompt)},
+		Messages: agentMessages,
 	})
 
 	var lastAssistant, lastNonEmptyAssistant *schema.Message
@@ -93,11 +60,26 @@ func RunAgentWithTrace(ctx context.Context, a adk.Agent, prompt string) (finalTe
 		if event.Output == nil || event.Output.MessageOutput == nil {
 			continue
 		}
-		msg := event.Output.MessageOutput.Message
+		out := event.Output.MessageOutput
+
+		var msg *schema.Message
+		if out.IsStreaming {
+			var onDelta func(string)
+			if out.Role == schema.Assistant {
+				onDelta = onTextDelta
+			}
+			msg, err = drainMessageStream(out.MessageStream, onDelta)
+			if err != nil {
+				return "", nil, fmt.Errorf("agent: drain message stream: %w", err)
+			}
+		} else {
+			msg = out.Message
+		}
 		if msg == nil {
 			continue
 		}
-		switch event.Output.MessageOutput.Role {
+
+		switch out.Role {
 		case schema.Assistant:
 			lastAssistant = msg
 			if strings.TrimSpace(msg.Content) != "" {
@@ -119,4 +101,25 @@ func RunAgentWithTrace(ctx context.Context, a adk.Agent, prompt string) (finalTe
 		slog.WarnContext(ctx, "agent: final assistant message has empty content even after preferring non-empty", "tool_calls", len(toolCalls))
 	}
 	return final.Content, toolCalls, nil
+}
+
+func drainMessageStream(stream *schema.StreamReader[*schema.Message], onDelta func(string)) (*schema.Message, error) {
+	var chunks []*schema.Message
+	for {
+		chunk, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if onDelta != nil && chunk.Content != "" {
+			onDelta(chunk.Content)
+		}
+		chunks = append(chunks, chunk)
+	}
+	if len(chunks) == 0 {
+		return nil, nil
+	}
+	return schema.ConcatMessageStream(schema.StreamReaderFromArray(chunks))
 }

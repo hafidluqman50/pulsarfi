@@ -1,20 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { isAxiosError } from 'axios';
+import { toast } from 'sonner';
 import * as chatApi from './chatApi';
 import * as taskApi from './taskApi';
+
+// Every agent mutation below routes its failure through this — without it,
+// a failed request (expired session, 500, network drop) fails completely
+// silently: no toast, no console output, just a button that appears to do
+// nothing when clicked.
+function agentErrorMessage(error: unknown): string {
+  if (isAxiosError(error)) {
+    const backendMessage = (error.response?.data as { message?: string } | undefined)?.message;
+    if (backendMessage) return backendMessage;
+  }
+  return error instanceof Error ? error.message : 'Something went wrong';
+}
+
+function toastAgentError(title: string) {
+  return (error: unknown) => toast.error(title, { description: agentErrorMessage(error) });
+}
 
 export function useAgentChats() {
   return useQuery({ queryKey: ['agent-chats'], queryFn: chatApi.listChats });
 }
 
-export function useCreateChat() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: chatApi.createChat,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agent-chats'] }),
-  });
-}
-
-export function useChatMessages(chatId?: number) {
+export function useChatMessages(chatId?: string) {
   return useQuery({
     queryKey: ['agent-chat-messages', chatId],
     queryFn: () => chatApi.getChatMessages(chatId!),
@@ -22,10 +32,7 @@ export function useChatMessages(chatId?: number) {
   });
 }
 
-// useSendChatMessage is also what answers a needs_input question — a
-// clarifying answer is just the next chat message, Supervisor resolves it
-// from conversation context. There is no separate answer-endpoint.
-export function useSendChatMessage(chatId?: number) {
+export function useSendChatMessage(chatId?: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (message: string) => chatApi.sendChatMessage(chatId!, message),
@@ -33,6 +40,7 @@ export function useSendChatMessage(chatId?: number) {
       queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
       queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
     },
+    onError: toastAgentError('Message failed to send'),
   });
 }
 
@@ -68,6 +76,7 @@ export function useArmTask(taskId: number) {
     mutationFn: (input: { totalBudget: string; durationSec: number }) =>
       taskApi.armTask(taskId, input.totalBudget, input.durationSec),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agent-tasks'] }),
+    onError: toastAgentError('Could not arm the task'),
   });
 }
 
@@ -76,6 +85,7 @@ export function useDisarmTask(taskId: number) {
   return useMutation({
     mutationFn: () => taskApi.disarmTask(taskId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agent-tasks'] }),
+    onError: toastAgentError('Could not disarm the task'),
   });
 }
 
@@ -84,6 +94,7 @@ export function usePauseTask(taskId: number) {
   return useMutation({
     mutationFn: () => taskApi.pauseTask(taskId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agent-tasks'] }),
+    onError: toastAgentError('Could not pause the task'),
   });
 }
 
@@ -92,5 +103,6 @@ export function useResumeTask(taskId: number) {
   return useMutation({
     mutationFn: () => taskApi.resumeTask(taskId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agent-tasks'] }),
+    onError: toastAgentError('Could not resume the task'),
   });
 }

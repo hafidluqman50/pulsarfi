@@ -21,6 +21,11 @@ type SubTaskRecorder struct {
 	nextOrder int
 	prevHash  string
 	rows      []model.AgentSubTask // every row this instance has written, in order
+	// OnRecord, if set, fires synchronously right after a row is persisted
+	// — the hook HandleChatMessage uses to stream each Sub Task out over
+	// SSE the moment it's created, instead of the frontend only learning
+	// about the whole run once it fully finishes.
+	OnRecord func(model.AgentSubTask)
 }
 
 // NewSubTaskRecorder loads the current tip of taskID's chain, or computes
@@ -76,6 +81,9 @@ func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, statu
 	r.nextOrder++
 	r.prevHash = decisionHash
 	r.rows = append(r.rows, row)
+	if r.OnRecord != nil {
+		r.OnRecord(row)
+	}
 	return row, nil
 }
 

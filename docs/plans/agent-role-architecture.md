@@ -2,13 +2,15 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
+| **Version** | 1.3 |
 | **Status** | Draft |
 | **Date Created** | 2026-09-04 |
-| **Last Updated** | 2026-09-05 |
+| **Last Updated** | 2026-09-06 |
 
 | Version | Date | Change |
 |---|---|---|
+| 1.3 | 2026-09-06 | **§3a's persona implemented and verified live; one gap closed.** First live test ("Halo, kamu siapa?") showed Quasar correctly using its own name but still leaking the word "supervisor" ("Saya Quasar, supervisor di sistem trading agent PulsarFi") — the instruction said not to describe itself as "the Supervisor node" but did not ban the bare word. Strengthened `supervisor/instructions.go`: explicitly forbids saying "supervisor", "node", "agent", or "system" about itself in any language, and gives a concrete fallback line ("I'm Quasar, PulsarFi's trading assistant"). Re-tested in both Indonesian and English: "Saya Quasar, asisten trading PulsarFi" / "I'm Quasar, PulsarFi's trading assistant", no technical labels, no em dash, language mirrored correctly both ways |
+| 1.2 | 2026-09-06 | **New §3a, Persona and Voice.** PulsarFi is a global product (submitted to an international hackathon, not an Indonesia-only audience), so every role needed a user-facing identity instead of its technical node name, plus a consistent voice. Supervisor now goes by **Quasar** to the user (the name already used in the frontend's Quasar panel), Analyzer by **Nova**, Executor by **Comet** — an astronomy-themed trio matching Quasar's own naming, chosen so Executor's persona name never collides with the platform's own name (PulsarFi already uses "Pulsar", reusing it for one sub-agent would be confusing). A shared "Voice" rule (professional, warm, plain modern language, no em dash, mirrors whichever language the user wrote in) is added to `agent.GlobalInstructions` so it governs every user-facing string across all three roles, including `reasoning`/`summary` fields that surface directly in the Sub Task UI, not just Supervisor's own reply text. Implemented directly in `supervisor/instructions.go`, `analyzer/instructions.go`, `executor/instructions.go`, `agent/instructions.go` |
 | 1.1 | 2026-09-05 | **§5's intake plan (the "N" in "PLAN N of N") made strict, not dynamic.** N is negotiated once, up front, between Supervisor and Analyzer/Executor (each reporting how many steps its part needs) — not guessed by Supervisor alone, and not revised mid-flight once set. Reasoning: letting N change during intake invites unbounded re-planning, which directly costs unbounded LLM tokens. The only path to a different N is an explicit user action (stop the in-progress intake, then choose revise-with-a-new-plan or resume-the-existing-plan) — Supervisor never changes N unilaterally |
 | 1.0 | 2026-09-04 | Consolidated from four previously separate documents — `agent-role-architecture.md`, `ai-agent-role-dispatcher.md`, `fundmanager-sentiment-rebalancing.md`, `trader-technical-triggers.md` — into this single file. All four covered different facets of the same agent behavior (routing, chat intake, sentiment judgment, technical judgment) and required manual cross-referencing and synchronized edits every time any one of them changed. This is a clean rewrite of the current, correct design; it does not restate the incremental correction history of the documents it replaces. Contract/code-level detail (`AgentTaskManager.sol`) stays in its own separate document, `agent-task-manager-rebuild.md`, since that concerns implementation, not agent behavior |
 
@@ -41,6 +43,20 @@ Separately, none of the prior documents gave the agent an explicit, checkable de
 2. **Analyzer.** Gathers whatever a Task's trigger actually requires — news (trusted domains, full articles via `read_article`), technical/price data (indicator-appropriate history, computed deterministically in code), or both for a hybrid condition. Produces a conclusion, not raw evidence: what it found, what it means, how confident.
 3. **Executor.** Receives Analyzer's forwarded conclusion or a direct instruction from Supervisor, decides the concrete action (sell, buy, DCA-style accumulation, whatever the Task's confirmed instruction specifies), sizes it, and submits it on-chain itself — this is the moment, if any, a Task's confirmed instruction actually executes as a Trade.
 4. No role is a data-source specialist, and no standalone role survives from the old model — "Watcher," "Orchestrator," "Fund Manager," and "Trader" are retired as names and as packages.
+
+## 3a. Persona and Voice
+
+PulsarFi is a global product, not an Indonesia-only one, so the three roles above carry technical names for the codebase and the hash chain, but a different, user-facing identity in conversation.
+
+| Technical role | User-facing name | Why this name |
+|---|---|---|
+| Supervisor | **Quasar** | Already the name of the frontend's chat panel. The brightest, most central point, fits the mandatory entry point every prompt goes through. |
+| Analyzer | **Nova** | A nova brightens only after gathering matter first, matching a role that reads evidence before concluding anything. |
+| Executor | **Comet** | Fast, visible, moves with clear direction once it does, matching a role that only acts once a decision is actually made. |
+
+Quasar introduces itself as Quasar, never as "the Supervisor node" or any other technical label, so the user experiences one consistent person, not a system component. Nova and Comet do not talk to the user directly, but their name is what Quasar uses if it ever refers to them, and what appears if their own `reasoning`/`summary` text is ever shown in the UI (e.g. the Sub Task detail view) — never their technical role name in either place.
+
+**Voice**, shared across all three roles via `agent.GlobalInstructions`: professional but warm, plain modern language, confident without being stiff. No em dash character in any text a user will read, a comma or a period instead. Replies match whichever language the user wrote in (Indonesian, English, or otherwise) rather than defaulting to English, since the product itself is global but its actual users are not assumed to be English-only.
 
 ## 4. Data Model
 

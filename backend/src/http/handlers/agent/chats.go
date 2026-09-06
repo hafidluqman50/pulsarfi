@@ -1,21 +1,26 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
-	"strconv"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	usermw "github.com/horizonlabs/pulsarfi-backend/src/http/middleware/user"
 	chatrequest "github.com/horizonlabs/pulsarfi-backend/src/http/request/agent/chat"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
+	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
-// PostChatMessageHandler feeds one prompt into Supervisor's chat-intake
-// flow and returns whatever card shape this turn produced — a plain
-// reply, or a chart. It never itself calls createTask on-chain — that
-// only happens at ArmTaskHandler, once every question is answered.
+type sseEvent struct {
+	Type string `json:"type"`
+	Data any    `json:"data"`
+}
+
 func PostChatMessageHandler(c *gin.Context) {
 	if !ensureService(c) {
 		return
@@ -25,7 +30,7 @@ func PostChatMessageHandler(c *gin.Context) {
 		response.Unauthorized(c, "authentication required")
 		return
 	}
-	chatID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	chatID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		response.BadRequest(c, "invalid chat id")
 		return
@@ -36,28 +41,12 @@ func PostChatMessageHandler(c *gin.Context) {
 		return
 	}
 
-	workflowCard, err := taskSvc.HandleChatMessage(c.Request.Context(), chatID, claims.WalletAddress, messageRequest.Message)
-	if errors.Is(err, agentsvc.ErrChatNotFound) {
-		response.NotFound(c, "chat not found")
-		return
-	}
-	if errors.Is(err, agentsvc.ErrWalletMismatch) {
-		response.Forbidden(c, "chat does not belong to the authenticated wallet")
-		return
-	}
-	if err != nil {
-		slog.ErrorContext(c.Request.Context(), "agent: process chat message failed", "chat_id", chatID, "error", err)
-		response.InternalError(c, "failed to process message")
-		return
-	}
-
-	response.OK(c, "message processed", workflowCard)
+	streamAgentRun(c, func(onSubTask func(model.AgentSubTask), onTextDelta func(string)) (agentsvc.WorkflowCard, error) {
+		return taskSvc.HandleChatMessage(c.Request.Context(), chatID, claims.WalletAddress, messageRequest.Message, onSubTask, onTextDelta)
+	})
 }
 
-// CreateChatHandler opens a new, empty conversation thread — "+ new chat".
-// No Task exists yet; one only appears once a message in this chat is
-// recognized as a genuinely distinct, data-needing request.
-func CreateChatHandler(c *gin.Context) {
+func RetryLastMessageHandler(c *gin.Context) {
 	if !ensureService(c) {
 		return
 	}
@@ -66,18 +55,85 @@ func CreateChatHandler(c *gin.Context) {
 		response.Unauthorized(c, "authentication required")
 		return
 	}
-
-	chat, err := taskSvc.CreateChat(c.Request.Context(), claims.WalletAddress, nil)
+	chatID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		response.InternalError(c, "failed to create chat")
+		response.BadRequest(c, "invalid chat id")
 		return
 	}
 
-	response.Created(c, "chat created", chat)
+	streamAgentRun(c, func(onSubTask func(model.AgentSubTask), onTextDelta func(string)) (agentsvc.WorkflowCard, error) {
+		return taskSvc.RetryLastMessage(c.Request.Context(), chatID, claims.WalletAddress, onSubTask, onTextDelta)
+	})
 }
 
-// ListChatsHandler always scopes to the authenticated wallet — chat
-// history is private.
+func streamAgentRun(c *gin.Context, run func(onSubTask func(model.AgentSubTask), onTextDelta func(string)) (agentsvc.WorkflowCard, error)) {
+	flusher, canFlush := c.Writer.(http.Flusher)
+	if !canFlush {
+		response.InternalError(c, "streaming not supported")
+		return
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	events := make(chan sseEvent, 32)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		workflowCard, err := run(
+			func(row model.AgentSubTask) {
+				events <- sseEvent{Type: "sub_task", Data: row}
+			},
+			func(delta string) {
+				events <- sseEvent{Type: "reply_delta", Data: gin.H{"delta": delta}}
+			},
+		)
+		switch {
+		case errors.Is(err, agentsvc.ErrWalletMismatch):
+			events <- sseEvent{Type: "error", Data: gin.H{"message": "chat does not belong to the authenticated wallet"}}
+		case errors.Is(err, agentsvc.ErrNothingToRetry):
+			events <- sseEvent{Type: "error", Data: gin.H{"message": "nothing to retry"}}
+		case err != nil:
+			slog.ErrorContext(c.Request.Context(), "agent: process chat message failed", "error", err)
+			events <- sseEvent{Type: "error", Data: gin.H{"message": "failed to process message"}}
+		default:
+			events <- sseEvent{Type: "final", Data: workflowCard}
+		}
+	}()
+
+	write := func(ev sseEvent) {
+		payload, err := json.Marshal(ev)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(c.Writer, "data: %s\n\n", payload)
+		flusher.Flush()
+	}
+
+	for {
+		select {
+		case ev := <-events:
+			write(ev)
+		case <-done:
+			for {
+				select {
+				case ev := <-events:
+					write(ev)
+				default:
+					return
+				}
+			}
+		case <-c.Request.Context().Done():
+			return
+		}
+	}
+}
+
 func ListChatsHandler(c *gin.Context) {
 	if !ensureService(c) {
 		return
@@ -97,8 +153,6 @@ func ListChatsHandler(c *gin.Context) {
 	response.OK(c, "chats retrieved", chats)
 }
 
-// GetChatMessagesHandler returns a chat's full transcript in order — what
-// the Quasar panel replays when a user reopens an existing chat.
 func GetChatMessagesHandler(c *gin.Context) {
 	if !ensureService(c) {
 		return
@@ -108,17 +162,13 @@ func GetChatMessagesHandler(c *gin.Context) {
 		response.Unauthorized(c, "authentication required")
 		return
 	}
-	chatID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	chatID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		response.BadRequest(c, "invalid chat id")
 		return
 	}
 
 	messages, err := taskSvc.GetChatMessages(c.Request.Context(), chatID, claims.WalletAddress)
-	if errors.Is(err, agentsvc.ErrChatNotFound) {
-		response.NotFound(c, "chat not found")
-		return
-	}
 	if errors.Is(err, agentsvc.ErrWalletMismatch) {
 		response.Forbidden(c, "chat does not belong to the authenticated wallet")
 		return

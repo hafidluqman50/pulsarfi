@@ -357,10 +357,14 @@ func yahooRangeParams(rangeName string) (string, string) {
 		return "1d", "1m"
 	case "1W":
 		return "5d", "15m"
+	case "1M":
+		return "1mo", "1d"
 	case "3M":
 		return "3mo", "1d"
 	case "1Y":
 		return "1y", "1d"
+	case "ALL":
+		return "max", "1wk"
 	default:
 		return "1mo", "1d"
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 // New builds the Supervisor agent, with analyzerAgent and executorAgent
@@ -37,11 +38,11 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, analyzerAgen
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: build create_task tool: %w", err)
 	}
-	analyzerTool, err := newAnalyzerTool(analyzerAgent)
+	analyzerTool, err := newAnalyzerTool(analyzerAgent, subTasks)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: build analyzer tool: %w", err)
 	}
-	executorTool, err := newExecutorTool(executorAgent)
+	executorTool, err := newExecutorTool(executorAgent, subTasks)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: build executor tool: %w", err)
 	}
@@ -51,7 +52,18 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, analyzerAgen
 		Description: "Reads a chat's context, opens new Tasks it recognizes, and routes to Analyzer and/or Executor as the situation calls for.",
 		Instruction: instructions,
 		Model:       chatModel,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: []tool.BaseTool{createTaskTool, analyzerTool, executorTool}}},
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: []tool.BaseTool{agent.WrapToolGraceful(createTaskTool), agent.WrapToolGraceful(analyzerTool), agent.WrapToolGraceful(executorTool)}}},
+		// Eino's own default (20) let one real turn (a compound chart +
+		// rebalancing-judgment question) loop for 3 real minutes before
+		// failing with ErrExceedMaxIterations — a genuine tool-call loop,
+		// not just a slow turn. Lower ceiling fails that same loop in well
+		// under a minute instead; it does not fix why the loop happens.
+		MaxIterations: 10,
+		// Attached only here, never on Analyzer's/Executor's own configs —
+		// so only Supervisor's own final synthesis streams to the user (see
+		// text_delta_middleware_service.go for why this is the only
+		// mechanism that actually produces real token deltas).
+		Handlers: []adk.ChatModelAgentMiddleware{&agent.TextDeltaMiddleware{}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: build agent: %w", err)

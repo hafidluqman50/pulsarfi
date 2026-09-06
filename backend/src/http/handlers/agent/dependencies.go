@@ -5,12 +5,15 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
 	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
 
 var taskSvc *agentsvc.TaskService
+var chartSvc *publicsvc.PortfolioChartReader
 
 func ConfigureServices(s *service.Registry) {
 	taskSvc = s.AgentTask
+	chartSvc = s.PortfolioChart
 }
 
 func ensureService(c *gin.Context) bool {

@@ -28,7 +28,7 @@ func Run() {
 		Addr:              addr,
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      5 * time.Minute,
 	}
 
 	go func() {

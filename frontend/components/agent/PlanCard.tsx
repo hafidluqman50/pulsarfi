@@ -1,77 +1,121 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTaskReasoning, useSendChatMessage } from '@/http/agent/hooks';
+import { statusColor, StructuredOrProse } from './SubTaskReasoning';
 
 type PlanCardProps = {
   taskId: number;
-  chatId?: number;
+  chatId?: string;
 };
 
-// Renders one Task as a numbered Sub Task list — the on-screen mirror of
-// agent_sub_tasks in step order. Answering a needs_input row is just the
-// next chat message (useSendChatMessage) — there is no separate
-// answer-endpoint; Supervisor resolves it from conversation context.
 export function PlanCard({ taskId, chatId }: PlanCardProps) {
   const { data: subTasks = [] } = useTaskReasoning(taskId);
   const [openRow, setOpenRow] = useState<number | null>(null);
   const [answerDraft, setAnswerDraft] = useState('');
   const sendMessage = useSendChatMessage(chatId);
+  const isSendingAnswerRef = useRef(false);
+
+  function sendAnswer(answer: string) {
+    const trimmed = answer.trim();
+    if (!trimmed || isSendingAnswerRef.current) return;
+    isSendingAnswerRef.current = true;
+    sendMessage.mutate(trimmed, {
+      onSettled: () => {
+        isSendingAnswerRef.current = false;
+      },
+    });
+    setAnswerDraft('');
+  }
 
   const genesisHash = subTasks[0]?.prev_decision_hash;
 
   return (
-    <div className="plan-card hairline p-[16px]">
-      <div className="flex items-center justify-between">
-        <span className="font-semibold">Task T-{taskId}</span>
-        <span className="text-[12px] text-[var(--body)]">{subTasks.length} sub tasks</span>
+    <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)' }}>
+      <div style={{ background: 'var(--ink)', color: 'var(--canvas)', padding: '10px 13px', display: 'flex', alignItems: 'center', gap: 9 }}>
+        <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>Task T-{taskId}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--hairline-strong)' }}>{subTasks.length} sub tasks</span>
       </div>
-      <p className="mt-[4px] text-[12px] text-[var(--body)]">
-        This whole card is one Task — your request. Each numbered row is a Sub Task: one step, run by one agent, with
-        its own reasoning and hash.
-      </p>
-      {genesisHash && <div className="mono mt-[8px] text-[11px] text-[var(--body)]">genesis {genesisHash}</div>}
+      <div style={{ borderBottom: '1px solid var(--hairline)', padding: '10px 13px', fontSize: 11.5, color: 'var(--body)', lineHeight: 1.5 }}>
+        This whole card is one <span style={{ fontWeight: 600, color: 'var(--ink)' }}>Task</span> — your request. Each numbered row is a{' '}
+        <span style={{ fontWeight: 600, color: 'var(--ink)' }}>Sub Task</span>: one step, run by one agent, with its own reasoning and hash. Open a row to
+        see what that step output.
+      </div>
+      {genesisHash && (
+        <div style={{ borderBottom: '1px solid var(--hairline)', padding: '9px 13px', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ticker)', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+          genesis {genesisHash} · keccak256(task_id, trigger, owner)
+        </div>
+      )}
 
       {subTasks.map((subTask) => {
         const isOpen = openRow === subTask.id;
         const needsInput = subTask.status === 'needs_input';
+        const color = statusColor(subTask.status);
         return (
-          <div key={subTask.id} className="hairline-top py-[10px]">
-            <button className="flex w-full items-center justify-between text-left" onClick={() => setOpenRow(isOpen ? null : subTask.id)}>
-              <span className="text-[13px]">
-                {String(subTask.step_order).padStart(2, '0')} {subTask.step_name}
-              </span>
-              <span className="text-[11px] text-[var(--body)]">{subTask.agent}</span>
-              <span className={`text-[11px] font-semibold ${needsInput ? 'text-[var(--negative)]' : ''}`}>
-                {needsInput ? 'NEEDS YOU' : subTask.status.toUpperCase()}
+          <div key={subTask.id} style={{ borderBottom: '1px solid var(--hairline)' }}>
+            <button
+              onClick={() => setOpenRow(isOpen ? null : subTask.id)}
+              style={{ width: '100%', appearance: 'none', border: 0, cursor: 'pointer', background: 'transparent', padding: '11px 13px', textAlign: 'left', display: 'block' }}
+            >
+              <span style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ticker)', flex: 'none' }}>
+                  {String(subTask.step_order).padStart(2, '0')}
+                </span>
+                <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3, flex: '1 1 120px', minWidth: 0 }}>{subTask.step_name}</span>
+                <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, flex: 'none' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ticker)' }}>{subTask.agent}</span>
+                  <span style={{ font: '600 9px/1.3 var(--font-sans)', letterSpacing: '.1em', textTransform: 'uppercase', color, border: `1px solid ${color}`, padding: '3px 4px', whiteSpace: 'nowrap' }}>
+                    {needsInput ? 'NEEDS YOU' : subTask.status.toUpperCase()}
+                  </span>
+                </span>
               </span>
             </button>
 
-            {isOpen && (
-              <div className="mt-[8px] pl-[16px]">
-                <p className="text-[12px]">Reasoning: {subTask.reasoning}</p>
-                {subTask.output && <p className="mt-[4px] text-[12px] text-[var(--body)]">Output: {subTask.output}</p>}
-                <p className="mono mt-[6px] text-[11px] text-[var(--body)]">
+            {isOpen && !needsInput && (
+              <div style={{ margin: '0 13px 12px 35px', borderLeft: '1px solid var(--hairline)', paddingLeft: 12 }}>
+                <div style={{ font: '600 8.5px/1.2 var(--font-sans)', letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--ticker)', marginBottom: 6 }}>
+                  Reasoning · {subTask.agent}
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <StructuredOrProse raw={subTask.reasoning} />
+                </div>
+                {subTask.output && (
+                  <>
+                    <div style={{ font: '600 8.5px/1.2 var(--font-sans)', letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--ticker)', marginBottom: 8 }}>
+                      Output
+                    </div>
+                    <StructuredOrProse raw={subTask.output} />
+                  </>
+                )}
+                <div style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--ticker)', marginTop: 10, lineHeight: 1.5, overflowWrap: 'anywhere' }}>
                   prev {subTask.prev_decision_hash} -&gt; hash {subTask.decision_hash}
-                </p>
+                </div>
+              </div>
+            )}
 
-                {needsInput && chatId != null && (
-                  <div className="mt-[8px] flex gap-[8px]">
+            {isOpen && needsInput && (
+              <div style={{ margin: '0 13px 13px 35px', borderLeft: '2px solid var(--merah)', paddingLeft: 12 }}>
+                <div style={{ fontSize: 12, color: 'var(--body)', lineHeight: 1.5, marginBottom: 12 }}>
+                  This Sub Task is <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--merah)' }}>needs_input</span>. I will not create the Task
+                  on a guessed number — nothing arms while an answer is missing.
+                </div>
+                {chatId != null && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                     <input
-                      className="flex-1 border border-[var(--hairline-strong)] px-[8px] py-[6px] text-[13px]"
+                      style={{ appearance: 'none', border: '1px solid var(--hairline-strong)', background: 'var(--putih)', color: 'var(--ink)', font: '500 12.5px/1.35 var(--font-sans)', padding: '9px 10px' }}
                       placeholder="Your answer"
                       value={answerDraft}
                       onChange={(e) => setAnswerDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') sendAnswer(answerDraft);
+                      }}
                     />
                     <button
-                      className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px] !text-[13px]"
                       disabled={!answerDraft.trim() || sendMessage.isPending}
-                      onClick={() => {
-                        sendMessage.mutate(answerDraft);
-                        setAnswerDraft('');
-                      }}
+                      onClick={() => sendAnswer(answerDraft)}
+                      style={{ appearance: 'none', cursor: 'pointer', border: '1px solid var(--ink)', background: 'var(--ink)', color: 'var(--canvas)', font: '600 12px/1 var(--font-sans)', padding: '9px 10px', alignSelf: 'flex-start' }}
                     >
-                      Send
+                      Send answer
                     </button>
                   </div>
                 )}

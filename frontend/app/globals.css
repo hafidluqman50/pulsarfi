@@ -15,6 +15,23 @@
   --positive: #1f7a4b;
   --negative: #c8102e;
   --ticker: #7a6f64;
+  /* Quasar panel — from the design reference's own pulsarfi.css, not guessed */
+  --ink-line: #4a423d;
+  --hairline-soft: #e9e4dc;
+  --canvas-sunk: #f0ece3;
+  --body-strong: #5a4a3a;
+  --merah-line: #f0d3cf;
+  --warn: #a8730a;
+  --warn-deep: #8a5f08;
+  --warn-soft: #fdf6e8;
+  --warn-line: #e0a93a;
+  --info: #1f4d8a;
+  --scroll-thumb: #d6cfc1;
+  /* aliases matching the design reference's own pulsarfi.css naming, so its
+     inline styles can be reused verbatim instead of re-derived */
+  --font-sans: var(--font-inter, "Inter"), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-fraunces, "Fraunces"), "Times New Roman", serif;
+  --font-mono: var(--font-jetbrains-mono, "JetBrains Mono"), ui-monospace, Menlo, monospace;
 }
 
 html, body {
@@ -74,6 +91,13 @@ img, svg, video { max-width: 100%; }
 .pulsar::before, .pulsar::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--merah); }
 .pulsar::before { animation: pulse-dot 1.6s ease-in-out infinite; }
 .pulsar::after  { animation: pulse-ring 1.6s ease-out infinite; }
+
+/* Quasar panel entrance animations, ported verbatim from the design reference */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slide-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+.rise { animation: rise .26s cubic-bezier(.2,.7,.3,1) both; }
+.panel { animation: slide-in .24s cubic-bezier(.2,.7,.3,1) both; }
+.thread::-webkit-scrollbar { width: 8px; }
 
 /* Marquee ticker */
 @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }

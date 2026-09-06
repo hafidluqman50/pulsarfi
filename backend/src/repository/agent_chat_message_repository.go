@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -12,7 +13,7 @@ type AgentChatMessageRepository struct {
 	DB *gorm.DB
 }
 
-func (r *AgentChatMessageRepository) FindByChatID(ctx context.Context, chatID int64) ([]model.AgentChatMessage, error) {
+func (r *AgentChatMessageRepository) FindByChatID(ctx context.Context, chatID uuid.UUID) ([]model.AgentChatMessage, error) {
 	var messages []model.AgentChatMessage
 	err := r.DB.WithContext(ctx).
 		Where("chat_id = ?", chatID).
@@ -22,7 +23,7 @@ func (r *AgentChatMessageRepository) FindByChatID(ctx context.Context, chatID in
 }
 
 type AgentChatMessageCreateInput struct {
-	ChatID      int64
+	ChatID      uuid.UUID
 	Sender      string
 	ContentType string
 	Content     string
