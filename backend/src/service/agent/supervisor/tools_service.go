@@ -111,7 +111,7 @@ func ensureRecorder(rc *agent.RunContext) error {
 	return nil
 }
 
-func newAnalyzerTool(analyzerAgent adk.Agent) (tool.InvokableTool, error) {
+func newAnalyzerTool(analyzerAgentQuick, analyzerAgentDeep adk.Agent) (tool.InvokableTool, error) {
 	return utils.InferTool(
 		"analyzer_agent",
 		"Gathers news and/or technical evidence for the current Task's trigger condition and concludes whether it is satisfied. Also handles portfolio/chart questions.",
@@ -132,6 +132,15 @@ func newAnalyzerTool(analyzerAgent adk.Agent) (tool.InvokableTool, error) {
 
 			if rc.OnSubTaskStarted != nil {
 				rc.OnSubTaskStarted("analyzer", "gather_evidence", req.Label)
+			}
+			// The model itself changes here, not just reasoning effort within
+			// one fixed model — found live, confirmed against real DeepSeek
+			// billing: Depth alone (as a reasoning-effort override, §1.1/§1.2
+			// of dynamic-model-tier-routing.md) never actually changed which
+			// model ran, so every "quick" call was still billed at Pro rates.
+			analyzerAgent := analyzerAgentQuick
+			if req.Depth == "deep" {
+				analyzerAgent = analyzerAgentDeep
 			}
 			conclusion, nestedToolCalls, err := agent.RunAgentWithTrace(ctx, analyzerAgent, req.Request, nil, reasoningEffortFor(req.Depth))
 			if err != nil {

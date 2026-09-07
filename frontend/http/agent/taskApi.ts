@@ -58,6 +58,11 @@ export async function listTasks(): Promise<AgentTask[]> {
   return Array.isArray(res.data?.data) ? res.data.data : [];
 }
 
+export async function getActivity(): Promise<AgentSubTask[]> {
+  const res = await client.get('/agent/activity');
+  return Array.isArray(res.data?.data) ? res.data.data : [];
+}
+
 export async function getTaskReasoning(taskId: number): Promise<AgentSubTask[]> {
   const res = await client.get(`/agent/tasks/${taskId}/reasoning`);
   return Array.isArray(res.data?.data) ? res.data.data : [];

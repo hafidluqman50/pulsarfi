@@ -26,19 +26,25 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
-// New builds the Supervisor agent, with analyzerAgent and executorAgent
-// (each already built by their own package's New) wired in as tools, plus
-// its own create_task tool (docs/plans/agent-task-manager-code-implementation.md
-// §7.B) backed directly by the Task/Sub Task repositories — Supervisor
-// never receives raw search/price tools directly, and never receives a
-// chain client either; it routes and recognizes, it does not gather,
-// decide, or move funds itself.
-func New(ctx context.Context, chatModel model.ToolCallingChatModel, analyzerAgent, executorAgent adk.Agent, tasks *repository.AgentTaskRepository, subTasks *repository.AgentSubTaskRepository) (adk.Agent, error) {
+// New builds the Supervisor agent, with analyzerAgentQuick/analyzerAgentDeep
+// and executorAgent (each already built by their own package's New) wired
+// in as tools, plus its own create_task tool
+// (docs/plans/agent-task-manager-code-implementation.md §7.B) backed
+// directly by the Task/Sub Task repositories — Supervisor never receives
+// raw search/price tools directly, and never receives a chain client
+// either; it routes and recognizes, it does not gather, decide, or move
+// funds itself. analyzerAgentQuick/analyzerAgentDeep are the same Analyzer
+// built twice against two different underlying models (Flash/Pro) — which
+// one actually runs for a given call is decided per-request by
+// analyzer_agent's own Depth field (docs/plans/dynamic-model-tier-routing.md),
+// not by which one Supervisor happens to call, since there is only ever
+// one analyzer_agent tool from Supervisor's own point of view.
+func New(ctx context.Context, chatModel model.ToolCallingChatModel, analyzerAgentQuick, analyzerAgentDeep, executorAgent adk.Agent, tasks *repository.AgentTaskRepository, subTasks *repository.AgentSubTaskRepository) (adk.Agent, error) {
 	createTaskTool, err := newCreateTaskTool(tasks, subTasks)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: build create_task tool: %w", err)
 	}
-	analyzerTool, err := newAnalyzerTool(analyzerAgent)
+	analyzerTool, err := newAnalyzerTool(analyzerAgentQuick, analyzerAgentDeep)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: build analyzer tool: %w", err)
 	}

@@ -32,6 +32,30 @@ func ListTasksHandler(c *gin.Context) {
 	response.OK(c, "tasks retrieved", tasks)
 }
 
+// GetActivityHandler is the Activity Log menu's feed — every step across
+// every one of the wallet's own Tasks, most recent first. Scoped to the
+// authenticated wallet, unlike GetReasoningHandler (one Task's full chain,
+// deliberately public for independent verification) — this is a personal
+// feed, not an audit artifact for a third party to check.
+func GetActivityHandler(c *gin.Context) {
+	if !ensureService(c) {
+		return
+	}
+	claims, ok := usermw.Get(c)
+	if !ok {
+		response.Unauthorized(c, "authentication required")
+		return
+	}
+
+	rows, err := taskSvc.GetActivity(c.Request.Context(), claims.WalletAddress)
+	if err != nil {
+		response.InternalError(c, "failed to fetch activity")
+		return
+	}
+
+	response.OK(c, "activity retrieved", rows)
+}
+
 // ArmTaskHandler is the one call that actually moves this Task on-chain:
 // createTask always, grantTradePermission only if the Task is actionable.
 // Returns the token/amount the frontend still needs to prompt the owner's

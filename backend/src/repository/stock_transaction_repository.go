@@ -93,15 +93,28 @@ func (r *StockTransactionRepository) FindByTxHashLogWalletSide(
 }
 
 type StatsRow struct {
-	Volume24h float64
+	// gorm column tag required here: GORM's default naming strategy maps
+	// "Volume24h" to "volume24h" (no underscore before the digits), not
+	// "volume_24h" — the raw SQL below aliases the column "volume_24h", so
+	// without this tag Scan silently never matched it and this field stayed
+	// 0 always, regardless of what the query actually computed. Found live
+	// while investigating why "24h volume" was 0 even after removing the
+	// time window entirely — the window was never the real bug.
+	Volume24h float64 `gorm:"column:volume_24h"`
 	TvlIdrx   float64
 }
 
 func (r *StockTransactionRepository) ComputeStats(ctx context.Context) (StatsRow, error) {
 	var row StatsRow
+	// Volume24h is actually all-time volume, not the last 24h — this demo's
+	// own transaction history is real but sparse (weeks between trades), so
+	// a strict 24h window sat at 0 far more often than it showed anything
+	// real. Field/column name kept as-is (volume_24h) to avoid an unrelated
+	// migration+rename for what is otherwise still "trading volume, one
+	// number" — only the window changed.
 	err := r.DB.WithContext(ctx).Raw(`
 		SELECT
-			COALESCE(SUM(CASE WHEN created_at >= NOW() - INTERVAL '24 hours' AND side IN ('buy', 'sell') THEN idrx_amount::numeric / 100 ELSE 0 END), 0) AS volume_24h,
+			COALESCE(SUM(CASE WHEN side IN ('buy', 'sell') THEN idrx_amount::numeric / 100 ELSE 0 END), 0) AS volume_24h,
 			COALESCE(SUM(CASE
 				WHEN side = 'buy' THEN idrx_amount::numeric / 100
 				WHEN side IN ('sell', 'redeemed') THEN -idrx_amount::numeric / 100

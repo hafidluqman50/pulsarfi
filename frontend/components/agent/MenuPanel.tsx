@@ -5,15 +5,15 @@ type MenuPanelProps = {
   onSelect: (destination: QuasarDestination) => void;
 };
 
-// Pixel-matched to Agent Chat.dc.html's menu list (isMenu section). Activity
-// log and Risk profile are explicitly out of scope for this pass
+// Pixel-matched to Agent Chat.dc.html's menu list (isMenu section). Risk
+// profile is still explicitly out of scope for this pass
 // (agent-task-manager-rebuild.md §5/§9) — listed to match the reference's
-// menu shape, disabled rather than faked.
+// menu shape, disabled rather than faked. Activity log shipped.
 export function MenuPanel({ active, onSelect }: MenuPanelProps) {
   const items: { n: string; key: QuasarDestination; t: string; d: string; disabled?: boolean }[] = [
     { n: '01', key: 'tasks', t: 'Tasks', d: 'Every Task Quasar has opened, armed, or is still running.' },
     { n: '02', key: 'history', t: 'Chat history', d: 'Every conversation you have had with Quasar.' },
-    { n: '03', key: 'activity', t: 'Activity log', d: 'The full on-chain-mirrored audit trail, filterable by kind.', disabled: true },
+    { n: '03', key: 'activity', t: 'Activity log', d: 'Every step across every one of your own Tasks, filterable by who ran it.' },
     { n: '04', key: 'risk', t: 'Risk profile', d: 'Read-only limits derived from your KYC and trading history.', disabled: true },
   ];
 

@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { streamChatMessage, retryLastMessage, type SubTaskStarted } from '@/http/agent/chatApi';
+import { streamChatMessage, retryLastMessage, type AgentChatMessage, type SubTaskStarted } from '@/http/agent/chatApi';
 import type { AgentSubTask } from '@/http/agent/taskApi';
 import { NewsBrief } from './NewsBrief';
 import { PlanCard } from './PlanCard';
@@ -148,7 +148,11 @@ function LiveSubTasks({ subTasks }: { subTasks: AgentSubTask[] }) {
 
 function MessageMarkdown({ content }: { content: string }) {
   return (
-    <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+    // overflowWrap/wordBreak here, not just on the link itself: a raw URL
+    // (no natural break points, unlike prose) otherwise overflows its
+    // container's width outright — most visible in a narrow viewport,
+    // where a long news link pushed the whole reply bubble past its edge.
+    <div style={{ fontSize: 14.5, lineHeight: 1.55, overflowWrap: 'anywhere', wordBreak: 'break-word', minWidth: 0 }}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -157,6 +161,11 @@ function MessageMarkdown({ content }: { content: string }) {
           ul: ({ children }) => <ul style={{ margin: '0 0 10px', paddingLeft: 20 }}>{children}</ul>,
           ol: ({ children }) => <ol style={{ margin: '0 0 10px', paddingLeft: 20 }}>{children}</ol>,
           li: ({ children }) => <li style={{ marginBottom: 4 }}>{children}</li>,
+          a: ({ children, href }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--merah)', overflowWrap: 'anywhere' }}>
+              {children}
+            </a>
+          ),
           table: ({ children }) => (
             <div style={{ overflowX: 'auto', margin: '0 0 10px' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>{children}</table>
@@ -211,6 +220,86 @@ function ChartCard({ uiProps }: { uiProps: unknown }) {
   return <SingleChartCard props={(uiProps as ChartUIProps | undefined) ?? {}} />;
 }
 
+type MessageListProps = {
+  chatId: string;
+  messages: AgentChatMessage[];
+  isLoading: boolean;
+  isStreaming: boolean;
+  pendingText: string | null;
+  failedMessage: { text: string; description: string } | null;
+  liveSubTasks: AgentSubTask[];
+  onRetry: () => void;
+};
+
+// Memoized and pulled out of ChatThread on purpose: draft (the textarea's
+// own state) used to live in the same component that renders this whole
+// list — ReactMarkdown re-parsing every message, plus a PlanCard per
+// supervisor reply doing its own data fetching, on every single keystroke,
+// as a chat's history grows. Now this only re-renders when its own props
+// (real content) actually change, not when the user is just typing.
+const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, onRetry }: MessageListProps) {
+  const threadRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages, pendingText, liveSubTasks, isStreaming]);
+
+  return (
+    <div ref={threadRef} className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {isLoading && <div className="skeleton" style={{ height: 80, width: '100%' }} />}
+
+      {messages.map((message, index) => {
+        const isLast = index === messages.length - 1;
+        const needsRetry = isLast && message.sender === 'user' && !isStreaming && !pendingText;
+        const retryDescription = needsRetry && failedMessage?.text === message.content ? failedMessage.description : 'No reply received for this message yet.';
+
+        return message.sender === 'user' ? (
+          <div key={message.id} className="rise" style={{ background: 'var(--merah-soft)', border: `1px solid ${needsRetry ? 'var(--negative)' : 'var(--merah-line)'}`, borderRight: `2px solid ${needsRetry ? 'var(--negative)' : 'var(--merah)'}`, padding: '13px 15px', marginLeft: 'clamp(18px,6vw,34px)' }}>
+            <div style={{ fontSize: 14.5, lineHeight: 1.55, color: 'var(--ink-soft)' }}>{message.content}</div>
+            {needsRetry && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 9, paddingTop: 9, borderTop: '1px solid var(--merah-line)' }}>
+                <span style={{ fontSize: 11.5, color: 'var(--negative)' }}>{retryDescription}</span>
+                <button
+                  onClick={onRetry}
+                  style={{ marginLeft: 'auto', appearance: 'none', cursor: 'pointer', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', font: '600 11px/1 var(--font-mono)', padding: '6px 10px', flex: 'none' }}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div key={message.id} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {message.ui_ref_task_id != null && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
+            <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
+              <MessageMarkdown content={message.content} />
+            </div>
+            {message.content_type === 'chart' && <ChartCard uiProps={message.ui_props} />}
+            {message.content_type === 'news' && <NewsBrief uiProps={message.ui_props} />}
+          </div>
+        );
+      })}
+
+      {pendingText && (
+        <div className="rise" style={{ background: 'var(--merah-soft)', border: '1px solid var(--merah-line)', borderRight: '2px solid var(--merah)', padding: '13px 15px', marginLeft: 'clamp(18px,6vw,34px)', opacity: 0.6 }}>
+          <div style={{ fontSize: 14.5, lineHeight: 1.55, color: 'var(--ink-soft)' }}>{pendingText}</div>
+        </div>
+      )}
+
+      {isStreaming && liveSubTasks.length === 0 && (
+        <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--canvas)', padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="pulsar" />
+          <span style={{ fontSize: 12.5, color: 'var(--body)', fontFamily: 'var(--font-mono)' }}>Quasar is thinking…</span>
+        </div>
+      )}
+
+      {isStreaming && <LiveSubTasks subTasks={liveSubTasks} />}
+    </div>
+  );
+});
+
 export function ChatThread({ chatId }: ChatThreadProps) {
   const { data: messages = [], isLoading } = useChatMessages(chatId);
   const queryClient = useQueryClient();
@@ -220,13 +309,6 @@ export function ChatThread({ chatId }: ChatThreadProps) {
   const [liveSubTasks, setLiveSubTasks] = useState<AgentSubTask[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const isSendingRef = useRef(false);
-  const threadRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = threadRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages, pendingText, liveSubTasks, isStreaming]);
 
   useEffect(() => {
     if (!pendingText) return;
@@ -266,7 +348,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     }
   }
 
-  async function handleRetry() {
+  const handleRetry = useCallback(async () => {
     if (isSendingRef.current) return;
     isSendingRef.current = true;
     setIsStreaming(true);
@@ -292,60 +374,20 @@ export function ChatThread({ chatId }: ChatThreadProps) {
       setLiveSubTasks([]);
       setIsStreaming(false);
     }
-  }
+  }, [chatId, messages, queryClient]);
 
   return (
     <>
-      <div ref={threadRef} className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {isLoading && <div className="skeleton" style={{ height: 80, width: '100%' }} />}
-
-        {messages.map((message, index) => {
-          const isLast = index === messages.length - 1;
-          const needsRetry = isLast && message.sender === 'user' && !isStreaming && !pendingText;
-          const retryDescription = needsRetry && failedMessage?.text === message.content ? failedMessage.description : 'No reply received for this message yet.';
-
-          return message.sender === 'user' ? (
-            <div key={message.id} className="rise" style={{ background: 'var(--merah-soft)', border: `1px solid ${needsRetry ? 'var(--negative)' : 'var(--merah-line)'}`, borderRight: `2px solid ${needsRetry ? 'var(--negative)' : 'var(--merah)'}`, padding: '13px 15px', marginLeft: 'clamp(18px,6vw,34px)' }}>
-              <div style={{ fontSize: 14.5, lineHeight: 1.55, color: 'var(--ink-soft)' }}>{message.content}</div>
-              {needsRetry && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 9, paddingTop: 9, borderTop: '1px solid var(--merah-line)' }}>
-                  <span style={{ fontSize: 11.5, color: 'var(--negative)' }}>{retryDescription}</span>
-                  <button
-                    onClick={handleRetry}
-                    style={{ marginLeft: 'auto', appearance: 'none', cursor: 'pointer', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', font: '600 11px/1 var(--font-mono)', padding: '6px 10px', flex: 'none' }}
-                  >
-                    Retry
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div key={message.id} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {message.ui_ref_task_id != null && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
-              <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
-                <MessageMarkdown content={message.content} />
-              </div>
-              {message.content_type === 'chart' && <ChartCard uiProps={message.ui_props} />}
-              {message.content_type === 'news' && <NewsBrief uiProps={message.ui_props} />}
-            </div>
-          );
-        })}
-
-        {pendingText && (
-          <div className="rise" style={{ background: 'var(--merah-soft)', border: '1px solid var(--merah-line)', borderRight: '2px solid var(--merah)', padding: '13px 15px', marginLeft: 'clamp(18px,6vw,34px)', opacity: 0.6 }}>
-            <div style={{ fontSize: 14.5, lineHeight: 1.55, color: 'var(--ink-soft)' }}>{pendingText}</div>
-          </div>
-        )}
-
-        {isStreaming && liveSubTasks.length === 0 && (
-          <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--canvas)', padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span className="pulsar" />
-            <span style={{ fontSize: 12.5, color: 'var(--body)', fontFamily: 'var(--font-mono)' }}>Quasar is thinking…</span>
-          </div>
-        )}
-
-        {isStreaming && <LiveSubTasks subTasks={liveSubTasks} />}
-      </div>
+      <MessageList
+        chatId={chatId}
+        messages={messages}
+        isLoading={isLoading}
+        isStreaming={isStreaming}
+        pendingText={pendingText}
+        failedMessage={failedMessage}
+        liveSubTasks={liveSubTasks}
+        onRetry={handleRetry}
+      />
 
       <div style={{ flex: 'none', borderTop: '1px solid var(--hairline)', background: 'var(--canvas)', padding: '10px 12px 12px' }}>
         <div style={{ border: '1px solid var(--ink)', background: 'var(--putih)', display: 'flex', alignItems: 'flex-end', gap: 0 }}>

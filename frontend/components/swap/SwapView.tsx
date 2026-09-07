@@ -210,7 +210,7 @@ export function SwapView({ headline }: SwapViewProps) {
 
 				<div className="hairline-top grid-3col mt-[36px] pt-[24px]">
 					<Stat
-						label="24h Volume"
+						label="Total Volume"
 						value={protocolStats ? `${fmtIDRXCompact(protocolStats.volume_24h)} IDRX` : "—"}
 						sub={protocolStats ? `across ${protocolStats.pair_count} pairs` : "loading…"}
 					/>

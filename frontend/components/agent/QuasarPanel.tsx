@@ -1,11 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useAgentChats, useAgentTasks } from '@/http/agent/hooks';
+import { useAgentActivity, useAgentChats, useAgentTasks } from '@/http/agent/hooks';
 import { RosterCard } from './RosterCard';
 import { MenuPanel, type QuasarDestination } from './MenuPanel';
 import { ChatThread } from './ChatThread';
 import { TaskDetail } from './TaskDetail';
+import { agentDisplayName, statusColor, stepDisplayName } from './SubTaskReasoning';
+
+const ACTIVITY_KINDS = ['all', 'supervisor', 'analyzer', 'executor'] as const;
+type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
 export function QuasarPanel() {
   const [expanded, setExpanded] = useState(false);
@@ -13,6 +17,7 @@ export function QuasarPanel() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
   const [isSheet, setIsSheet] = useState(false);
+  const [activityKind, setActivityKind] = useState<ActivityKind>('all');
 
   useEffect(() => {
     const check = () => setIsSheet(window.innerWidth < 700);
@@ -23,6 +28,7 @@ export function QuasarPanel() {
 
   const { data: chats = [] } = useAgentChats();
   const { data: tasks = [] } = useAgentTasks();
+  const { data: activity = [] } = useAgentActivity();
 
   useEffect(() => {
     if (activeChatId || chats.length === 0) return;
@@ -158,6 +164,57 @@ export function QuasarPanel() {
             </button>
           ))}
           {chats.length === 0 && <div style={{ padding: 13, fontSize: 13, color: 'var(--body)' }}>No chat history yet.</div>}
+        </div>
+      )}
+
+      {destination === 'activity' && (
+        <div className="rise" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', gap: 4, padding: '10px 13px', borderBottom: '1px solid var(--hairline)', flex: 'none' }}>
+            {ACTIVITY_KINDS.map((kind) => (
+              <button
+                key={kind}
+                onClick={() => setActivityKind(kind)}
+                style={{
+                  appearance: 'none',
+                  cursor: 'pointer',
+                  border: `1px solid ${activityKind === kind ? 'var(--ink)' : 'var(--hairline)'}`,
+                  background: activityKind === kind ? 'var(--ink)' : 'transparent',
+                  color: activityKind === kind ? 'var(--canvas)' : 'var(--body)',
+                  font: '600 10.5px/1 var(--font-mono)',
+                  padding: '5px 9px',
+                }}
+              >
+                {kind === 'all' ? 'ALL' : agentDisplayName(kind)}
+              </button>
+            ))}
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {activity
+              .filter((row) => activityKind === 'all' || row.agent === activityKind)
+              .map((row) => {
+                const color = statusColor(row.status);
+                return (
+                  <button
+                    key={row.id}
+                    onClick={() => {
+                      setActiveTaskId(row.task_id);
+                      setDestination('tasks');
+                    }}
+                    style={{ width: '100%', appearance: 'none', border: 0, borderBottom: '1px solid var(--hairline)', cursor: 'pointer', background: 'var(--canvas)', padding: 13, textAlign: 'left' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 6 }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ticker)' }}>T-{row.task_id}</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ticker)' }}>{agentDisplayName(row.agent)}</span>
+                      <span style={{ marginLeft: 'auto', font: '600 9px/1.3 var(--font-sans)', letterSpacing: '.1em', textTransform: 'uppercase', color, border: `1px solid ${color}`, padding: '3px 4px', whiteSpace: 'nowrap' }}>
+                        {row.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{stepDisplayName(row.label, row.step_name)}</div>
+                  </button>
+                );
+              })}
+            {activity.length === 0 && <div style={{ padding: 13, fontSize: 13, color: 'var(--body)' }}>No activity yet.</div>}
+          </div>
         </div>
       )}
 

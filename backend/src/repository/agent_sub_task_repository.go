@@ -67,3 +67,19 @@ func (r *AgentSubTaskRepository) MarkRecordedOnChain(ctx context.Context, ids []
 		Where("id IN ?", ids).
 		Updates(map[string]any{"recorded_on_chain": true, "on_chain_tx_hash": txHash}).Error
 }
+
+// FindByOwnerWallet is the Activity Log's own feed — every step across
+// every one of this wallet's own Tasks, most recent first, not one Task's
+// chain at a time like FindByTaskID. Joins through agent_tasks since
+// agent_sub_tasks itself carries no wallet column.
+func (r *AgentSubTaskRepository) FindByOwnerWallet(ctx context.Context, walletAddress string, limit int) ([]model.AgentSubTask, error) {
+	var subTasks []model.AgentSubTask
+	err := r.DB.WithContext(ctx).
+		Select("agent_sub_tasks.*").
+		Joins("JOIN agent_tasks ON agent_tasks.id = agent_sub_tasks.task_id").
+		Where("agent_tasks.wallet_address = ?", walletAddress).
+		Order("agent_sub_tasks.created_at DESC").
+		Limit(limit).
+		Find(&subTasks).Error
+	return subTasks, err
+}

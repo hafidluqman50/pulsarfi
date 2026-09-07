@@ -49,6 +49,10 @@ export function useAgentTasks() {
   return useQuery({ queryKey: ['agent-tasks'], queryFn: taskApi.listTasks });
 }
 
+export function useAgentActivity() {
+  return useQuery({ queryKey: ['agent-activity'], queryFn: taskApi.getActivity });
+}
+
 // upsertById replaces the row matching incoming.id if present, otherwise
 // appends it — how a single pushed row (one agent_sub_tasks/agent_trades
 // insert) gets folded into the already-cached list, instead of refetching

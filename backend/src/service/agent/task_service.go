@@ -58,6 +58,16 @@ func (s *TaskService) ListChats(ctx context.Context, walletAddress string) ([]mo
 	return s.Chats.FindByOwnerWallet(ctx, strings.ToLower(walletAddress))
 }
 
+// activityFeedLimit caps the Activity Log to the most recent steps across
+// every one of the wallet's own Tasks — a live feed, not a paginated
+// archive; the full chain for any one Task is still available in full via
+// GetReasoningChain.
+const activityFeedLimit = 200
+
+func (s *TaskService) GetActivity(ctx context.Context, walletAddress string) ([]model.AgentSubTask, error) {
+	return s.SubTasks.FindByOwnerWallet(ctx, strings.ToLower(walletAddress), activityFeedLimit)
+}
+
 func (s *TaskService) GetChatMessages(ctx context.Context, chatID uuid.UUID, walletAddress string) ([]model.AgentChatMessage, error) {
 	chat, found, err := s.Chats.FindByID(ctx, chatID)
 	if err != nil {

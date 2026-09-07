@@ -28,10 +28,17 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 	ctx := context.Background()
 
 	// Supervisor runs on every prompt (cheap, high-volume routing — Flash
-	// tier). Analyzer/Executor only run once Supervisor has already decided
-	// they're needed — rarer, deeper reasoning, so they get the Pro tier.
+	// tier). Executor is always Pro — any call means an action might
+	// actually be taken, the highest-stakes case regardless of what led
+	// there. Analyzer gets built twice, against both tiers: which one
+	// actually runs for a given request is decided per-call by Supervisor's
+	// own Depth field (docs/plans/dynamic-model-tier-routing.md) — a
+	// reasoning-effort override on one fixed model was tried first and
+	// found live to never actually change which model billed, since the
+	// model itself was still hardcoded to Pro regardless of Depth.
 	supervisorModel, supervisorErr := external.NewDeepSeekChatModelFromEnv(ctx, external.ModelFlash)
-	analyzerModel, analyzerErr := external.NewDeepSeekChatModelFromEnv(ctx, external.ModelPro)
+	analyzerModelQuick, analyzerQuickErr := external.NewDeepSeekChatModelFromEnv(ctx, external.ModelFlash)
+	analyzerModelDeep, analyzerDeepErr := external.NewDeepSeekChatModelFromEnv(ctx, external.ModelPro)
 	executorModel, executorErr := external.NewDeepSeekChatModelFromEnv(ctx, external.ModelPro)
 	// Analyzer's own news tools — an agent's own tools live in that agent's
 	// own folder, not a shared top-level file. Tavily replaced the previous
@@ -71,8 +78,11 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 	case supervisorErr != nil:
 		log.Printf("agent task service disabled: %v", supervisorErr)
 		return nil, nil
-	case analyzerErr != nil:
-		log.Printf("agent task service disabled: %v", analyzerErr)
+	case analyzerQuickErr != nil:
+		log.Printf("agent task service disabled: %v", analyzerQuickErr)
+		return nil, nil
+	case analyzerDeepErr != nil:
+		log.Printf("agent task service disabled: %v", analyzerDeepErr)
 		return nil, nil
 	case executorErr != nil:
 		log.Printf("agent task service disabled: %v", executorErr)
@@ -95,9 +105,18 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		analyzerExtraTools = append(analyzerExtraTools, searchTool)
 	}
 
-	analyzerAgent, err := analyzer.New(ctx, analyzerModel, chartReader, chartReader.Price, analyzerExtraTools...)
+	// Built twice against two different models, sharing the same tools —
+	// building the same portfolio/chart/search/read_article tools twice is
+	// cheap (they're stateless closures over already-shared readers/services),
+	// nothing here duplicates any actual work at request time.
+	analyzerAgentQuick, err := analyzer.New(ctx, analyzerModelQuick, chartReader, chartReader.Price, analyzerExtraTools...)
 	if err != nil {
-		log.Printf("agent task service disabled: build analyzer agent: %v", err)
+		log.Printf("agent task service disabled: build analyzer agent (quick): %v", err)
+		return nil, nil
+	}
+	analyzerAgentDeep, err := analyzer.New(ctx, analyzerModelDeep, chartReader, chartReader.Price, analyzerExtraTools...)
+	if err != nil {
+		log.Printf("agent task service disabled: build analyzer agent (deep): %v", err)
 		return nil, nil
 	}
 	executorAgent, err := executor.New(ctx, executorModel, &executor.DBPortfolioReader{Transactions: repos.StockTransaction}, taskExecutor, repos.Stock)
@@ -105,7 +124,7 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		log.Printf("agent task service disabled: build executor agent: %v", err)
 		return nil, nil
 	}
-	supervisorAgent, err := supervisor.New(ctx, supervisorModel, analyzerAgent, executorAgent, repos.AgentTask, repos.AgentSubTask)
+	supervisorAgent, err := supervisor.New(ctx, supervisorModel, analyzerAgentQuick, analyzerAgentDeep, executorAgent, repos.AgentTask, repos.AgentSubTask)
 	if err != nil {
 		log.Printf("agent task service disabled: build supervisor agent: %v", err)
 		return nil, nil
