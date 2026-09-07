@@ -7,17 +7,21 @@ import (
 )
 
 type RunContext struct {
-	TaskID                 int64
-	OnChainTaskID          *int64
-	LastKnownTaskID        *int64
-	LastKnownOnChainTaskID *int64
-	Wallet                 string
-	TriggerDescription     string
-	SourceMessageID        *int64
-	Recorder               *SubTaskRecorder
-	NestedToolCalls        []ToolCallTrace
-	OnSubTask              func(model.AgentSubTask)
-	OnTextDelta            func(string)
+	TaskID             int64
+	OnChainTaskID      *int64
+	Wallet             string
+	TriggerDescription string
+	SourceMessageID    *int64
+	Recorder           *SubTaskRecorder
+	NestedToolCalls    []ToolCallTrace
+	OnSubTask          func(model.AgentSubTask)
+	// OnSubTaskStarted fires the instant a step begins, before its actual
+	// work runs — never persisted (SubTaskRecorder only ever writes a step
+	// once it's done, so the hash chain stays exactly as before), purely an
+	// ephemeral live signal so the UI can show "in progress" instead of a
+	// step only ever appearing already finished.
+	OnSubTaskStarted func(agentName, stepName, label string)
+	OnTextDelta      func(string)
 }
 
 type runContextKey struct{}

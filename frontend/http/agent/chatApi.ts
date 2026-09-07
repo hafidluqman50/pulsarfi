@@ -12,7 +12,7 @@ export interface AgentChatMessage {
   id: number;
   chat_id: string;
   sender: 'user' | 'supervisor';
-  content_type: 'text' | 'workflow_card' | 'chart';
+  content_type: 'text' | 'workflow_card' | 'chart' | 'news';
   content: string;
   ui_component: string | null;
   ui_props: unknown;
@@ -23,7 +23,7 @@ export interface AgentChatMessage {
 export interface WorkflowCard {
   task_id?: number;
   reply: string;
-  content_type: 'text' | 'chart';
+  content_type: 'text' | 'chart' | 'news';
   ui_component?: string | null;
   ui_props?: unknown;
 }
@@ -43,8 +43,15 @@ export async function getChatMessages(chatId: string): Promise<AgentChatMessage[
   return Array.isArray(res.data?.data) ? res.data.data : [];
 }
 
+export interface SubTaskStarted {
+  agent: string;
+  step_name: string;
+  label: string;
+}
+
 export type ChatStreamEvent =
   | { type: 'sub_task'; data: AgentSubTask }
+  | { type: 'sub_task_started'; data: SubTaskStarted }
   | { type: 'final'; data: WorkflowCard }
   | { type: 'error'; data: { message: string } };
 

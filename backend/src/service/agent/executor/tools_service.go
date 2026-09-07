@@ -45,6 +45,7 @@ type submitTradeRequest struct {
 	Side      string `json:"side" jsonschema_description:"buy or sell — your own conclusion, matching the Task's trigger."`
 	Amount    string `json:"amount" jsonschema_description:"IDRX-equivalent amount to act with this cycle. Clamped server-side to the Task's remaining TradePermission headroom regardless of what you request."`
 	Reasoning string `json:"reasoning" jsonschema_description:"Short, specific reasoning citing the evidence and severity that justified this exact ticker, side, and amount — never a generic restatement of the trigger condition."`
+	Label     string `json:"label" jsonschema_description:"A short, human-readable description of this trade, in the same language you are replying to the user in — e.g. 'Menjual 20% BRPT' or 'Selling 20% of BRPT'. Shown to the user as this step's title."`
 }
 
 type submitTradeResponse struct {
@@ -109,7 +110,10 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup) (tool.InvokableTo
 			}
 			intent := agent.TradeIntent{Ticker: req.Ticker, Side: side, Amount: amount}
 
-			decideRow, err := rc.Recorder.Record(ctx, "executor", "decide", "done", req.Reasoning, map[string]any{
+			if rc.OnSubTaskStarted != nil {
+				rc.OnSubTaskStarted("executor", "decide", req.Label)
+			}
+			decideRow, err := rc.Recorder.Record(ctx, "executor", "decide", "done", req.Reasoning, req.Label, map[string]any{
 				"ticker": intent.Ticker,
 				"side":   intent.Side,
 				"amount": intent.Amount,
@@ -118,14 +122,17 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup) (tool.InvokableTo
 				return submitTradeResponse{}, fmt.Errorf("submit_trade: record decide: %w", err)
 			}
 
+			if rc.OnSubTaskStarted != nil {
+				rc.OnSubTaskStarted("executor", "execute", req.Label)
+			}
 			var reasoningHash [32]byte = common.HexToHash(decideRow.DecisionHash)
 			txHash, tradeID, err := exec.ExecuteTrade(ctx, uint(*rc.OnChainTaskID), intent, reasoningHash)
 			if err != nil {
-				_, _ = rc.Recorder.Record(ctx, "executor", "execute", "failed", err.Error(), nil)
+				_, _ = rc.Recorder.Record(ctx, "executor", "execute", "failed", err.Error(), req.Label, nil)
 				return submitTradeResponse{}, fmt.Errorf("submit_trade: execute: %w", err)
 			}
 
-			if _, err := rc.Recorder.Record(ctx, "executor", "execute", "done", "on-chain execution submitted", map[string]any{
+			if _, err := rc.Recorder.Record(ctx, "executor", "execute", "done", "on-chain execution submitted", req.Label, map[string]any{
 				"tx_hash":  txHash,
 				"trade_id": tradeID,
 			}); err != nil {

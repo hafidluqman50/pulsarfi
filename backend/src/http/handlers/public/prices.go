@@ -44,7 +44,7 @@ func GetStockHistoryHandler(c *gin.Context) {
 		return
 	}
 
-	points, err := publicPriceSvc.GetStockHistory(c.Request.Context(), ticker, c.Query("source"), c.DefaultQuery("range", "1M"))
+	points, err := publicPriceSvc.GetStockHistory(c.Request.Context(), ticker, c.DefaultQuery("range", "1M"))
 	if errors.Is(err, publicsvc.ErrStockNotFound) {
 		response.NotFound(c, "stock not found")
 		return

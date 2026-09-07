@@ -167,7 +167,7 @@ func (r *PortfolioChartReader) netWorthVsIndex(ctx context.Context, wallet, rang
 	if err != nil {
 		return nil, err
 	}
-	indexHistory, err := r.Price.GetStockHistory(ctx, "IHSG", "", rangeName)
+	indexHistory, err := r.Price.GetStockHistory(ctx, "IHSG", rangeName)
 	if err != nil {
 		return nil, err
 	}

@@ -1,15 +1,17 @@
 package analyzer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	readability "codeberg.org/readeck/go-readability/v2"
-	ddgsearch "github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 )
@@ -33,12 +35,88 @@ var TrustedNewsDomains = []string{
 	"cnbcindonesia.com",
 }
 
-// NewSearchTool wraps DuckDuckGo's ready-made tool — no API key needed,
-// unlike a production-grade provider (e.g. Tavily) would. eino-ext flags
-// it "not recommended for production" (no stable API, scraping-based) —
-// fine for now, upgrade later.
-func NewSearchTool(ctx context.Context, maxResults int) (tool.InvokableTool, error) {
-	return ddgsearch.NewTextSearchTool(ctx, &ddgsearch.Config{MaxResults: maxResults})
+type searchRequest struct {
+	Query string `json:"query" jsonschema_description:"The search query — the trigger condition's exact subject, not a paraphrase."`
+}
+
+type searchResultItem struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Content string `json:"content" jsonschema_description:"A snippet of the matching page's content — call read_article on the url for the full body before treating this as evidence."`
+}
+
+type searchResponse struct {
+	Results []searchResultItem `json:"results"`
+}
+
+type tavilySearchRequestBody struct {
+	Query          string   `json:"query"`
+	MaxResults     int      `json:"max_results"`
+	IncludeDomains []string `json:"include_domains,omitempty"`
+	Topic          string   `json:"topic"`
+}
+
+// NewSearchTool replaces the previous DuckDuckGo-backed tool (no stable
+// API, scraping-based, flagged by eino-ext itself as "not recommended for
+// production" — and confirmed live, repeatedly, as an actual real-world
+// failure point: a local network TLS-intercepting filter broke it
+// entirely for this user, docs/plans/agent-task-manager-code-implementation.md
+// §7.AA) with Tavily, a search API purpose-built for LLM agents (results
+// come back pre-scored for relevance, not raw HTML to scrape). Restricted
+// to trustedDomains via Tavily's own include_domains parameter — the same
+// allowlist read_article already enforces (TrustedNewsDomains, this file),
+// so untrusted results are filtered out at search time too, not only when
+// an article is actually fetched.
+func NewSearchTool(apiKey string, maxResults int, trustedDomains []string) (tool.InvokableTool, error) {
+	return utils.InferTool(
+		"web_search",
+		"Searches the web for current news/information relevant to the trigger condition, restricted to a trusted domain allowlist. Returns a snippet per result — always call read_article on a promising result's url for the full body before treating it as evidence.",
+		func(ctx context.Context, req searchRequest) (searchResponse, error) {
+			return tavilySearch(ctx, apiKey, req.Query, maxResults, trustedDomains)
+		},
+	)
+}
+
+func tavilySearch(ctx context.Context, apiKey, query string, maxResults int, includeDomains []string) (searchResponse, error) {
+	body, err := json.Marshal(tavilySearchRequestBody{
+		Query:          query,
+		MaxResults:     maxResults,
+		IncludeDomains: includeDomains,
+		Topic:          "news",
+	})
+	if err != nil {
+		return searchResponse{}, fmt.Errorf("web_search: marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.tavily.com/search", bytes.NewReader(body))
+	if err != nil {
+		return searchResponse{}, fmt.Errorf("web_search: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return searchResponse{}, fmt.Errorf("web_search: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return searchResponse{}, fmt.Errorf("web_search: read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return searchResponse{}, fmt.Errorf("web_search: tavily returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var parsed struct {
+		Results []searchResultItem `json:"results"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return searchResponse{}, fmt.Errorf("web_search: parse response: %w", err)
+	}
+	return searchResponse{Results: parsed.Results}, nil
 }
 
 type readArticleRequest struct {
@@ -46,8 +124,12 @@ type readArticleRequest struct {
 }
 
 type readArticleResponse struct {
-	Title   string `json:"title" jsonschema_description:"The article's headline."`
-	Content string `json:"content" jsonschema_description:"The article's full readable body text, stripped of ads/navigation/scripts."`
+	Title       string `json:"title" jsonschema_description:"The article's headline."`
+	Content     string `json:"content" jsonschema_description:"The article's full readable body text, stripped of ads/navigation/scripts."`
+	Excerpt     string `json:"excerpt,omitempty" jsonschema_description:"A short summary/dek pulled from the article's own metadata, when the page provides one."`
+	SiteName    string `json:"site_name,omitempty" jsonschema_description:"The publication's own name, from the article's metadata (e.g. 'Kompas.com')."`
+	ImageURL    string `json:"image_url,omitempty" jsonschema_description:"The article's lead image, when the page provides one."`
+	PublishedAt string `json:"published_at,omitempty" jsonschema_description:"When the article was actually published, RFC3339, only present when the page's own metadata states it — never guessed or left as the fetch time."`
 }
 
 // NewReadArticleTool builds a tool that fetches a URL and extracts its
@@ -89,7 +171,19 @@ func fetchArticle(rawURL string, allowedDomains []string) (readArticleResponse, 
 		return readArticleResponse{}, fmt.Errorf("read_article: render text failed: %w", err)
 	}
 
-	return readArticleResponse{Title: article.Title(), Content: body.String()}, nil
+	var publishedAt string
+	if t, err := article.PublishedTime(); err == nil {
+		publishedAt = t.Format(time.RFC3339)
+	}
+
+	return readArticleResponse{
+		Title:       article.Title(),
+		Content:     body.String(),
+		Excerpt:     article.Excerpt(),
+		SiteName:    article.SiteName(),
+		ImageURL:    article.ImageURL(),
+		PublishedAt: publishedAt,
+	}, nil
 }
 
 func hostAllowed(host string, allowedDomains []string) bool {

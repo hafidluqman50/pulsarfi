@@ -58,25 +58,36 @@ func (s *PriceService) GetStockPrice(ctx context.Context, ticker string, source 
 	return entry, nil
 }
 
-func (s *PriceService) GetStockHistory(ctx context.Context, ticker string, source string, rangeName string) ([]external.PriceHistoryPoint, error) {
+// GetStockHistory used to reject any ticker not in PulsarFi's own tokenized
+// catalog before ever querying Yahoo — the same bug already fixed for the
+// chat agent's own chart tool (PriceLineHistory, stock_chart_service.go),
+// just in this separate REST-facing path, which is what the frontend's
+// timeframe tabs (PortfolioChart.tsx) actually call on every click. A
+// ticker that IS in the catalog still resolves through it first, since a
+// PulsarFi wrapper ticker (e.g. "BUMIP") is not itself a real IDX ticker —
+// idx_ticker ("BUMI") is what Yahoo actually needs. Any other ticker is
+// assumed to already be a real IDX ticker and queried directly.
+func (s *PriceService) GetStockHistory(ctx context.Context, ticker string, rangeName string) ([]external.PriceHistoryPoint, error) {
 	ticker = strings.ToUpper(ticker)
 	if ticker == "IHSG" {
 		return s.Price.GetIHSGHistory(rangeName)
 	}
 
-	stock, found, err := s.Stocks.FindByTickerOrIdxTicker(ctx, ticker)
+	idxTicker := ticker
+	if stock, found, err := s.Stocks.FindByTickerOrIdxTicker(ctx, ticker); err != nil {
+		return nil, err
+	} else if found {
+		idxTicker = stock.IdxTicker
+	}
+
+	points, err := s.Price.GetYahooIDXHistory(idxTicker, rangeName)
 	if err != nil {
 		return nil, err
 	}
-	if !found {
+	if len(points) == 0 {
 		return nil, ErrStockNotFound
 	}
-
-	if strings.EqualFold(source, "idx") || stock.ContractAddress == nil || *stock.ContractAddress == "" {
-		return s.Price.GetYahooIDXHistory(stock.IdxTicker, rangeName)
-	}
-
-	return s.Price.GetYahooIDXHistory(stock.IdxTicker, rangeName)
+	return points, nil
 }
 
 func (s *PriceService) GetIDXStockPrice(ctx context.Context, ticker string) (external.PriceEntry, error) {

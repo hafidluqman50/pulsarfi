@@ -14,11 +14,16 @@ import "time"
 // write time, and Postgres's JSONB type reformats stored JSON (whitespace,
 // key order) in a way that would silently break independent verification.
 type AgentSubTask struct {
-	ID               int64     `gorm:"column:id;primaryKey" json:"id"`
-	TaskID           int64     `gorm:"column:task_id" json:"task_id"`
-	StepOrder        int       `gorm:"column:step_order" json:"step_order"`
-	Agent            string    `gorm:"column:agent" json:"agent"`
-	StepName         string    `gorm:"column:step_name" json:"step_name"`
+	ID        int64  `gorm:"column:id;primaryKey" json:"id"`
+	TaskID    int64  `gorm:"column:task_id" json:"task_id"`
+	StepOrder int    `gorm:"column:step_order" json:"step_order"`
+	Agent     string `gorm:"column:agent" json:"agent"`
+	StepName  string `gorm:"column:step_name" json:"step_name"`
+	// Label is a short, human-readable description of this step, authored
+	// by the calling model in the conversation's own language — display
+	// only, never part of the hash (StepName is the stable, language-
+	// independent identifier DecisionHash actually uses).
+	Label            *string   `gorm:"column:label" json:"label"`
 	Status           string    `gorm:"column:status" json:"status"`
 	Reasoning        string    `gorm:"column:reasoning" json:"reasoning"`
 	Output           *string   `gorm:"column:output" json:"output"`

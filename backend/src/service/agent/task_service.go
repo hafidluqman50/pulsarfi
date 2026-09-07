@@ -99,7 +99,7 @@ func (s *TaskService) GetTrades(ctx context.Context, taskID int64, walletAddress
 
 var ErrNothingToRetry = errors.New("agent: no failed message to retry")
 
-func (s *TaskService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, onSubTask func(model.AgentSubTask), onTextDelta func(string)) (WorkflowCard, error) {
+func (s *TaskService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, onSubTask func(model.AgentSubTask), onSubTaskStarted func(agentName, stepName, label string), onTextDelta func(string)) (WorkflowCard, error) {
 	chat, err := s.Chats.FindOrCreate(ctx, chatID, strings.ToLower(wallet), truncateRunes(message, 50))
 	if err != nil {
 		return WorkflowCard{}, err
@@ -120,10 +120,10 @@ func (s *TaskService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, w
 		return WorkflowCard{}, fmt.Errorf("agent: persist user message: %w", err)
 	}
 
-	return s.runForMessage(ctx, chatID, userMessage, append(existingMessages, userMessage), strings.ToLower(wallet), onSubTask, onTextDelta)
+	return s.runForMessage(ctx, chatID, userMessage, append(existingMessages, userMessage), strings.ToLower(wallet), onSubTask, onSubTaskStarted, onTextDelta)
 }
 
-func (s *TaskService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string, onSubTask func(model.AgentSubTask), onTextDelta func(string)) (WorkflowCard, error) {
+func (s *TaskService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string, onSubTask func(model.AgentSubTask), onSubTaskStarted func(agentName, stepName, label string), onTextDelta func(string)) (WorkflowCard, error) {
 	chat, found, err := s.Chats.FindByID(ctx, chatID)
 	if err != nil {
 		return WorkflowCard{}, err
@@ -147,27 +147,23 @@ func (s *TaskService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wa
 		return WorkflowCard{}, ErrNothingToRetry
 	}
 
-	return s.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet), onSubTask, onTextDelta)
+	return s.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet), onSubTask, onSubTaskStarted, onTextDelta)
 }
 
-func (s *TaskService) runForMessage(ctx context.Context, chatID uuid.UUID, userMessage model.AgentChatMessage, allMessages []model.AgentChatMessage, wallet string, onSubTask func(model.AgentSubTask), onTextDelta func(string)) (WorkflowCard, error) {
+func (s *TaskService) runForMessage(ctx context.Context, chatID uuid.UUID, userMessage model.AgentChatMessage, allMessages []model.AgentChatMessage, wallet string, onSubTask func(model.AgentSubTask), onSubTaskStarted func(agentName, stepName, label string), onTextDelta func(string)) (WorkflowCard, error) {
 	messageIDs := make([]int64, len(allMessages))
 	for i, m := range allMessages {
 		messageIDs[i] = m.ID
 	}
 
 	sourceMessageID := userMessage.ID
-	runCtx := &RunContext{Wallet: wallet, TriggerDescription: userMessage.Content, SourceMessageID: &sourceMessageID, OnSubTask: onSubTask, OnTextDelta: onTextDelta}
+	runCtx := &RunContext{Wallet: wallet, TriggerDescription: userMessage.Content, SourceMessageID: &sourceMessageID, OnSubTask: onSubTask, OnSubTaskStarted: onSubTaskStarted, OnTextDelta: onTextDelta}
 
 	existingTask, taskFound, err := s.Tasks.FindByChatMessageIDs(ctx, messageIDs)
 	if err != nil {
 		return WorkflowCard{}, err
 	}
 	if taskFound {
-		lastKnownID := existingTask.ID
-		runCtx.LastKnownTaskID = &lastKnownID
-		runCtx.LastKnownOnChainTaskID = existingTask.OnChainTaskID
-
 		lastSubTask, found, err := s.SubTasks.LastForTask(ctx, existingTask.ID)
 		if err != nil {
 			return WorkflowCard{}, err
@@ -201,7 +197,7 @@ func (s *TaskService) runForMessage(ctx context.Context, chatID uuid.UUID, userM
 		}
 	}
 
-	reply, toolCalls, err := RunAgentWithHistory(WithRunContext(ctx, runCtx), s.Supervisor, history, nil)
+	reply, toolCalls, err := RunAgentWithHistory(WithRunContext(ctx, runCtx), s.Supervisor, history, nil, "")
 	if err != nil {
 		return WorkflowCard{}, fmt.Errorf("agent: supervisor run failed: %w", err)
 	}
@@ -242,12 +238,69 @@ func (s *TaskService) runForMessage(ctx context.Context, chatID uuid.UUID, userM
 func buildWorkflowCard(taskID int64, reply string, toolCalls []ToolCallTrace) WorkflowCard {
 	reply = unwrapReplyJSON(reply)
 
+	// get_portfolio_snapshot and get_stock_chart (analyzer/chart_service.go)
+	// both return a publicsvc.ChartPayload — either one means this reply has
+	// real chart-ready data behind it, not just prose. Collects every match,
+	// not just the first: a compound request ("chart-in portofolio ku, dan
+	// chart BRPT") makes Analyzer call both tools in the same turn, and
+	// returning only the first found silently dropped the second chart even
+	// though Analyzer's own reply claimed both had rendered — confirmed live
+	// via a request where the model correctly fetched two charts but the
+	// user only ever saw one (docs/plans/agent-task-manager-code-implementation.md).
+	var chartPayloads []json.RawMessage
 	for _, tc := range toolCalls {
-		if tc.ToolName == "get_portfolio_snapshot" {
-			return WorkflowCard{TaskID: taskID, Reply: reply, ContentType: "chart", UIProps: json.RawMessage(tc.Result)}
+		if tc.ToolName == "get_portfolio_snapshot" || tc.ToolName == "get_stock_chart" {
+			chartPayloads = append(chartPayloads, json.RawMessage(tc.Result))
+		}
+	}
+	if len(chartPayloads) == 1 {
+		return WorkflowCard{TaskID: taskID, Reply: reply, ContentType: "chart", UIProps: chartPayloads[0]}
+	}
+	if len(chartPayloads) > 1 {
+		if payload, err := json.Marshal(chartPayloads); err == nil {
+			return WorkflowCard{TaskID: taskID, Reply: reply, ContentType: "chart", UIProps: payload}
+		}
+	}
+
+	// analyzer_agent's own conclusion (GlobalInstructions' JSON contract —
+	// condition_met/confidence/evidence/reasoning) carries real, sourced
+	// citations whenever news evidence actually drove the conclusion.
+	// Surfaced as its own card so the user sees dated, linked sources, not
+	// just Supervisor's prose summary of them.
+	for _, tc := range toolCalls {
+		if tc.ToolName != "analyzer_agent" {
+			continue
+		}
+		if evidence := extractNewsEvidence(tc.Result); len(evidence) > 0 {
+			payload, err := json.Marshal(evidence)
+			if err == nil {
+				return WorkflowCard{TaskID: taskID, Reply: reply, ContentType: "news", UIProps: payload}
+			}
 		}
 	}
 	return WorkflowCard{TaskID: taskID, Reply: reply, ContentType: "text"}
+}
+
+// NewsEvidenceItem mirrors one item of analyzer_agent's own "evidence"
+// array (its own JSON contract, see GlobalInstructions/analyzer/instructions.go) —
+// re-parsed here purely to surface it as its own chart-like card, never to
+// re-derive or alter what Analyzer actually concluded.
+type NewsEvidenceItem struct {
+	Source      string `json:"source"`
+	URL         string `json:"url,omitempty"`
+	PublishedAt string `json:"published_at,omitempty"`
+	Excerpt     string `json:"excerpt,omitempty"`
+	ImageURL    string `json:"image_url,omitempty"`
+}
+
+func extractNewsEvidence(raw string) []NewsEvidenceItem {
+	var parsed struct {
+		Evidence []NewsEvidenceItem `json:"evidence"`
+	}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil
+	}
+	return parsed.Evidence
 }
 
 func unwrapReplyJSON(reply string) string {
@@ -421,7 +474,7 @@ func (s *TaskService) Evaluate(ctx context.Context, taskID int64) error {
 		triggerPrompt = *task.TriggerDescription
 	}
 
-	if _, _, err := RunAgentWithTrace(WithRunContext(ctx, runCtx), s.Supervisor, triggerPrompt, nil); err != nil {
+	if _, _, err := RunAgentWithTrace(WithRunContext(ctx, runCtx), s.Supervisor, triggerPrompt, nil, ""); err != nil {
 		return fmt.Errorf("agent: evaluation run failed for task %d: %w", taskID, err)
 	}
 

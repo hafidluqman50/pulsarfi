@@ -41,8 +41,8 @@ func PostChatMessageHandler(c *gin.Context) {
 		return
 	}
 
-	streamAgentRun(c, func(onSubTask func(model.AgentSubTask), onTextDelta func(string)) (agentsvc.WorkflowCard, error) {
-		return taskSvc.HandleChatMessage(c.Request.Context(), chatID, claims.WalletAddress, messageRequest.Message, onSubTask, onTextDelta)
+	streamAgentRun(c, func(onSubTask func(model.AgentSubTask), onSubTaskStarted func(agentName, stepName, label string), onTextDelta func(string)) (agentsvc.WorkflowCard, error) {
+		return taskSvc.HandleChatMessage(c.Request.Context(), chatID, claims.WalletAddress, messageRequest.Message, onSubTask, onSubTaskStarted, onTextDelta)
 	})
 }
 
@@ -61,12 +61,12 @@ func RetryLastMessageHandler(c *gin.Context) {
 		return
 	}
 
-	streamAgentRun(c, func(onSubTask func(model.AgentSubTask), onTextDelta func(string)) (agentsvc.WorkflowCard, error) {
-		return taskSvc.RetryLastMessage(c.Request.Context(), chatID, claims.WalletAddress, onSubTask, onTextDelta)
+	streamAgentRun(c, func(onSubTask func(model.AgentSubTask), onSubTaskStarted func(agentName, stepName, label string), onTextDelta func(string)) (agentsvc.WorkflowCard, error) {
+		return taskSvc.RetryLastMessage(c.Request.Context(), chatID, claims.WalletAddress, onSubTask, onSubTaskStarted, onTextDelta)
 	})
 }
 
-func streamAgentRun(c *gin.Context, run func(onSubTask func(model.AgentSubTask), onTextDelta func(string)) (agentsvc.WorkflowCard, error)) {
+func streamAgentRun(c *gin.Context, run func(onSubTask func(model.AgentSubTask), onSubTaskStarted func(agentName, stepName, label string), onTextDelta func(string)) (agentsvc.WorkflowCard, error)) {
 	flusher, canFlush := c.Writer.(http.Flusher)
 	if !canFlush {
 		response.InternalError(c, "streaming not supported")
@@ -88,6 +88,9 @@ func streamAgentRun(c *gin.Context, run func(onSubTask func(model.AgentSubTask),
 		workflowCard, err := run(
 			func(row model.AgentSubTask) {
 				events <- sseEvent{Type: "sub_task", Data: row}
+			},
+			func(agentName, stepName, label string) {
+				events <- sseEvent{Type: "sub_task_started", Data: gin.H{"agent": agentName, "step_name": stepName, "label": label}}
 			},
 			func(delta string) {
 				events <- sseEvent{Type: "reply_delta", Data: gin.H{"delta": delta}}

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { useTaskReasoning, useSendChatMessage } from '@/http/agent/hooks';
-import { statusColor, StructuredOrProse } from './SubTaskReasoning';
+import { agentDisplayName, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
 
 type PlanCardProps = {
   taskId: number;
@@ -61,9 +61,9 @@ export function PlanCard({ taskId, chatId }: PlanCardProps) {
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ticker)', flex: 'none' }}>
                   {String(subTask.step_order).padStart(2, '0')}
                 </span>
-                <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3, flex: '1 1 120px', minWidth: 0 }}>{subTask.step_name}</span>
+                <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3, flex: '1 1 120px', minWidth: 0 }}>{stepDisplayName(subTask.label, subTask.step_name)}</span>
                 <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, flex: 'none' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ticker)' }}>{subTask.agent}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ticker)' }}>{agentDisplayName(subTask.agent)}</span>
                   <span style={{ font: '600 9px/1.3 var(--font-sans)', letterSpacing: '.1em', textTransform: 'uppercase', color, border: `1px solid ${color}`, padding: '3px 4px', whiteSpace: 'nowrap' }}>
                     {needsInput ? 'NEEDS YOU' : subTask.status.toUpperCase()}
                   </span>
@@ -74,7 +74,7 @@ export function PlanCard({ taskId, chatId }: PlanCardProps) {
             {isOpen && !needsInput && (
               <div style={{ margin: '0 13px 12px 35px', borderLeft: '1px solid var(--hairline)', paddingLeft: 12 }}>
                 <div style={{ font: '600 8.5px/1.2 var(--font-sans)', letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--ticker)', marginBottom: 6 }}>
-                  Reasoning · {subTask.agent}
+                  Reasoning · {agentDisplayName(subTask.agent)}
                 </div>
                 <div style={{ marginBottom: 14 }}>
                   <StructuredOrProse raw={subTask.reasoning} />

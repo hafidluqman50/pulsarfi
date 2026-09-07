@@ -1,7 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
-import { getMarketStocks, getStockHistory, getStockPrice } from './priceApi';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRealtimeConnected, useRealtimeTopic } from '../realtime/useRealtimeSocket';
+import { getMarketStocks, getStockHistory, getStockPrice, type MarketStock } from './priceApi';
 import { getStockTransactions } from './transactionApi';
-import { getProtocolStats } from './statsApi';
+import { getProtocolStats, type ProtocolStats } from './statsApi';
 
 export function useStockPrice(ticker: string, source?: 'idx') {
   return useQuery({
@@ -22,18 +23,28 @@ export function useStockHistory(ticker: string, range: string, source?: 'idx') {
 }
 
 export function useMarketStocks() {
+  const queryClient = useQueryClient();
+  const connected = useRealtimeConnected();
+  useRealtimeTopic<MarketStock[]>('market-stocks', (data) => {
+    queryClient.setQueryData(['market-stocks'], data);
+  });
   return useQuery({
     queryKey: ['market-stocks'],
     queryFn: getMarketStocks,
-    refetchInterval: 15_000,
+    refetchInterval: connected ? false : 15_000,
   });
 }
 
 export function useProtocolStats() {
+  const queryClient = useQueryClient();
+  const connected = useRealtimeConnected();
+  useRealtimeTopic<ProtocolStats>('protocol-stats', (data) => {
+    queryClient.setQueryData(['protocol-stats'], data);
+  });
   return useQuery({
     queryKey: ['protocol-stats'],
-    queryFn:  getProtocolStats,
-    refetchInterval: 30_000,
+    queryFn: getProtocolStats,
+    refetchInterval: connected ? false : 30_000,
   });
 }
 

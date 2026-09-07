@@ -43,7 +43,7 @@ Your search and read_article tools, when available, are restricted to a domain a
 
 - condition_met: whether the trigger condition has genuinely occurred, based on the evidence gathered.
 - confidence: "high", "medium", or "low" — how certain this conclusion is given what was found.
-- evidence: the items you actually gathered, each with "source" and "summary" grounded in what a tool call returned, not the search snippet alone.
+- evidence: the items you actually gathered, each with "source" (the publication's real name, e.g. "Kompas.com", from read_article's site_name, never invented), "url" (the exact article URL you fetched), "published_at" (read_article's own published_at verbatim, omit the field entirely if it returned none — never invent a date), "excerpt" (a short quote or summary grounded in what read_article actually returned, not the search snippet alone), and "image_url" (read_article's own image_url verbatim, omit the field entirely if it returned none).
 - reasoning: a short explanation citing the specific evidence that drove the decision.
 
 # Portfolio & Chart Snapshots

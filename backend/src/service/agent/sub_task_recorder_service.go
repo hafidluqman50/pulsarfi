@@ -7,6 +7,7 @@ import (
 
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/realtime"
 )
 
 // SubTaskRecorder appends one hash-chained agent_sub_tasks row per step a
@@ -45,7 +46,14 @@ func NewSubTaskRecorder(ctx context.Context, subTasks *repository.AgentSubTaskRe
 
 // Record appends one link to the chain. output is marshaled as given; pass
 // nil when a step has nothing structured to attach beyond its reasoning.
-func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, status, reasoning string, output any) (model.AgentSubTask, error) {
+// label is a short, human-readable description of this step in whatever
+// language the conversation is in (e.g. "Meneruskan ke Analyzer untuk cek
+// tren VKTR") — display only, pass "" when the caller has nothing better
+// than stepName itself to show (the UI falls back to a humanized stepName
+// in that case). label is never part of the hash: stepName is what
+// DecisionHash actually uses, so the chain stays verifiable regardless of
+// which language a label happens to be written in.
+func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, status, reasoning, label string, output any) (model.AgentSubTask, error) {
 	var outputJSON []byte
 	if output != nil {
 		var err error
@@ -63,11 +71,17 @@ func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, statu
 		outputStr = &s
 	}
 
+	var labelPtr *string
+	if label != "" {
+		labelPtr = &label
+	}
+
 	row, err := r.subTasks.Create(ctx, model.AgentSubTask{
 		TaskID:           r.taskID,
 		StepOrder:        r.nextOrder,
 		Agent:            agentName,
 		StepName:         stepName,
+		Label:            labelPtr,
 		Status:           status,
 		Reasoning:        reasoning,
 		Output:           outputStr,
@@ -84,6 +98,13 @@ func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, statu
 	if r.OnRecord != nil {
 		r.OnRecord(row)
 	}
+	// Pushed to any WebSocket client watching this Task's reasoning
+	// (docs/plans/realtime-websocket-updates.md §3), independent of
+	// OnRecord above — OnRecord only fires for the one in-flight HTTP
+	// request that triggered this run; this reaches every other client
+	// with this Task's detail view open, replacing what used to be a 5s
+	// poll.
+	realtime.Publish(fmt.Sprintf("agent-task-reasoning:%d", r.taskID), row)
 	return row, nil
 }
 

@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useAccount, useDisconnect, useSignMessage } from 'wagmi';
 import { toast } from 'sonner';
 import { buildSiweMessage, fetchNonce, verifySignature } from '@/http/auth/siweApi';
+import { realtimeSocket } from '@/http/realtime/useRealtimeSocket';
 
 const ACCESS_TOKEN_KEY = 'access_token';
 
@@ -105,6 +106,12 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
     setRole(null);
     authedAddressRef.current = null;
     globalInFlightAddress = null;
+    // Without this, an already-open socket keeps flowing whatever private
+    // topics it subscribed to while logged in (custodian-*, this wallet's
+    // own agent-task-trades) until it happens to drop on its own — the
+    // token is gone from localStorage, but the live connection doesn't
+    // know that on its own.
+    realtimeSocket.reconnect();
   }
 
   function applySession(session: StoredSession) {
@@ -112,6 +119,10 @@ export function SiweAuthProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticated(true);
     setRole(session.role);
     authedAddressRef.current = session.walletAddress;
+    // Without this, a socket that connected anonymously before this sign-in
+    // (e.g. on a public page) never picks up the new identity — it just
+    // keeps silently missing every topic that needs auth.
+    realtimeSocket.reconnect();
   }
 
   function applyToken(token: string, fallbackAddress: string) {

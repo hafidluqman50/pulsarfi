@@ -38,11 +38,11 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, analyzerAgen
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: build create_task tool: %w", err)
 	}
-	analyzerTool, err := newAnalyzerTool(analyzerAgent, subTasks)
+	analyzerTool, err := newAnalyzerTool(analyzerAgent)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: build analyzer tool: %w", err)
 	}
-	executorTool, err := newExecutorTool(executorAgent, subTasks)
+	executorTool, err := newExecutorTool(executorAgent)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: build executor tool: %w", err)
 	}

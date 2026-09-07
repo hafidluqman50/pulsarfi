@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"strings"
 
+	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -23,7 +25,7 @@ func InvokeAgentStructured(ctx context.Context, a adk.Agent, prompt string, out 
 }
 
 func runAgentOnce(ctx context.Context, a adk.Agent, prompt string, out any) error {
-	final, _, err := RunAgentWithTrace(ctx, a, prompt, nil)
+	final, _, err := RunAgentWithTrace(ctx, a, prompt, nil, "")
 	if err != nil {
 		return err
 	}
@@ -35,18 +37,27 @@ type ToolCallTrace struct {
 	Result   string
 }
 
-func RunAgentWithTrace(ctx context.Context, a adk.Agent, prompt string, onTextDelta func(string)) (finalText string, toolCalls []ToolCallTrace, err error) {
-	return RunAgentWithHistory(ctx, a, []*schema.Message{schema.UserMessage(prompt)}, onTextDelta)
+// reasoningEffort is DeepSeek's own reasoning-effort value ("low"/"medium"/
+// "high"/"max") to override for this specific call, or "" to leave the
+// model's default in place — see docs/plans/dynamic-model-tier-routing.md.
+// Confirmed against eino's own source that adk.WithChatModelOptions
+// actually reaches the underlying model call (chatmodel.go), not assumed.
+func RunAgentWithTrace(ctx context.Context, a adk.Agent, prompt string, onTextDelta func(string), reasoningEffort string) (finalText string, toolCalls []ToolCallTrace, err error) {
+	return RunAgentWithHistory(ctx, a, []*schema.Message{schema.UserMessage(prompt)}, onTextDelta, reasoningEffort)
 }
 
-func RunAgentWithHistory(ctx context.Context, a adk.Agent, messages []*schema.Message, onTextDelta func(string)) (finalText string, toolCalls []ToolCallTrace, err error) {
+func RunAgentWithHistory(ctx context.Context, a adk.Agent, messages []*schema.Message, onTextDelta func(string), reasoningEffort string) (finalText string, toolCalls []ToolCallTrace, err error) {
 	agentMessages := make([]adk.Message, len(messages))
 	for i, m := range messages {
 		agentMessages[i] = m
 	}
+	var runOpts []adk.AgentRunOption
+	if reasoningEffort != "" {
+		runOpts = append(runOpts, adk.WithChatModelOptions([]model.Option{einoopenai.WithReasoningEffort(einoopenai.ReasoningEffortLevel(reasoningEffort))}))
+	}
 	iterator := a.Run(ctx, &adk.AgentInput{
 		Messages: agentMessages,
-	})
+	}, runOpts...)
 
 	var lastAssistant, lastNonEmptyAssistant *schema.Message
 	for {

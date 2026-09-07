@@ -26,7 +26,7 @@ const COLORS = {
 
 const DONUT_PALETTE = ['#c8102e', '#16110e', '#1f7a4b', '#6b635c', '#a8730a'];
 
-const TIMEFRAMES = ['1M', '3M', '1Y', 'ALL'] as const;
+const TIMEFRAMES = ['1D', '1M', '3M', '1Y', 'YTD'] as const;
 type Timeframe = (typeof TIMEFRAMES)[number];
 
 type ChartPayload = {
@@ -171,7 +171,12 @@ export function PortfolioChart({ payload }: { payload: ChartPayload }) {
     try {
       if (lens === 'price_line' && ticker) {
         const history = await getStockHistory(ticker, next);
-        setData(history.map((p) => ({ date: new Date(p.timestamp).toISOString().slice(0, 10), price: p.value })));
+        // Full ISO datetime, not date-only (.slice(0, 10) used to truncate
+        // this) — 1D/1W come back with minute-level points from the
+        // backend (yahooRangeParams), and collapsing them all to the same
+        // calendar date made every intraday point dedupe into one, so the
+        // chart looked flat/broken for anything but a daily-or-coarser range.
+        setData(history.map((p) => ({ date: new Date(p.timestamp).toISOString(), price: p.value })));
       } else {
         setData(await getPortfolioChart(lens, next));
       }

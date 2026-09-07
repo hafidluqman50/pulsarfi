@@ -23,6 +23,7 @@ export interface AgentSubTask {
   step_order: number;
   agent: string;
   step_name: string;
+  label: string | null;
   status: string;
   reasoning: string;
   output: string | null;
