@@ -62,14 +62,8 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, portfolio Po
 	if err != nil {
 		return nil, fmt.Errorf("executor: build submit_trade tool: %w", err)
 	}
-	tools := []tool.BaseTool{agent.WrapToolGraceful(holdingsTool), agent.WrapToolGraceful(submitTool)}
-	for _, t := range extraTools {
-		if it, ok := t.(tool.InvokableTool); ok {
-			tools = append(tools, agent.WrapToolGraceful(it))
-		} else {
-			tools = append(tools, t)
-		}
-	}
+	baseTools := []tool.BaseTool{holdingsTool, submitTool}
+	tools := agent.WrapToolsGraceful(append(baseTools, extraTools...))
 
 	executorAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        "executor_agent",

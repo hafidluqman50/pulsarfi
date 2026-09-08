@@ -4,119 +4,81 @@ import (
 	"context"
 	"log"
 
-	"github.com/cloudwego/eino/components/tool"
-	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/onchain/agenttaskmanager"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/analyzer"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/executor"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/supervisor"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
 	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
 
-// newAgentTaskServices builds the three agent roles (Supervisor/Analyzer/
-// Executor) and wires them into TaskService/SubTaskRetryService. Lives here,
-// in package service, rather than package agent (task_service.go) — every
-// one of analyzer/executor/supervisor already imports package agent
-// (agent.WrapToolGraceful, agent.RunContextFrom), so package agent importing
-// them back would be an import cycle. Returns (nil, nil) and logs instead of
-// failing NewRegistry outright — same "disabled, not fatal" pattern as the
-// rest of NewRegistry's optional integrations.
+// newAgentTaskServices builds Quasar/Nova/Comet and wires them into the new
+// orchestrator graph (agent/orchestrator_service.go), then into
+// TaskService/SubTaskRetryService. Lives here, in package service, rather
+// than package agent (task_service.go) — analyzer/executor already import
+// package agent (agent.WrapToolGraceful, agent.RunContextFrom), so package
+// agent importing them back would be an import cycle. Returns (nil, nil) and
+// logs instead of failing NewRegistry outright — same "disabled, not fatal"
+// pattern as the rest of NewRegistry's optional integrations.
+//
+// The old supervisor package (supervisor.New, an adk.ChatModelAgent with
+// analyzer_agent/executor_agent/create_task as LLM-callable tools) is no
+// longer built here — Quasar is now two plain LLM calls owned directly by
+// the Orchestrator (see docs/plans/agent-orchestration-graph-rebuild.md),
+// specifically because adk.ChatModelAgent can never stream. Quick/deep
+// Analyzer model tiering is also not carried over yet (single Analyzer
+// instance) — tracked as an open item in that same plan, not lost.
 func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.PortfolioChartReader) (*agentsvc.TaskService, *agentsvc.SubTaskRetryService) {
 	ctx := context.Background()
 
-	// Supervisor runs on every prompt (cheap, high-volume routing — Flash
-	// tier). Executor is always Pro — any call means an action might
-	// actually be taken, the highest-stakes case regardless of what led
-	// there. Analyzer gets built twice, against both tiers: which one
-	// actually runs for a given request is decided per-call by Supervisor's
-	// own Depth field (docs/plans/dynamic-model-tier-routing.md) — a
-	// reasoning-effort override on one fixed model was tried first and
-	// found live to never actually change which model billed, since the
-	// model itself was still hardcoded to Pro regardless of Depth.
+	// Quasar (route/reply) runs on every turn, at least twice — cheap,
+	// high-volume, Flash tier. Executor is always Pro — any call means an
+	// action might actually be taken, the highest-stakes case regardless of
+	// what led there.
 	supervisorModel, supervisorErr := external.NewDeepSeekChatModelFromEnv(ctx, external.ModelFlash)
-	analyzerModelQuick, analyzerQuickErr := external.NewDeepSeekChatModelFromEnv(ctx, external.ModelFlash)
-	analyzerModelDeep, analyzerDeepErr := external.NewDeepSeekChatModelFromEnv(ctx, external.ModelPro)
+	analyzerModel, analyzerErr := external.NewDeepSeekChatModelFromEnv(ctx, external.ModelFlash)
 	executorModel, executorErr := external.NewDeepSeekChatModelFromEnv(ctx, external.ModelPro)
-	// Analyzer's own news tools — an agent's own tools live in that agent's
-	// own folder, not a shared top-level file. Tavily replaced the previous
-	// DuckDuckGo-backed search tool (unreliable, scraping-based, and a
-	// confirmed real failure point live) — see analyzer/tools_service.go's
-	// own doc comment. read_article gives Analyzer the article's full text,
-	// not just the search snippet — gated to analyzer.TrustedNewsDomains so
-	// the trust decision is enforced in code, not left to the LLM.
-	tavilyAPIKey, tavilyAPIKeyErr := config.RequireEnv("TAVILY_API_KEY")
-	var searchTool tool.InvokableTool
-	var searchToolErr error
-	if tavilyAPIKeyErr == nil {
-		searchTool, searchToolErr = analyzer.NewSearchTool(tavilyAPIKey, 5, analyzer.TrustedNewsDomains)
-	} else {
-		searchToolErr = tavilyAPIKeyErr
-	}
-	readArticleTool, readArticleToolErr := analyzer.NewReadArticleTool(analyzer.TrustedNewsDomains)
 
-	// StubTaskExecutor remains the ExecuteTrade path — onchain.Client's own
-	// ExecuteTrade is deliberately not implemented yet (executor.TaskExecutor's
-	// interface is missing subTaskId/token/minimumOutputAmount/summary, see
-	// onchain/agenttaskmanager/client_service.go's doc comment). CreateTask/
-	// GrantTradePermission/RecordSubTasks/CancelTask are real once
-	// ALCHEMY_RPC_URL/AGENT_WALLET_PRIVATE_KEY/AGENT_TASK_MANAGER_ADDRESS are
-	// all set — falls back to the stub otherwise, same "disabled, not fatal"
-	// pattern as the rest of this function.
-	taskExecutor := executor.StubTaskExecutor{}
-	var contractClient agentsvc.AgentContractClient
-	if realClient, err := agenttaskmanager.NewClientFromEnv(ctx); err != nil {
-		log.Printf("agent on-chain client disabled, using stub: %v", err)
-		contractClient = &agentsvc.StubAgentContractClient{}
-	} else {
-		contractClient = realClient
+	// Real trade execution against AgentTaskManager.sol has never been built
+	// (executor.TaskExecutor's interface is missing subTaskId/token/
+	// minimumOutputAmount/summary, see onchain/agenttaskmanager/client_service.go's
+	// doc comment) — UnimplementedTaskExecutor fails loudly on every call
+	// (ErrTradeExecutionNotImplemented) rather than fabricating a fake tx
+	// hash, per the zero-fallback rule
+	// (docs/plans/agent-orchestration-graph-rebuild.md v2.5/v2.7). Tracked
+	// in that plan's §11 as unfinished-feature work, not a fallback for one
+	// that sometimes works.
+	taskExecutor := executor.UnimplementedTaskExecutor{}
+
+	// Zero fallback (docs/plans/agent-orchestration-graph-rebuild.md v2.5):
+	// on-chain is the source of truth, so a missing/misconfigured real chain
+	// client must disable the whole agent service, exactly like a missing
+	// DeepSeek key does below — never silently substitute a fake client in
+	// its place. StubAgentContractClient (the old fake) has been deleted
+	// entirely, not just unused (v2.7) — there is no fallback type left to
+	// reach for by mistake.
+	contractClient, chainErr := agenttaskmanager.NewClientFromEnv(ctx)
+	if chainErr != nil {
+		log.Printf("agent task service disabled: on-chain client: %v", chainErr)
+		return nil, nil
 	}
 
 	switch {
 	case supervisorErr != nil:
 		log.Printf("agent task service disabled: %v", supervisorErr)
 		return nil, nil
-	case analyzerQuickErr != nil:
-		log.Printf("agent task service disabled: %v", analyzerQuickErr)
-		return nil, nil
-	case analyzerDeepErr != nil:
-		log.Printf("agent task service disabled: %v", analyzerDeepErr)
+	case analyzerErr != nil:
+		log.Printf("agent task service disabled: %v", analyzerErr)
 		return nil, nil
 	case executorErr != nil:
 		log.Printf("agent task service disabled: %v", executorErr)
 		return nil, nil
-	case readArticleToolErr != nil:
-		log.Printf("agent task service disabled: %v", readArticleToolErr)
-		return nil, nil
 	}
 
-	// searchToolErr (missing TAVILY_API_KEY) degrades, it does not disable —
-	// only news-based trigger evaluation loses its evidence source; chart,
-	// portfolio, and trade requests never touch web_search at all, so they
-	// have no reason to be down along with it. Every other missing piece
-	// above genuinely leaves the whole pipeline unable to run at all, which
-	// is why those stay fatal.
-	analyzerExtraTools := []tool.BaseTool{readArticleTool}
-	if searchToolErr != nil {
-		log.Printf("web_search disabled (news evidence unavailable, chart/portfolio/trade unaffected): %v", searchToolErr)
-	} else {
-		analyzerExtraTools = append(analyzerExtraTools, searchTool)
-	}
-
-	// Built twice against two different models, sharing the same tools —
-	// building the same portfolio/chart/search/read_article tools twice is
-	// cheap (they're stateless closures over already-shared readers/services),
-	// nothing here duplicates any actual work at request time.
-	analyzerAgentQuick, err := analyzer.New(ctx, analyzerModelQuick, chartReader, chartReader.Price, analyzerExtraTools...)
+	analyzerAgent, err := analyzer.New(ctx, analyzerModel, chartReader, chartReader.Price)
 	if err != nil {
-		log.Printf("agent task service disabled: build analyzer agent (quick): %v", err)
-		return nil, nil
-	}
-	analyzerAgentDeep, err := analyzer.New(ctx, analyzerModelDeep, chartReader, chartReader.Price, analyzerExtraTools...)
-	if err != nil {
-		log.Printf("agent task service disabled: build analyzer agent (deep): %v", err)
+		log.Printf("agent task service disabled: build analyzer agent: %v", err)
 		return nil, nil
 	}
 	executorAgent, err := executor.New(ctx, executorModel, &executor.DBPortfolioReader{Transactions: repos.StockTransaction}, taskExecutor, repos.Stock)
@@ -124,9 +86,21 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		log.Printf("agent task service disabled: build executor agent: %v", err)
 		return nil, nil
 	}
-	supervisorAgent, err := supervisor.New(ctx, supervisorModel, analyzerAgentQuick, analyzerAgentDeep, executorAgent, repos.AgentTask, repos.AgentSubTask)
+
+	// supervisorModel is used for both Quasar calls (route, reply) — a plain
+	// stateless API client wrapper, safe to reuse for two logically separate
+	// calls, no need to construct it twice.
+	orchestrator, err := agentsvc.NewOrchestrator(ctx, &agentsvc.Orchestrator{
+		Tasks:      repos.AgentTask,
+		SubTasks:   repos.AgentSubTask,
+		Chain:      contractClient,
+		RouteModel: supervisorModel,
+		ReplyModel: supervisorModel,
+		Analyzer:   analyzerAgent,
+		Executor:   executorAgent,
+	})
 	if err != nil {
-		log.Printf("agent task service disabled: build supervisor agent: %v", err)
+		log.Printf("agent task service disabled: build orchestrator: %v", err)
 		return nil, nil
 	}
 
@@ -136,7 +110,7 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		Trades:       repos.AgentTrade,
 		Chats:        repos.AgentChat,
 		ChatMessages: repos.AgentChatMessage,
-		Supervisor:   supervisorAgent,
+		Orchestrator: orchestrator,
 		Chain:        contractClient,
 	}
 	retrySvc := &agentsvc.SubTaskRetryService{

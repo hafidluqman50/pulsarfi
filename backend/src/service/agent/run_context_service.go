@@ -1,27 +1,30 @@
 package agent
 
-import (
-	"context"
+import "context"
 
-	"github.com/horizonlabs/pulsarfi-backend/src/model"
-)
-
+// RunContext is threaded via WithRunContext into Nova's/Comet's own nested
+// tool calls (get_portfolio_snapshot, submit_trade) — the only channel that
+// survives the call chain into code the orchestrator treats as a black box
+// (docs/plans/agent-orchestration-graph-rebuild.md §3). Trimmed in v2.7 of
+// that plan to only the fields actually read inside analyzer/executor,
+// confirmed by grep per field, not per file — OnChainTaskID (submit_trade's
+// budget check), Wallet (get_portfolio_snapshot), Recorder (submit_trade's
+// own decide/execute rows), OnSubTaskStarted (submit_trade's live
+// decide/execute-starting signal). TaskID, TriggerDescription,
+// SourceMessageID, NestedToolCalls, OnSubTask, and OnTextDelta were set by
+// orchestrator_service.go but never read back through RunContext by
+// anything live — orchestratorTurn already carries its own copies of that
+// same data and uses those directly instead.
 type RunContext struct {
-	TaskID             int64
-	OnChainTaskID      *int64
-	Wallet             string
-	TriggerDescription string
-	SourceMessageID    *int64
-	Recorder           *SubTaskRecorder
-	NestedToolCalls    []ToolCallTrace
-	OnSubTask          func(model.AgentSubTask)
+	OnChainTaskID *int64
+	Wallet        string
+	Recorder      *SubTaskRecorder
 	// OnSubTaskStarted fires the instant a step begins, before its actual
 	// work runs — never persisted (SubTaskRecorder only ever writes a step
 	// once it's done, so the hash chain stays exactly as before), purely an
 	// ephemeral live signal so the UI can show "in progress" instead of a
 	// step only ever appearing already finished.
 	OnSubTaskStarted func(agentName, stepName, label string)
-	OnTextDelta      func(string)
 }
 
 type runContextKey struct{}

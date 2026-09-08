@@ -2,24 +2,30 @@ package executor
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
-// StubTaskExecutor is a placeholder until the real AgentTaskManager Go
-// client (signing with AGENT_WALLET_PRIVATE_KEY) is wired up — it never
-// touches the chain, just returns a fake tx hash / an effectively
-// unlimited remaining budget, so the pipeline is exercisable end-to-end
-// before that wiring exists. AgentTaskManager.sol itself is written and
-// fork-tested (smart-contract/src/AgentTaskManager.sol); only this Go-side
-// signer/caller is still deferred.
-type StubTaskExecutor struct{}
+// ErrTradeExecutionNotImplemented is returned by every UnimplementedTaskExecutor
+// method — real trade execution against AgentTaskManager.sol has never been
+// built (executor.TaskExecutor's interface is still missing subTaskId/token/
+// minimumOutputAmount/summary, see onchain/agenttaskmanager/client_service.go),
+// not merely unconfigured. Zero fallback
+// (docs/plans/agent-orchestration-graph-rebuild.md v2.5/v2.7): a trade that
+// cannot actually execute must fail loudly, the same way a failed on-chain
+// createTask aborts its turn — never a fabricated tx hash pretending a real
+// fill happened. Renamed from StubTaskExecutor, whose old behavior (return
+// "0xstub-trade-N" and claim success) was exactly the fake-success pattern
+// this rule exists to forbid.
+var ErrTradeExecutionNotImplemented = errors.New("executor: real trade execution is not implemented yet")
 
-func (StubTaskExecutor) ExecuteTrade(ctx context.Context, onChainTaskID uint, intent agent.TradeIntent, reasoningHash [32]byte) (string, uint64, error) {
-	return fmt.Sprintf("0xstub-trade-%d", onChainTaskID), 1, nil
+type UnimplementedTaskExecutor struct{}
+
+func (UnimplementedTaskExecutor) ExecuteTrade(ctx context.Context, onChainTaskID uint, intent agent.TradeIntent, reasoningHash [32]byte) (string, uint64, error) {
+	return "", 0, ErrTradeExecutionNotImplemented
 }
 
-func (StubTaskExecutor) TradePermissionRemaining(ctx context.Context, onChainTaskID uint) (string, error) {
-	return "999999999999999999", nil
+func (UnimplementedTaskExecutor) TradePermissionRemaining(ctx context.Context, onChainTaskID uint) (string, error) {
+	return "", ErrTradeExecutionNotImplemented
 }

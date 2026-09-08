@@ -17,9 +17,10 @@ import (
 )
 
 // Client wraps the abigen-generated AgentTaskManager binding with a real
-// signer (AGENT_WALLET_PRIVATE_KEY) — the piece every Stub* placeholder in
-// service/agent (StubAgentContractClient, executor.StubTaskExecutor) was
-// standing in for. Implements agent.AgentContractClient, agent.ChainClient,
+// signer (AGENT_WALLET_PRIVATE_KEY) — the piece the old StubAgentContractClient
+// (deleted, docs/plans/agent-orchestration-graph-rebuild.md v2.7) used to
+// stand in for; executor.UnimplementedTaskExecutor still fails loudly for
+// ExecuteTrade specifically, see below. Implements agent.AgentContractClient, agent.ChainClient,
 // and executor.TaskExecutor all at once — all three are narrow views of
 // the same underlying contract calls (ISP for each consumer), satisfied
 // structurally; this package never imports executor to avoid a cycle
@@ -224,9 +225,11 @@ func (c *Client) CancelTask(ctx context.Context, onChainTaskID uint64) error {
 // protection), and summary — none of which executor.TaskExecutor's
 // current signature (agent.TradeIntent + reasoningHash only) carries.
 // CreateTask/GrantTradePermission/RecordSubTasks/CancelTask/
-// TradePermissionRemaining above are fully real; StubTaskExecutor
+// TradePermissionRemaining above are fully real; executor.UnimplementedTaskExecutor
 // (executor/stub_service.go) remains the TaskExecutor implementation
-// service/index.go wires in until this interface is extended.
+// service/agent_registry.go wires in until this interface is extended —
+// it fails loudly (ErrTradeExecutionNotImplemented) rather than faking a
+// fill, per the zero-fallback rule.
 func (c *Client) ExecuteTrade(ctx context.Context, onChainTaskID uint, intent agent.TradeIntent, reasoningHash [32]byte) (string, uint64, error) {
 	return "", 0, fmt.Errorf("onchain: executeTrade not implemented — executor.TaskExecutor's interface is missing subTaskId/token/minimumOutputAmount/summary, see this method's own doc comment")
 }

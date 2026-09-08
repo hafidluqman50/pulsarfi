@@ -23,52 +23,64 @@ All asset tokens use ALL-CAPS with a `P` suffix indicating Pulsar origin.
 ## 3. Architecture
 
 ### Smart Contracts (`/smart-contract`)
-- **`PulsarProtocol.sol`** — UUPS upgradeable proxy, single entry point for all protocol operations.
-  - Mint 3/5 multisig: `requestMint` → `approveMint` → `executeMint` (only requester executes) OR `rejectMint` → `executeRejectMint` (first rejecter executes)
-  - `MintDestination`: `OperatorWallet` (institutional) or `LiquidityPool`
-  - Liquidity pool minting uses custodian-funded IDRX. The protocol must not mint IDRX internally; it pulls IDRX with ERC20 `transferFrom`, so the requester/funder must approve the protocol first.
-  - Redeem 3/5 multisig: `requestRedeem(ticker, tokenAmount, userAddress)` — custodian only, KYC checked on userAddress → `approveRedeem` → `executeRedeem` OR `rejectRedeem` → `executeReject`
-  - `swap(ticker, amountIn, amountOutMin, buyStock)` — permissionless, no auth required. Takes `swapFeeBps` protocol fee in IDRX on top of Uniswap's native 0.3% (see §4a)
-  - `approveKYC(userAddress)` / `revokeKYC(userAddress)` — admin only
+- **`PulsarProtocol.sol`** — UUPS upgradeable proxy, single entry point for all protocol operations. Its own compiled bytecode exceeds the EIP-170 24,576-byte limit once V4 mint/redeem/fee/circuit-breaker logic is included, so ~20 less-hot-path functions are relocated into `PulsarProtocolOps` (see below) — fully transparent to every caller, same function names/params/events/access control.
+  - Mint 3/5 multisig: `requestMint` → `approveMint` → `executeMint` (only requester executes) OR `rejectMint` → `executeRejectMint` (first rejecter executes). All new mints go to the ticker's Uniswap V4 pool — no `OperatorWallet`/OTC destination exists.
+  - Liquidity pool minting uses custodian-funded IDRX. The protocol must not mint IDRX internally; it pulls IDRX with ERC20 `transferFrom`, so the requester/funder must approve the protocol first. On a ticker's first mint, `executeMint` also creates its V4 pool and seeds full-range liquidity.
+  - Redeem 3/5 multisig: `requestRedeem(ticker, tokenAmount, userAddress)` — custodian only, KYC checked on userAddress, quotes the stock's IDRX value from the V4 pool's own spot price → `approveRedeem` → `executeRedeem` OR `rejectRedeem` → `executeReject`
+  - `swapV4(ticker, amountIn, amountOutMin, buyStock)` — permissionless, no auth required, executes against the ticker's Uniswap V4 pool. No fee-cutting logic lives here: the `swapFeeBps` protocol fee is enforced entirely by `PulsarSwapHook` at the **pool level**, in IDRX, so it applies regardless of entry point (protocol, aggregator, or Uniswap's own UI) — see §4a.
+  - `approveKYC(userAddress)` / `revokeKYC(userAddress)` — admin only (delegated to `PulsarProtocolOps`)
+  - Circuit breakers: `pause()`/`unpause()` (blocks `executeMint`/`swapV4`/`addV4Liquidity`), `pauseHook()`/`unpauseHook()` (halts all V4 swaps pool-wide, any entry point), `emergencyWithdrawV4(ticker)` (pauses the hook and pulls the ticker's entire V4 liquidity back to the protocol — incident-only, delegated).
+- **`PulsarProtocolOps.sol`** — delegatecall target for the ~20 functions relocated to fit `PulsarProtocol` under EIP-170: mint/redeem approve-reject-execute, `migrateV2ToV4`, `emergencyWithdrawV4`, `distributeFees`, KYC, admin setters. Never called directly with real effect — its own storage trie is permanently empty (never `initialize()`d), so every real check it runs fails closed for a caller bypassing the proxy. Both contracts inherit `PulsarProtocolStorage`, an abstract base declaring every state variable once, guaranteeing identical storage slot layout by construction.
+- **`v4/PulsarSwapHook.sol`** — Uniswap V4 hook, live and immutable. Enforces the `swapFeeBps` protocol fee at the pool level on every swap against a registered pool, always in IDRX (skimmed from input on buy, from output on sell). This is a fee-enforcement hook only — it has no KYC logic.
 - **`PulsarStock.sol`** — Independent ERC20 per stock, owned by PulsarProtocol. Deployed lazily on first `executeMint`.
 - **`IDRX.sol`** — Mock stablecoin (2 decimals) for Arbitrum Sepolia. Production/mainnet must configure the real IDRX token and rely on user/custodian balances + allowances.
-- **Router**: Uniswap V2 (custom deploy on Arbitrum Sepolia — not available by default). Deploy Uniswap V2 from official build artifacts in `smart-contract/script/artifacts`, not by recompiling V2 core/periphery through Foundry. The official router hardcodes the pair init code hash; recompiling pair bytecode can make `pairFor()` point to the wrong address.
-- **Upgrade path**: UUPS → Uniswap V4 with `beforeSwap` KYC hooks post-MVP.
+- **AMM**: Uniswap V4 (official `PoolManager`) is the live, sole swap/liquidity venue — this is the current deployed state, not a future upgrade. Uniswap V2 (Factory/Router) is legacy: kept only so the one-time `migrateV2ToV4` runbook step can pull liquidity out of tickers that still had V2 history at cutover time (BUMIP, ENRGP). A fresh (e.g. mainnet) launch with no V2 history would never need V2 at all. If V2 does need redeploying for a migration, use official build artifacts in `smart-contract/script/artifacts`, not a Foundry recompile of V2 core/periphery — the official router hardcodes the pair init code hash, and recompiled pair bytecode can make `pairFor()` point to the wrong address.
 
 ### Current Arbitrum Sepolia Deployment
 
 | Contract | Address | Verification |
 |---|---:|---|
 | `PulsarProtocol` proxy | `0x204488318C0E75978B3c851382Aa83f3065a8f5A` | Verified (`ERC1967Proxy`) |
-| `PulsarProtocol` implementation | `0x14c54E6cade1A13c73685c239aE895A7d37DC3df` | Verified |
+| `PulsarProtocol` implementation | `0x529Cf96BD1Ea34C8B9fA931aBbaD70812A4ea10e` | Verified — V4-native |
+| `PulsarProtocolOps` | `0xF6C640e11D6507bfEa8B1E15972790ba74b0Fef4` | Verified — delegatecall target, not a proxy |
+| `PulsarSwapHook` | `0x793bAC5e3CE0e42E719883b1C7038a8743dc00Cc` | Verified — immutable V4 hook |
+| Uniswap V4 `PoolManager` | `0xFB3e0C6F74eB1a21CC1Da29aeC80D2Dfe6C9a317` | Official Uniswap deployment, not PulsarFi's own |
 | `IDRX` mock | `0x03b53A71C5517907006EAb512A31C1eD5a56Ae64` | Verified |
-| `UniswapV2Factory` | `0x4254378E95dBD9816a1a18428A81B4E1fBe5C296` | Verified |
-| `UniswapV2Router02` | `0xFEf655B2A0742134242711b80899d0b543A74223` | Verified |
 | `IDRXFaucet` | `0x286954bE9b8a2B52f2A61432Fa448C5287e4dDEA` | Verified |
-| WETH | `0x980B62Da83eFf3D4576C647993b0c1D7faf17c73` | External dependency |
+| `UniswapV2Factory` | `0x4254378E95dBD9816a1a18428A81B4E1fBe5C296` | Legacy — only relevant for `migrateV2ToV4` on tickers with V2 history |
+| `UniswapV2Router02` | `0xFEf655B2A0742134242711b80899d0b543A74223` | Legacy — same as above |
+| WETH | `0x980B62Da83eFf3D4576C647993b0c1D7faf17c73` | External dependency (V2-only) |
 
-The matching `.env` keys are `PULSAR_PROTOCOL_PROXY`, `PULSAR_PROTOCOL_IMPL`, `IDRX`, `UNISWAP_V2_FACTORY`, `UNISWAP_V2_ROUTER`, and `WETH`. Keep these in sync with `frontend/.env.local` (`NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS`, `NEXT_PUBLIC_IDRX_ADDRESS`).
+All 8 currently listed tickers (`BUMIP`, `ENRGP`, `BRPTP`, `PTROP`, `BBRIP`, `BMRIP`, `BBCAP`, `BDMNP`) have `isV4Migrated(ticker) == true` on-chain — confirmed live via `cast call`, not assumed from docs.
+
+The matching `.env` keys are `PULSAR_PROTOCOL_PROXY`, `PULSAR_PROTOCOL_IMPL`, `PULSAR_PROTOCOL_OPS`, `IDRX`, `UNISWAP_V2_FACTORY`, `UNISWAP_V2_ROUTER`, and `WETH`. Keep these in sync with `frontend/.env.local` (`NEXT_PUBLIC_PULSAR_PROTOCOL_ADDRESS`, `NEXT_PUBLIC_IDRX_ADDRESS`).
 `PulsarStock` tokens are deployed lazily on first successful `executeMint`; verify each stock token address after deployment.
 
-### Uniswap V2 Deployment Rule
+### Uniswap V2 — Legacy, Migration-Only
 
-Deploy Uniswap V2 through `script/OfficialUniswapV2.s.sol`, which reads official build artifacts from `script/artifacts`:
+V2 is no longer part of the live swap/mint path. It is only ever redeployed to support `migrateV2ToV4` against a ticker that still has V2-era liquidity (BUMIP, ENRGP at cutover time). If that's ever needed again, deploy V2 through `script/OfficialUniswapV2.s.sol`, which reads official build artifacts from `script/artifacts`:
 
 ```bash
 DEPLOY_UNISWAP_V2=true forge script script/Upgrade.s.sol:UpgradeScript --rpc-url "$RPC_URL" --broadcast
 ```
 
-Do not deploy V2 by recompiling `lib/v2-core` and `lib/v2-periphery` with Foundry. The official `UniswapV2Router02` uses `UniswapV2Library.pairFor()`, and that library hardcodes the pair init code hash. If factory pair bytecode does not match that hash, `factory.createPair()` can succeed while router `addLiquidity()` calls the wrong deterministic pair address. The symptom is `executeMint` reverting during liquidity provisioning with requester, threshold, and balances already valid.
+Do not deploy V2 by recompiling `lib/v2-core` and `lib/v2-periphery` with Foundry. The official `UniswapV2Router02` uses `UniswapV2Library.pairFor()`, and that library hardcodes the pair init code hash. If factory pair bytecode does not match that hash, `factory.createPair()` can succeed while router `addLiquidity()` calls the wrong deterministic pair address.
 
 Post-deploy checks:
 
 ```bash
-cast call $PULSAR_PROTOCOL_PROXY "router()(address)" --rpc-url "$RPC_URL"
 cast call $UNISWAP_V2_ROUTER "factory()(address)" --rpc-url "$RPC_URL"
 cast call $UNISWAP_V2_FACTORY "feeToSetter()(address)" --rpc-url "$RPC_URL"
 ```
 
-The router's factory must equal `UNISWAP_V2_FACTORY`, the protocol router must equal `UNISWAP_V2_ROUTER`, and both contracts must be verified.
+For the live V4 path, verify instead:
+
+```bash
+cast call $PULSAR_PROTOCOL_PROXY "poolManager()(address)" --rpc-url "$RPC_URL"
+cast call $PULSAR_PROTOCOL_PROXY "swapHook()(address)" --rpc-url "$RPC_URL"
+cast call $PULSAR_PROTOCOL_PROXY "opsContract()(address)" --rpc-url "$RPC_URL"
+cast call $PULSAR_PROTOCOL_PROXY "isV4Migrated(string)(bool)" "BUMIP" --rpc-url "$RPC_URL"
+```
 
 ### Backend (`/backend`)
 - Go + Gin + GORM + PostgreSQL
@@ -164,7 +176,7 @@ Custodian → inputs wallet address in dashboard → approveKYC(userAddress) on-
 
 ## 4a. Fee Accounting & Distribution
 
-- `swapFeeBps` — protocol fee taken on every `swap()`, always in IDRX (from `amountIn` when buying, from output when selling). Separate from Uniswap's own 0.3% AMM fee, which stays in pool reserves untouched (protocol-owned liquidity, not revenue).
+- `swapFeeBps` — protocol fee enforced by `PulsarSwapHook` at the pool level on every `swapV4()`, always in IDRX (from `amountIn` when buying, from output when selling), regardless of entry point. Separate from Uniswap's own 0.3% AMM fee, which stays in pool reserves untouched (protocol-owned liquidity, not revenue).
 - `accumulatedFees` — internal counter of *confirmed* protocol revenue (swap fee + executed redeem fee). Redeem fee only joins this counter at `executeRedeem`, never at `requestRedeem` time, so pending escrow that might still need refunding via `executeReject` is never at risk of being swept.
 - `distributeFees()` — permissionless, callable by anyone once `accumulatedFees >= minimumDistributionThreshold`. Splits 30% to `treasury`, 70% equally among custodians that have ever called `requestMint`/`approveMint` (tracked in `_activeCustodians`).
 - See `BUSINESS.md` for the full rationale and recommended default values.
@@ -201,10 +213,10 @@ Custodian → inputs wallet address in dashboard → approveKYC(userAddress) on-
 
 ---
 
-## 7. Router Versioning
+## 7. AMM Versioning
 
-- **MVP**: Uniswap V2, custom-deployed on Arbitrum Sepolia
-- **Production**: Uniswap V4 with `beforeSwap` KYC hooks via Horizon Labs Identity Registry
+- **Live now**: Uniswap V4 (official `PoolManager`) is the sole swap/liquidity venue, on all currently listed tickers — confirmed on-chain, not a roadmap item. `PulsarSwapHook` enforces the protocol swap fee at the pool level on every swap regardless of entry point. It is a fee-enforcement hook only, not a KYC hook.
+- **Legacy**: Uniswap V2 (Factory/Router) is no longer part of the live path. Kept only for the one-time `migrateV2ToV4` runbook step on tickers that had V2 history at cutover (BUMIP, ENRGP). A fresh deployment with no V2 history never needs it.
 
 ---
 
@@ -220,14 +232,14 @@ pulsarfi/
 │   │   ├── PulsarProtocolOps.sol
 │   │   ├── PulsarProtocolStorage.sol
 │   │   ├── PulsarStock.sol
-│   │   ├── AgentTaskManager.sol      Trade model (§3a) — not yet deployed
-│   │   ├── v4/                       Uniswap V4 upgrade path (beforeSwap KYC hooks)
+│   │   ├── AgentTaskManager.sol      Trade model (§3a) — deployed, see §3a
+│   │   ├── v4/PulsarSwapHook.sol      live V4 fee-enforcement hook, not a future upgrade
 │   │   ├── interfaces/
-│   │   ├── helpers/
+│   │   ├── helpers/                   legacy Uniswap V2 compile helpers (migration-only)
 │   │   └── mocks/
 │   ├── test/
 │   │   └── AgentTaskManagerFork.t.sol   fork tests vs. the live proxy
-│   └── script/                        deploy/upgrade scripts + official Uniswap V2 artifacts
+│   └── script/                        deploy/upgrade scripts + official Uniswap V2 artifacts (legacy, migration-only)
 │
 ├── backend/                     Go + Gin + GORM + PostgreSQL
 │   ├── migrations/               001..015_*.sql

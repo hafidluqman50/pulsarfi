@@ -49,66 +49,42 @@ export interface SubTaskStarted {
   label: string;
 }
 
+export interface ToolCallEvent {
+  agent: string;
+  tool: string;
+  phase: 'start' | 'end';
+}
+
 export type ChatStreamEvent =
   | { type: 'sub_task'; data: AgentSubTask }
   | { type: 'sub_task_started'; data: SubTaskStarted }
+  | { type: 'tool_call'; data: ToolCallEvent }
+  | { type: 'reply_delta'; data: { delta: string } }
   | { type: 'final'; data: WorkflowCard }
   | { type: 'error'; data: { message: string } };
 
-async function readChatStream(path: string, body: unknown, onEvent?: (event: ChatStreamEvent) => void): Promise<WorkflowCard> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
-  const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/api/v1${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.body) {
-    throw new Error(`stream request failed with status ${res.status}`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let final: WorkflowCard | null = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split('\n\n');
-    buffer = frames.pop() ?? '';
-    for (const frame of frames) {
-      const line = frame.trim();
-      if (!line.startsWith('data:')) continue;
-      const jsonStr = line.slice(5).trim();
-      if (!jsonStr) continue;
-      let event: ChatStreamEvent;
-      try {
-        event = JSON.parse(jsonStr);
-      } catch {
-        continue;
-      }
-      onEvent?.(event);
-      if (event.type === 'error') throw new Error(event.data.message);
-      if (event.type === 'final') final = event.data;
-    }
-  }
-
-  if (!final) throw new Error('stream ended without a final event');
-  return final;
+// chatStreamTopic must match the backend's own chatStreamTopic()
+// (backend/src/http/handlers/agent/chats.go) exactly — subscribe to this
+// via useRealtimeTopic *before* calling sendChatMessage/retryLastMessage,
+// since live progress (sub_task/sub_task_started/reply_delta) now arrives
+// over the shared WebSocket, not in the HTTP response body.
+// docs/plans/agent-orchestration-graph-rebuild.md v2.6: "no SSE, disini
+// pake socket."
+export function chatStreamTopic(chatId: string): string {
+  return `agent-chat-stream:${chatId}`;
 }
 
+// sendChatMessage/retryLastMessage are now plain, blocking POST requests —
+// the response body carries only the final WorkflowCard (or throws on
+// error), matching every other endpoint in this API. A caller that never
+// subscribed to chatStreamTopic(chatId) still gets a correct, complete
+// result, it just misses the live play-by-play.
 export async function sendChatMessage(chatId: string, message: string): Promise<WorkflowCard> {
-  return readChatStream(`/agent/chats/${chatId}/messages`, { message });
+  const res = await client.post(`/agent/chats/${chatId}/messages`, { message });
+  return res.data.data as WorkflowCard;
 }
 
-export async function streamChatMessage(chatId: string, message: string, onEvent: (event: ChatStreamEvent) => void): Promise<WorkflowCard> {
-  return readChatStream(`/agent/chats/${chatId}/messages`, { message }, onEvent);
-}
-
-export async function retryLastMessage(chatId: string, onEvent: (event: ChatStreamEvent) => void): Promise<WorkflowCard> {
-  return readChatStream(`/agent/chats/${chatId}/messages/retry`, {}, onEvent);
+export async function retryLastMessage(chatId: string): Promise<WorkflowCard> {
+  const res = await client.post(`/agent/chats/${chatId}/messages/retry`, {});
+  return res.data.data as WorkflowCard;
 }

@@ -5,12 +5,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { streamChatMessage, retryLastMessage, type AgentChatMessage, type SubTaskStarted } from '@/http/agent/chatApi';
+import { sendChatMessage, retryLastMessage, chatStreamTopic, type AgentChatMessage, type ChatStreamEvent, type SubTaskStarted } from '@/http/agent/chatApi';
 import type { AgentSubTask } from '@/http/agent/taskApi';
+import { useRealtimeTopic } from '@/http/realtime/useRealtimeSocket';
 import { NewsBrief } from './NewsBrief';
 import { PlanCard } from './PlanCard';
 import { PortfolioChart } from './PortfolioChart';
-import { agentDisplayName, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
+import { agentDisplayName, humanizeKey, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
 import { useChatMessages } from '@/http/agent/hooks';
 
 type ChatThreadProps = {
@@ -73,7 +74,16 @@ function mergeSubTaskDone(prev: AgentSubTask[], done: AgentSubTask): AgentSubTas
   return next;
 }
 
-function LiveSubTasks({ subTasks }: { subTasks: AgentSubTask[] }) {
+// toolActivityByAgent maps agent ("analyzer"/"executor") to a human label for
+// the tool it is currently (or was last seen) calling, sourced from tool_call
+// events — this is per-agent, not per-(agent, step_name), because only one
+// Sub Task per agent is ever in_progress at a time in the current graph
+// (docs/plans/agent-orchestration-graph-rebuild.md v2.8). Kept set after a
+// "end" phase (not cleared) so the label doesn't flicker back to the generic
+// placeholder text between two tool calls in the same step — it only changes
+// once the next tool call starts, or the row disappears once the step itself
+// is done.
+function LiveSubTasks({ subTasks, toolActivityByAgent }: { subTasks: AgentSubTask[]; toolActivityByAgent: Record<string, string> }) {
   const [openRow, setOpenRow] = useState<number | null>(null);
   if (subTasks.length === 0) return null;
   return (
@@ -123,7 +133,9 @@ function LiveSubTasks({ subTasks }: { subTasks: AgentSubTask[] }) {
                     <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ticker)', fontStyle: 'italic' }}>
                       {subTask.status === 'retried'
                         ? `${agentDisplayName(subTask.agent)} mengulang langkah ini sebelum percobaan ini selesai.`
-                        : `${agentDisplayName(subTask.agent)} sedang memproses langkah ini…`}
+                        : toolActivityByAgent[subTask.agent]
+                          ? `${agentDisplayName(subTask.agent)} memanggil ${toolActivityByAgent[subTask.agent]}…`
+                          : `${agentDisplayName(subTask.agent)} sedang memproses langkah ini…`}
                     </div>
                   ) : (
                     <StructuredOrProse raw={subTask.reasoning} />
@@ -228,6 +240,8 @@ type MessageListProps = {
   pendingText: string | null;
   failedMessage: { text: string; description: string } | null;
   liveSubTasks: AgentSubTask[];
+  toolActivityByAgent: Record<string, string>;
+  streamingReplyText: string;
   onRetry: () => void;
 };
 
@@ -237,14 +251,14 @@ type MessageListProps = {
 // supervisor reply doing its own data fetching, on every single keystroke,
 // as a chat's history grows. Now this only re-renders when its own props
 // (real content) actually change, not when the user is just typing.
-const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, onRetry }: MessageListProps) {
+const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, toolActivityByAgent, streamingReplyText, onRetry }: MessageListProps) {
   const threadRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = threadRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, pendingText, liveSubTasks, isStreaming]);
+  }, [messages, pendingText, liveSubTasks, streamingReplyText, isStreaming]);
 
   return (
     <div ref={threadRef} className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -288,14 +302,20 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
         </div>
       )}
 
-      {isStreaming && liveSubTasks.length === 0 && (
+      {isStreaming && <LiveSubTasks subTasks={liveSubTasks} toolActivityByAgent={toolActivityByAgent} />}
+
+      {isStreaming && streamingReplyText && (
+        <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
+          <MessageMarkdown content={streamingReplyText} />
+        </div>
+      )}
+
+      {isStreaming && liveSubTasks.length === 0 && !streamingReplyText && (
         <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--canvas)', padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className="pulsar" />
           <span style={{ fontSize: 12.5, color: 'var(--body)', fontFamily: 'var(--font-mono)' }}>Quasar is thinking…</span>
         </div>
       )}
-
-      {isStreaming && <LiveSubTasks subTasks={liveSubTasks} />}
     </div>
   );
 });
@@ -307,14 +327,46 @@ export function ChatThread({ chatId }: ChatThreadProps) {
   const [pendingText, setPendingText] = useState<string | null>(null);
   const [failedMessage, setFailedMessage] = useState<{ text: string; description: string } | null>(null);
   const [liveSubTasks, setLiveSubTasks] = useState<AgentSubTask[]>([]);
+  const [toolActivityByAgent, setToolActivityByAgent] = useState<Record<string, string>>({});
+  const [streamingReplyText, setStreamingReplyText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const isSendingRef = useRef(false);
 
-  useEffect(() => {
-    if (!pendingText) return;
-    const alreadyPersisted = messages.some((m) => m.sender === 'user' && m.content === pendingText);
-    if (alreadyPersisted) setPendingText(null);
-  }, [messages, pendingText]);
+  // Live progress (sub_task/sub_task_started/reply_delta) arrives over the
+  // shared WebSocket now, not the HTTP response body — subscribed here,
+  // unconditionally, for as long as this chat is open, independent of
+  // whether *this* tab is the one that sent the message
+  // (docs/plans/agent-orchestration-graph-rebuild.md v2.6: "no SSE, disini
+  // pake socket").
+  useRealtimeTopic<ChatStreamEvent>(chatStreamTopic(chatId), (event) => {
+    if (event.type === 'sub_task_started') {
+      setLiveSubTasks((prev) => addStartedPlaceholder(prev, event.data));
+      // A fresh step hasn't called any tool yet — drop the previous step's
+      // leftover label so it can't briefly show through this step's own
+      // placeholder before its first tool_call (if any) arrives.
+      setToolActivityByAgent((prev) => {
+        if (!(event.data.agent in prev)) return prev;
+        const next = { ...prev };
+        delete next[event.data.agent];
+        return next;
+      });
+    }
+    if (event.type === 'sub_task') {
+      setLiveSubTasks((prev) => mergeSubTaskDone(prev, event.data));
+    }
+    if (event.type === 'tool_call' && event.data.phase === 'start') {
+      setToolActivityByAgent((prev) => ({ ...prev, [event.data.agent]: humanizeKey(event.data.tool) }));
+    }
+    if (event.type === 'reply_delta') {
+      setStreamingReplyText((prev) => prev + event.data.delta);
+    }
+  });
+
+  // Derived at render time, not via a setState-in-effect: once the real
+  // persisted message shows up in `messages`, the optimistic bubble below
+  // is redundant and hides itself immediately — no extra render tick spent
+  // holding a stale copy, and no effect needed to reconcile the two.
+  const pendingBubbleText = pendingText && !messages.some((m) => m.sender === 'user' && m.content === pendingText) ? pendingText : null;
 
   async function handleSend(overrideText?: string) {
     const trimmed = (overrideText ?? draft).trim();
@@ -324,16 +376,11 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     setPendingText(trimmed);
     setFailedMessage(null);
     setLiveSubTasks([]);
+    setToolActivityByAgent({});
+    setStreamingReplyText('');
     if (!overrideText) setDraft('');
     try {
-      await streamChatMessage(chatId, trimmed, (event) => {
-        if (event.type === 'sub_task_started') {
-          setLiveSubTasks((prev) => addStartedPlaceholder(prev, event.data));
-        }
-        if (event.type === 'sub_task') {
-          setLiveSubTasks((prev) => mergeSubTaskDone(prev, event.data));
-        }
-      });
+      await sendChatMessage(chatId, trimmed);
       queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
       queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
     } catch (error: unknown) {
@@ -344,6 +391,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
       isSendingRef.current = false;
       setPendingText(null);
       setLiveSubTasks([]);
+      setStreamingReplyText('');
       setIsStreaming(false);
     }
   }
@@ -354,15 +402,10 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     setIsStreaming(true);
     setFailedMessage(null);
     setLiveSubTasks([]);
+    setToolActivityByAgent({});
+    setStreamingReplyText('');
     try {
-      await retryLastMessage(chatId, (event) => {
-        if (event.type === 'sub_task_started') {
-          setLiveSubTasks((prev) => addStartedPlaceholder(prev, event.data));
-        }
-        if (event.type === 'sub_task') {
-          setLiveSubTasks((prev) => mergeSubTaskDone(prev, event.data));
-        }
-      });
+      await retryLastMessage(chatId);
       queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
       queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
     } catch (error: unknown) {
@@ -372,6 +415,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     } finally {
       isSendingRef.current = false;
       setLiveSubTasks([]);
+      setStreamingReplyText('');
       setIsStreaming(false);
     }
   }, [chatId, messages, queryClient]);
@@ -383,9 +427,11 @@ export function ChatThread({ chatId }: ChatThreadProps) {
         messages={messages}
         isLoading={isLoading}
         isStreaming={isStreaming}
-        pendingText={pendingText}
+        pendingText={pendingBubbleText}
         failedMessage={failedMessage}
         liveSubTasks={liveSubTasks}
+        toolActivityByAgent={toolActivityByAgent}
+        streamingReplyText={streamingReplyText}
         onRetry={handleRetry}
       />
 

@@ -37,6 +37,11 @@ func buildHandler() (*gin.Engine, func(), error) {
 		return nil, nil, err
 	}
 
+	tavilyAPIKey := config.GetEnv("TAVILY_API_KEY")
+	if tavilyAPIKey == "" {
+		log.Println("TAVILY_API_KEY not set, Analyzer's web_search tool will fail when called (news evidence unavailable, chart/portfolio/trade unaffected)")
+	}
+
 	db, err := config.NewDatabase(databaseURL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("database: %w", err)

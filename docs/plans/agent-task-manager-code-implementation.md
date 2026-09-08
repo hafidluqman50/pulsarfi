@@ -2,15 +2,16 @@
 
 | | |
 |---|---|
-| **Version** | 3.19 |
+| **Version** | 3.21 |
 | **Status** | Implemented |
 | **Date Created** | 2026-09-05 |
-| **Last Updated** | 2026-09-07 |
+| **Last Updated** | 2026-09-08 |
 
 **Note on versioning below 2.2:** the detailed 2.2–2.15 changelog history (chart accuracy fixes, chat/Task lifecycle redesign, retry mechanism) has been consolidated into the two summary rows below. The full step-by-step history is preserved in git history and the memory system, not restated here in narrative form.
 
 | Version | Date | Change |
 |---|---|---|
+| 3.21 | 2026-09-08 | **Analyzer/Executor tool-construction cleanup — real code, implemented and verified live in this pass, flagged directly during code review.** (1) `analyzer.New` now builds `read_article`/`web_search` itself (`NewNewsTools`), as fixed base tools alongside `get_portfolio_snapshot`/`get_stock_chart` — previously built one level up in `agent_registry.go` and passed in via `extraTools`, a distinction that stopped meaning anything once the tool itself moved into `analyzer`'s own package. (2) `web_search`'s availability no longer branches on whether `TAVILY_API_KEY` is set — `NewSearchTool` is always constructed, so it's always a fixed literal element (`[]tool.BaseTool{portfolioSnapshotTool, stockChartTool, readArticleTool, webSearchTool}`, no append/slice for this part); an empty key just makes the real Tavily HTTP call fail at call time, caught by the same `WrapToolGraceful` every other tool failure already goes through — no separate "disabled tool" type needed. (3) New shared helper `agent.WrapToolsGraceful([]tool.BaseTool)` replaces an identical wrap-if-`InvokableTool` loop that was duplicated verbatim in both `analyzer.New` and `executor.New`. (4) `TAVILY_API_KEY` is now read in exactly one place in the entire codebase (`analyzer/tools_service.go`'s `NewNewsTools`) — tried threading it as a parameter through `service.Config`/`newAgentTaskServices` and reverted, tried a second independent check in `bootstrap.go` for startup logging and removed it too, since it duplicated what `WrapToolGraceful`'s own failure logging already covers. `go build`/`go vet`/`gofmt` clean throughout |
 | 3.19 | 2026-09-07 | **Two `ChatThread.tsx` UI bugs, flagged live: typing in the draft box visibly lagged, and a long news link overflowed the reply bubble on a narrow viewport.** (1) `draft` (the textarea's own state) lived in the same component that renders the entire message list — every keystroke re-rendered every message, including a fresh `ReactMarkdown` parse and a `PlanCard` (with its own data fetching) per supervisor reply, worse the longer a chat's history grew. Fixed: extracted the whole list into a new `React.memo`-wrapped `MessageList` component that only takes `messages`/`isLoading`/`isStreaming`/`pendingText`/`failedMessage`/`liveSubTasks`/`onRetry` as props — none of them `draft` — so typing no longer re-renders anything but the input itself; `handleRetry` wrapped in `useCallback` so its identity stays stable across re-renders it doesn't need to invalidate. (2) `MessageMarkdown` had no `overflowWrap`/`word-break` anywhere and no custom `a` renderer at all — a long raw news URL (no natural break points, unlike prose) pushed the whole reply bubble past its container's edge, most visible at a 425px mobile viewport. Fixed: `overflowWrap: 'anywhere'`/`wordBreak: 'break-word'` on the markdown container, plus a new `a` component override (same overflow handling, `target="_blank" rel="noopener noreferrer"` so a link opens in a new tab — matching `NewsBrief.tsx`'s own citation links, which already had this). `tsc`/`eslint` clean (one pre-existing, unrelated `react-hooks/set-state-in-effect` warning in the same file, confirmed present before every change made to it this session, left alone) |
 | 3.18 | 2026-09-07 | **A legitimate two-ticker news+sentiment request ("berita & sentimen BUMI dan ENRG sekaligus") failed with `ErrExceedMaxIterations`, caught non-fatally by §3.16's new logging — which is how this was actually found instead of guessed.** No NewsBrief card rendered because `analyzer_agent` never completed at all (`WrapToolGraceful` turned the failure into a soft `tool_error`, but Analyzer's own evidence-gathering never finished, so there was no evidence for `buildWorkflowCard` to classify as `content_type: "news"` — the missing card was a downstream symptom of this failure, not a bug in the NewsBrief feature itself). Root cause: `analyzer/index.go`'s `MaxIterations: 10` — already a deliberate reduction from eino's own default of 20, done specifically to fail a genuine infinite tool-call loop faster (§7.L) — was too low for a real, non-looping request needing `web_search`+`read_article` for two separate tickers plus a final synthesis. Restored to eino's original default (20) rather than picking a new number blind. `go build`/`go vet`/`gofmt` clean |
 | 3.17 | 2026-09-07 | **The menu's "Activity log" item shipped — was a disabled "soon" placeholder since the original build (§5/§9 of agent-task-manager-rebuild.md), flagged live as unfinished.** Wallet-scoped (unlike `GetReasoningHandler`'s one-Task chain, deliberately public for third-party verification) — every step across every one of the wallet's own Tasks, most recent first, filterable by who ran it (Quasar/Nova/Comet or all). New `AgentSubTaskRepository.FindByOwnerWallet` (joins through `agent_tasks` since `agent_sub_tasks` carries no wallet column itself, explicit `Select("agent_sub_tasks.*")` to avoid an ambiguous `id` column between the two tables), `TaskService.GetActivity` (capped at 200 rows — a live feed, not a paginated archive; a single Task's own full chain is still available in full via the existing reasoning endpoint), `GET /agent/activity`. Frontend: `MenuPanel.tsx`'s "Activity log" item un-disabled; `QuasarPanel.tsx` renders a kind-filter tab row (reusing `agentDisplayName`/`statusColor`/`stepDisplayName` from `SubTaskReasoning.tsx`, the same persona names and status coloring used everywhere else) and a row list, clicking a row jumps straight to that Task's own detail view. `go build`/`go vet`/`gofmt`/`tsc`/`eslint` clean |
@@ -2096,3 +2097,108 @@ filter.megadata.net.id, not html.duckduckgo.com
 **Fix.** The agent-construction block moved into a new function, `newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.PortfolioChartReader) (*agentsvc.TaskService, *agentsvc.SubTaskRetryService)`. This could not live in `task_service.go` (package `agent`) as first proposed: `analyzer`/`executor`/`supervisor` each already import package `agent` for `agent.WrapToolGraceful`/`agent.RunContextFrom`, so package `agent` importing them back would be a compile-breaking import cycle — found before writing the code, not after. It lives instead in a new file, `src/service/agent_registry.go`, in package `service` (same package as `index.go`, confirmed no subpackage under `service/agent` imports `service` back). `NewRegistry` now just calls it and assigns the two results, reading as one line per service again like the rest of the function. Separately, `analyzer.New`/`executor.New` now wrap each `extraTools` entry that implements `tool.InvokableTool` with `agent.WrapToolGraceful` inside the function itself, so `service/index.go` (via `agent_registry.go`) passes `searchTool`/`readArticleTool` raw, with no wrapping responsibility left on the caller.
 
 **Impacted files.** `backend/src/service/agent_registry.go` `[NEW]` (`newAgentTaskServices`, the extracted model/tool/agent construction); `backend/src/service/index.go` `[MODIFY]` (`NewRegistry` reduced to one line per service, unused `analyzer`/`executor`/`supervisor`/`context`/`log` imports removed); `backend/src/service/agent/analyzer/index.go` `[MODIFY]` (wrap each `extraTools` entry); `backend/src/service/agent/executor/index.go` `[MODIFY]` (same). Verified: `go build ./...`, `go vet ./...`, `gofmt -l` all clean.
+
+### 7.AG Escalation Mechanism v2 — Capability Count + Actionable/`condition_met` Gate (Proposed — Not Yet Implemented)
+
+**Architectural home.** `agent-role-architecture.md` §6a records this as a fifth code-enforced gate (same class as its corroboration/persistence/quarantine/market-hours checks) and adds a `reverify_deep` step to §8's Sub Task sequence. This section stays the concrete Go-level design.
+
+**Problem.** `docs/plans/dynamic-model-tier-routing.md` §5 replaces the current free-text `Depth` field (unpredictable, zero code validation, indefensible under scrutiny of "how was this cost decision made") with two independent, code-computed signals. This section is the concrete Go-level design for that replacement — reviewed here before any file is touched, per this project's own rule.
+
+**1. `routeRequest` (`supervisor/tools_service.go`) — `Depth` replaced by `Capabilities`.**
+
+```go
+type routeRequest struct {
+	Request      string   `json:"request" jsonschema_description:"..."`
+	Label        string   `json:"label" jsonschema_description:"..."`
+	Capabilities []string `json:"capabilities" jsonschema_description:"Every distinct analysis lens this request genuinely needs, from exactly: 'sentiment' (news/sentiment reading), 'technical' (chart/price-trend analysis), 'fundamental' (financial-condition/quantifiable-metric check). List only what is actually asked for — a plain chart lookup is ['technical'] alone, not all three."`
+}
+
+// depthForCapabilities is the only thing that decides quick vs deep from
+// this signal — Quasar enumerates what is being asked, it never states a
+// depth or a score itself. 2+ lenses is the genuine cross-analysis
+// synthesis case ICBCBench (financial deep research) rewards Pro for;
+// single-lens lookups are the agentic tool-use case Flash already matches
+// Pro on (Terminal Bench 2.1).
+func depthForCapabilities(capabilities []string) string {
+	if len(capabilities) >= 2 {
+		return "deep"
+	}
+	return "quick"
+}
+```
+
+`reasoningEffortFor` (already exists) is unchanged, called with this function's result instead of `req.Depth` directly.
+
+**2. `RunContext` (`run_context_service.go`) gains `IsActionable bool`**, set inside `newCreateTaskTool` alongside the existing `rc.TaskID = task.ID` line — it is already sitting in `createTaskRequest.IsActionable` at that point, no repository round-trip needed:
+
+```go
+rc.TaskID = task.ID
+rc.IsActionable = req.IsActionable
+```
+
+**3. `newAnalyzerTool` — compute depth, then automatic re-verification gate.**
+
+```go
+func newAnalyzerTool(analyzerAgentQuick, analyzerAgentDeep adk.Agent) (tool.InvokableTool, error) {
+	return utils.InferTool("analyzer_agent", "...",
+		func(ctx context.Context, req routeRequest) (string, error) {
+			// ...existing ensureRecorder/OnSubTaskStarted/record route_to_analyzer...
+
+			depth := depthForCapabilities(req.Capabilities)
+			analyzerAgent := analyzerAgentQuick
+			if depth == "deep" {
+				analyzerAgent = analyzerAgentDeep
+			}
+			conclusion, nestedToolCalls, err := agent.RunAgentWithTrace(ctx, analyzerAgent, req.Request, nil, reasoningEffortFor(depth))
+			if err != nil {
+				return "", fmt.Errorf("analyzer_agent: run: %w", err)
+			}
+			rc.NestedToolCalls = append(rc.NestedToolCalls, nestedToolCalls...)
+
+			// Signal 2: fully code-driven, Quasar/Nova never asked to decide
+			// this. Only fires on a quick pass — a deep pass is already the
+			// highest tier, nothing to escalate to.
+			if depth == "quick" && rc.IsActionable {
+				if parsed, ok := parseAnalyzerConclusion(conclusion); ok && parsed.ConditionMet {
+					deepConclusion, deepNestedToolCalls, err := agent.RunAgentWithTrace(ctx, analyzerAgentDeep, req.Request, nil, "max")
+					if err == nil {
+						conclusion = deepConclusion
+						rc.NestedToolCalls = append(rc.NestedToolCalls, deepNestedToolCalls...)
+					}
+					// A failed re-verification attempt keeps the quick
+					// conclusion rather than aborting the turn — matches
+					// WrapToolGraceful's own non-fatal-degradation pattern.
+				}
+			}
+
+			if _, err := rc.Recorder.Record(ctx, "analyzer", "gather_evidence", "done", conclusion, req.Label, nil); err != nil {
+				return "", fmt.Errorf("analyzer_agent: record gather_evidence: %w", err)
+			}
+			return conclusion, nil
+		},
+	)
+}
+```
+
+**4. `parseAnalyzerConclusion` (new, likely `analyzer/conclusion_service.go` or alongside `llm_service.go`)** — defensive JSON parse matching the `condition_met`/`confidence`/`evidence`/`reasoning` contract `analyzer/instructions.go` already describes to the model, mirroring the frontend's own `StructuredOrProse`/`toStructured` precedent (Analyzer's reply is prose-or-JSON depending on how it answers, never enforced strictly by the tool schema itself):
+
+```go
+type AnalyzerConclusion struct {
+	ConditionMet bool   `json:"condition_met"`
+	Confidence   string `json:"confidence"`
+}
+
+func parseAnalyzerConclusion(raw string) (AnalyzerConclusion, bool) {
+	var c AnalyzerConclusion
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		return AnalyzerConclusion{}, false
+	}
+	return c, true
+}
+```
+
+**5. `supervisor/instructions.go`** — the existing `Depth` guidance section rewritten to describe `Capabilities` instead (list what is asked, not a depth judgment), and a short note that an actionable Task's re-verification is automatic and invisible — Quasar should never itself try to "ask for deep" on an actionable conclusion, that decision is no longer its own to make.
+
+**Needs verification before coding, not yet checked against the real file:** whether `analyzer/instructions.go`'s `condition_met` contract is ever emitted for the informational (non-actionable) requests this same tool handles — if a chart/portfolio reply never contains that shape, `parseAnalyzerConclusion` simply never matches for those, which is the intended behavior (this gate is scoped to actionable Tasks only via the `rc.IsActionable` check first), but worth a quick real-data confirmation rather than assuming.
+
+**Impacted files (proposed).** `backend/src/service/agent/supervisor/tools_service.go` `[MODIFY]` — `routeRequest.Depth` → `Capabilities`, new `depthForCapabilities`, `newAnalyzerTool`'s escalation gate; `backend/src/service/agent/run_context_service.go` `[MODIFY]` — new `IsActionable bool` field; `backend/src/service/agent/analyzer/conclusion_service.go` `[NEW]` — `AnalyzerConclusion`, `parseAnalyzerConclusion`; `backend/src/service/agent/supervisor/instructions.go` `[MODIFY]` — `Capabilities` guidance, automatic-re-verification note; `backend/src/service/agent/analyzer/instructions.go` — read only, contract already matches, no change expected pending the verification note above.

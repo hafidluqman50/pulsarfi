@@ -16,6 +16,18 @@ func WrapToolGraceful(t tool.InvokableTool) tool.InvokableTool {
 	return &gracefulTool{InvokableTool: t}
 }
 
+func WrapToolsGraceful(tools []tool.BaseTool) []tool.BaseTool {
+	wrapped := make([]tool.BaseTool, 0, len(tools))
+	for _, t := range tools {
+		if it, ok := t.(tool.InvokableTool); ok {
+			wrapped = append(wrapped, WrapToolGraceful(it))
+		} else {
+			wrapped = append(wrapped, t)
+		}
+	}
+	return wrapped
+}
+
 func (g *gracefulTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
 	result, err := g.InvokableTool.InvokableRun(ctx, argumentsInJSON, opts...)
 	if err == nil {

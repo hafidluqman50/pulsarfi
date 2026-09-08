@@ -14,6 +14,7 @@ import (
 	readability "codeberg.org/readeck/go-readability/v2"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+	"github.com/horizonlabs/pulsarfi-backend/src/config"
 )
 
 // This file gives Analyzer its own news-gathering capabilities — search
@@ -184,6 +185,18 @@ func fetchArticle(rawURL string, allowedDomains []string) (readArticleResponse, 
 		ImageURL:    article.ImageURL(),
 		PublishedAt: publishedAt,
 	}, nil
+}
+
+func NewNewsTools() (readArticleTool, webSearchTool tool.BaseTool, err error) {
+	readArticleTool, err = NewReadArticleTool(TrustedNewsDomains)
+	if err != nil {
+		return nil, nil, fmt.Errorf("analyzer: build read_article tool: %w", err)
+	}
+	webSearchTool, err = NewSearchTool(config.GetEnv("TAVILY_API_KEY"), 5, TrustedNewsDomains)
+	if err != nil {
+		return nil, nil, fmt.Errorf("analyzer: build web_search tool: %w", err)
+	}
+	return readArticleTool, webSearchTool, nil
 }
 
 func hostAllowed(host string, allowedDomains []string) bool {

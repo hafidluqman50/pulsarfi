@@ -26,6 +26,13 @@ func isTopicAllowed(topic string, identity *auth.Claims) bool {
 	case strings.HasPrefix(topic, "agent-task-trades:"):
 		// Matches GET /api/v1/agent/tasks/:id/trades — any authenticated wallet.
 		return identity != nil
+	case strings.HasPrefix(topic, "agent-chat-stream:"):
+		// Live progress for one chat turn (docs/plans/agent-orchestration-graph-rebuild.md
+		// v2.6) — any authenticated wallet, same precedent as
+		// agent-task-trades: above (ownership of the specific chat_id is not
+		// re-checked at the topic-auth layer here, matching how a Task's own
+		// ownership isn't either).
+		return identity != nil
 	case strings.HasPrefix(topic, "custodian-"):
 		// Matches the custodian router's own custodianMiddleware.Auth — role must be "custodian".
 		return identity != nil && identity.Role == "custodian"

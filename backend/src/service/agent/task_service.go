@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/google/uuid"
@@ -38,7 +37,7 @@ type TaskService struct {
 	Trades       *repository.AgentTradeRepository
 	Chats        *repository.AgentChatRepository
 	ChatMessages *repository.AgentChatMessageRepository
-	Supervisor   adk.Agent
+	Orchestrator *Orchestrator
 	Chain        AgentContractClient
 }
 
@@ -109,7 +108,15 @@ func (s *TaskService) GetTrades(ctx context.Context, taskID int64, walletAddress
 
 var ErrNothingToRetry = errors.New("agent: no failed message to retry")
 
-func (s *TaskService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, onSubTask func(model.AgentSubTask), onSubTaskStarted func(agentName, stepName, label string), onTextDelta func(string)) (WorkflowCard, error) {
+// QuasarErrorMessage is what the user hears, in-chat, whenever a turn fails
+// for any reason — on-chain abort, LLM failure, DB error. Zero fallback
+// (docs/plans/agent-orchestration-graph-rebuild.md v2.5) means a failure is
+// never hidden or faked, but it must still reach the user as something
+// Quasar says, not a bare system string. A static constant, not a second
+// LLM call, since the thing that just failed might be the LLM/API itself.
+const QuasarErrorMessage = "Waduh, ada kendala pas aku memproses ini. Coba kirim ulang pesannya sebentar lagi ya."
+
+func (s *TaskService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, events AgentEventCallbacks) (WorkflowCard, error) {
 	chat, err := s.Chats.FindOrCreate(ctx, chatID, strings.ToLower(wallet), truncateRunes(message, 50))
 	if err != nil {
 		return WorkflowCard{}, err
@@ -130,10 +137,10 @@ func (s *TaskService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, w
 		return WorkflowCard{}, fmt.Errorf("agent: persist user message: %w", err)
 	}
 
-	return s.runForMessage(ctx, chatID, userMessage, append(existingMessages, userMessage), strings.ToLower(wallet), onSubTask, onSubTaskStarted, onTextDelta)
+	return s.runForMessage(ctx, chatID, userMessage, append(existingMessages, userMessage), strings.ToLower(wallet), events)
 }
 
-func (s *TaskService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string, onSubTask func(model.AgentSubTask), onSubTaskStarted func(agentName, stepName, label string), onTextDelta func(string)) (WorkflowCard, error) {
+func (s *TaskService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string, events AgentEventCallbacks) (WorkflowCard, error) {
 	chat, found, err := s.Chats.FindByID(ctx, chatID)
 	if err != nil {
 		return WorkflowCard{}, err
@@ -157,46 +164,23 @@ func (s *TaskService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wa
 		return WorkflowCard{}, ErrNothingToRetry
 	}
 
-	return s.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet), onSubTask, onSubTaskStarted, onTextDelta)
+	return s.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet), events)
 }
 
-func (s *TaskService) runForMessage(ctx context.Context, chatID uuid.UUID, userMessage model.AgentChatMessage, allMessages []model.AgentChatMessage, wallet string, onSubTask func(model.AgentSubTask), onSubTaskStarted func(agentName, stepName, label string), onTextDelta func(string)) (WorkflowCard, error) {
-	messageIDs := make([]int64, len(allMessages))
-	for i, m := range allMessages {
-		messageIDs[i] = m.ID
-	}
-
+// runForMessage delegates the whole route/analyze/execute/reply turn to the
+// Orchestrator (orchestrator_service.go) — this function is now just the
+// chat-message/HTTP-facing glue: build history, call the graph, persist the
+// reply. The Orchestrator owns Task creation, hash-chain recording, and the
+// on-chain createTask/RecordSubTasks calls itself (see
+// docs/plans/agent-orchestration-graph-rebuild.md).
+//
+// Not carried over from the pre-rebuild version, tracked as open items in
+// that same plan, not silently dropped: rebinding to an existing
+// needs_input Task (every message now opens a fresh Task), and chart/news
+// content_type classification (every reply persists as plain "text" for
+// now).
+func (s *TaskService) runForMessage(ctx context.Context, chatID uuid.UUID, userMessage model.AgentChatMessage, allMessages []model.AgentChatMessage, wallet string, events AgentEventCallbacks) (WorkflowCard, error) {
 	sourceMessageID := userMessage.ID
-	runCtx := &RunContext{Wallet: wallet, TriggerDescription: userMessage.Content, SourceMessageID: &sourceMessageID, OnSubTask: onSubTask, OnSubTaskStarted: onSubTaskStarted, OnTextDelta: onTextDelta}
-
-	existingTask, taskFound, err := s.Tasks.FindByChatMessageIDs(ctx, messageIDs)
-	if err != nil {
-		return WorkflowCard{}, err
-	}
-	if taskFound {
-		lastSubTask, found, err := s.SubTasks.LastForTask(ctx, existingTask.ID)
-		if err != nil {
-			return WorkflowCard{}, err
-		}
-		if !found || lastSubTask.Status != "needs_input" {
-			taskFound = false
-		}
-	}
-	if taskFound {
-		recorder, err := NewSubTaskRecorder(ctx, s.SubTasks, existingTask.ID, userMessage.Content, wallet)
-		if err != nil {
-			return WorkflowCard{}, fmt.Errorf("agent: build recorder for task %d: %w", existingTask.ID, err)
-		}
-		recorder.OnRecord = onSubTask
-		runCtx.TaskID = existingTask.ID
-		runCtx.OnChainTaskID = existingTask.OnChainTaskID
-		runCtx.Recorder = recorder
-	}
-
-	rowsBefore := 0
-	if runCtx.Recorder != nil {
-		rowsBefore = runCtx.Recorder.RowCount()
-	}
 
 	history := make([]*schema.Message, len(allMessages))
 	for i, m := range allMessages {
@@ -207,35 +191,47 @@ func (s *TaskService) runForMessage(ctx context.Context, chatID uuid.UUID, userM
 		}
 	}
 
-	reply, toolCalls, err := RunAgentWithHistory(WithRunContext(ctx, runCtx), s.Supervisor, history, nil, "")
+	result, err := s.Orchestrator.Run(ctx, OrchestratorInput{
+		Wallet:              wallet,
+		RawPrompt:           userMessage.Content,
+		Messages:            history,
+		SourceMessageID:     &sourceMessageID,
+		AgentEventCallbacks: events,
+	})
 	if err != nil {
-		return WorkflowCard{}, fmt.Errorf("agent: supervisor run failed: %w", err)
-	}
-
-	if runCtx.Recorder != nil && runCtx.OnChainTaskID != nil {
-		newRows := runCtx.Recorder.RowsSince(rowsBefore)
-		if err := s.recordSubTasksBatch(ctx, *runCtx.OnChainTaskID, newRows); err != nil {
-			slog.ErrorContext(ctx, "agent: recordSubTasks batch failed, leaving for retry", "task_id", runCtx.TaskID, "error", err)
+		// Zero fallback (docs/plans/agent-orchestration-graph-rebuild.md v2.5):
+		// the failure itself is never hidden or faked, but the user must
+		// still hear about it from Quasar, in the chat, not just a generic
+		// system string surfaced by the transport layer. Persisted like any
+		// other supervisor reply — visible on reload, not just a one-time
+		// toast — deliberately a static string, never a second LLM call,
+		// since the thing that just failed might be the LLM/API itself.
+		if _, persistErr := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+			ChatID:      chatID,
+			Sender:      "supervisor",
+			ContentType: "text",
+			Content:     QuasarErrorMessage,
+		}); persistErr != nil {
+			slog.ErrorContext(ctx, "agent: persist error message failed", "error", persistErr)
 		}
+		return WorkflowCard{}, fmt.Errorf("agent: orchestrator run failed: %w", err)
 	}
 
-	allToolCalls := append(toolCalls, runCtx.NestedToolCalls...)
-	card := buildWorkflowCard(runCtx.TaskID, reply, allToolCalls)
+	card := WorkflowCard{TaskID: result.TaskID, Reply: result.Reply, ContentType: result.ContentType, UIProps: result.UIProps}
 
 	var uiProps datatypes.JSON
 	if len(card.UIProps) > 0 {
 		uiProps = datatypes.JSON(card.UIProps)
 	}
 	var refTaskID *int64
-	if runCtx.TaskID != 0 {
-		refTaskID = &runCtx.TaskID
+	if result.TaskID != 0 {
+		refTaskID = &result.TaskID
 	}
 	if _, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
 		ChatID:      chatID,
 		Sender:      "supervisor",
 		ContentType: card.ContentType,
 		Content:     card.Reply,
-		UIComponent: card.UIComponent,
 		UIProps:     uiProps,
 		UIRefTaskID: refTaskID,
 	}); err != nil {
@@ -243,91 +239,6 @@ func (s *TaskService) runForMessage(ctx context.Context, chatID uuid.UUID, userM
 	}
 
 	return card, nil
-}
-
-func buildWorkflowCard(taskID int64, reply string, toolCalls []ToolCallTrace) WorkflowCard {
-	reply = unwrapReplyJSON(reply)
-
-	// get_portfolio_snapshot and get_stock_chart (analyzer/chart_service.go)
-	// both return a publicsvc.ChartPayload — either one means this reply has
-	// real chart-ready data behind it, not just prose. Collects every match,
-	// not just the first: a compound request ("chart-in portofolio ku, dan
-	// chart BRPT") makes Analyzer call both tools in the same turn, and
-	// returning only the first found silently dropped the second chart even
-	// though Analyzer's own reply claimed both had rendered — confirmed live
-	// via a request where the model correctly fetched two charts but the
-	// user only ever saw one (docs/plans/agent-task-manager-code-implementation.md).
-	var chartPayloads []json.RawMessage
-	for _, tc := range toolCalls {
-		if tc.ToolName == "get_portfolio_snapshot" || tc.ToolName == "get_stock_chart" {
-			chartPayloads = append(chartPayloads, json.RawMessage(tc.Result))
-		}
-	}
-	if len(chartPayloads) == 1 {
-		return WorkflowCard{TaskID: taskID, Reply: reply, ContentType: "chart", UIProps: chartPayloads[0]}
-	}
-	if len(chartPayloads) > 1 {
-		if payload, err := json.Marshal(chartPayloads); err == nil {
-			return WorkflowCard{TaskID: taskID, Reply: reply, ContentType: "chart", UIProps: payload}
-		}
-	}
-
-	// analyzer_agent's own conclusion (GlobalInstructions' JSON contract —
-	// condition_met/confidence/evidence/reasoning) carries real, sourced
-	// citations whenever news evidence actually drove the conclusion.
-	// Surfaced as its own card so the user sees dated, linked sources, not
-	// just Supervisor's prose summary of them.
-	for _, tc := range toolCalls {
-		if tc.ToolName != "analyzer_agent" {
-			continue
-		}
-		if evidence := extractNewsEvidence(tc.Result); len(evidence) > 0 {
-			payload, err := json.Marshal(evidence)
-			if err == nil {
-				return WorkflowCard{TaskID: taskID, Reply: reply, ContentType: "news", UIProps: payload}
-			}
-		}
-	}
-	return WorkflowCard{TaskID: taskID, Reply: reply, ContentType: "text"}
-}
-
-// NewsEvidenceItem mirrors one item of analyzer_agent's own "evidence"
-// array (its own JSON contract, see GlobalInstructions/analyzer/instructions.go) —
-// re-parsed here purely to surface it as its own chart-like card, never to
-// re-derive or alter what Analyzer actually concluded.
-type NewsEvidenceItem struct {
-	Source      string `json:"source"`
-	URL         string `json:"url,omitempty"`
-	PublishedAt string `json:"published_at,omitempty"`
-	Excerpt     string `json:"excerpt,omitempty"`
-	ImageURL    string `json:"image_url,omitempty"`
-}
-
-func extractNewsEvidence(raw string) []NewsEvidenceItem {
-	var parsed struct {
-		Evidence []NewsEvidenceItem `json:"evidence"`
-	}
-	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		return nil
-	}
-	return parsed.Evidence
-}
-
-func unwrapReplyJSON(reply string) string {
-	var wrapped struct {
-		Reply    string `json:"reply"`
-		Message  string `json:"message"`
-		Response string `json:"response"`
-		Answer   string `json:"answer"`
-	}
-	if err := json.Unmarshal([]byte(reply), &wrapped); err == nil {
-		for _, candidate := range []string{wrapped.Reply, wrapped.Message, wrapped.Response, wrapped.Answer} {
-			if candidate != "" {
-				return candidate
-			}
-		}
-	}
-	return reply
 }
 
 func (s *TaskService) recordSubTasksBatch(ctx context.Context, onChainTaskID int64, rows []model.AgentSubTask) error {
@@ -457,39 +368,14 @@ func (s *TaskService) ResumeTask(ctx context.Context, taskID int64, wallet strin
 	return s.Tasks.SetPaused(ctx, taskID, false)
 }
 
-func (s *TaskService) Evaluate(ctx context.Context, taskID int64) error {
-	task, found, err := s.Tasks.FindByID(ctx, taskID)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return ErrTaskNotFound
-	}
-	if task.Paused {
-		return nil
-	}
-	if !task.IsActionable || task.OnChainTaskID == nil {
-		return ErrTaskNotActionable
-	}
-
-	recorder, err := NewSubTaskRecorder(ctx, s.SubTasks, taskID, "", task.WalletAddress)
-	if err != nil {
-		return err
-	}
-	runCtx := &RunContext{TaskID: taskID, OnChainTaskID: task.OnChainTaskID, Wallet: task.WalletAddress, Recorder: recorder}
-	rowsBefore := recorder.RowCount()
-
-	triggerPrompt := ""
-	if task.TriggerDescription != nil {
-		triggerPrompt = *task.TriggerDescription
-	}
-
-	if _, _, err := RunAgentWithTrace(WithRunContext(ctx, runCtx), s.Supervisor, triggerPrompt, nil, ""); err != nil {
-		return fmt.Errorf("agent: evaluation run failed for task %d: %w", taskID, err)
-	}
-
-	return s.recordSubTasksBatch(ctx, *runCtx.OnChainTaskID, recorder.RowsSince(rowsBefore))
-}
+// Evaluate (the scheduler-driven re-check tick for an armed, actionable
+// Task) is removed as of docs/plans/agent-orchestration-graph-rebuild.md
+// v2.2 — it had zero callers anywhere (no scheduler was ever wired to it),
+// and its own approach (re-running Quasar's full route decision from
+// scratch on every tick) was already agreed to be the wrong shape for
+// standing-instruction monitoring, which per that same plan (§12) should
+// start at Comet calling Nova directly, not restart at Quasar. Tracked
+// there as still-undesigned work, not lost.
 
 func truncateRunes(s string, max int) string {
 	runes := []rune(s)
