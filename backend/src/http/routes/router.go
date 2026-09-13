@@ -7,8 +7,10 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/auth"
 	authhandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/auth"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/middleware"
+	agentRoutes "github.com/horizonlabs/pulsarfi-backend/src/http/routes/agent"
 	custodianRoutes "github.com/horizonlabs/pulsarfi-backend/src/http/routes/custodian"
 	publicRoutes "github.com/horizonlabs/pulsarfi-backend/src/http/routes/public"
+	realtimeRoutes "github.com/horizonlabs/pulsarfi-backend/src/http/routes/realtime"
 	"gorm.io/gorm"
 )
 
@@ -36,6 +38,8 @@ func SetupRouter(db *gorm.DB, jwtConfig auth.Config) *gin.Engine {
 
 	custodianRoutes.RegisterRoutes(api.Group("/custodian"), jwtConfig)
 	publicRoutes.RegisterRoutes(api.Group("/public"), jwtConfig)
+	agentRoutes.RegisterRoutes(api.Group("/agent"), jwtConfig)
+	realtimeRoutes.RegisterRoutes(api.Group("/realtime"), jwtConfig)
 
 	return router
 }

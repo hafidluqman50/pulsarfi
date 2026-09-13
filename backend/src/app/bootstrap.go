@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/horizonlabs/pulsarfi-backend/src/auth"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
+	agentHandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/agent"
 	authhandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/auth"
 	custodianHandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/custodian"
 	publicHandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/public"
@@ -34,6 +35,11 @@ func buildHandler() (*gin.Engine, func(), error) {
 	jwtSecret, err := config.RequireEnv("JWT_SECRET")
 	if err != nil {
 		return nil, nil, err
+	}
+
+	tavilyAPIKey := config.GetEnv("TAVILY_API_KEY")
+	if tavilyAPIKey == "" {
+		log.Println("TAVILY_API_KEY not set, Analyzer's web_search tool will fail when called (news evidence unavailable, chart/portfolio/trade unaffected)")
 	}
 
 	db, err := config.NewDatabase(databaseURL)
@@ -100,10 +106,15 @@ func buildHandler() (*gin.Engine, func(), error) {
 	})
 	publicHandler.ConfigureRepos(repos)
 	publicHandler.ConfigureServices(svcs)
+	agentHandler.ConfigureServices(svcs)
 
 	if transferIndexerEnabled() {
 		go svcs.TransferIndexer.Run(indexerCtx)
 	}
+	if svcs.AgentTask != nil {
+		go svcs.AgentTask.RunSubTaskRetry(indexerCtx)
+	}
+	svcs.StartRealtimePublishers(indexerCtx)
 
 	return routes.SetupRouter(db, jwtConfig), cleanup, nil
 }

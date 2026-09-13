@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"gorm.io/gorm"
@@ -32,8 +33,18 @@ func (r *StockRepository) FindMarketReady(ctx context.Context) ([]model.Stock, e
 }
 
 func (r *StockRepository) FindByTicker(ctx context.Context, ticker string) (model.Stock, bool, error) {
+	t := strings.ToUpper(strings.TrimSpace(ticker))
+	if t == "" {
+		return model.Stock{}, false, nil
+	}
+	tWithP := t
+	if !strings.HasSuffix(t, "P") {
+		tWithP = t + "P"
+	}
 	var stock model.Stock
-	err := r.DB.WithContext(ctx).Where("ticker = ?", ticker).First(&stock).Error
+	err := r.DB.WithContext(ctx).
+		Where("ticker = ? OR ticker = ? OR idx_ticker = ?", t, tWithP, t).
+		First(&stock).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return model.Stock{}, false, nil
 	}
@@ -41,9 +52,19 @@ func (r *StockRepository) FindByTicker(ctx context.Context, ticker string) (mode
 }
 
 func (r *StockRepository) FindByTickerOrIdxTicker(ctx context.Context, ticker string) (model.Stock, bool, error) {
+	t := strings.ToUpper(strings.TrimSpace(ticker))
+	if t == "" {
+		return model.Stock{}, false, nil
+	}
+	tWithP := t
+	if !strings.HasSuffix(t, "P") {
+		tWithP = t + "P"
+	}
+	tWithoutP := strings.TrimSuffix(t, "P")
+
 	var stock model.Stock
 	err := r.DB.WithContext(ctx).
-		Where("ticker = ? OR idx_ticker = ?", ticker, ticker).
+		Where("ticker = ? OR idx_ticker = ? OR ticker = ? OR idx_ticker = ?", t, t, tWithP, tWithoutP).
 		First(&stock).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return model.Stock{}, false, nil

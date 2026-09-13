@@ -5,6 +5,7 @@ import (
 
 	"github.com/horizonlabs/pulsarfi-backend/src/auth"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
+	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	authsvc "github.com/horizonlabs/pulsarfi-backend/src/service/auth"
 	custodiansvc "github.com/horizonlabs/pulsarfi-backend/src/service/custodian"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
@@ -29,6 +30,9 @@ type Registry struct {
 	Stream                 *external.StreamService
 	Price                  *external.PriceService
 	TransferIndexer        *indexersvc.TransferIndexerService
+	AgentChat              *agentsvc.ChatService
+	AgentTask              *agentsvc.TaskService
+	PortfolioChart         *publicsvc.PortfolioChartReader
 }
 
 type Config struct {
@@ -43,6 +47,15 @@ type Config struct {
 func NewRegistry(cfg Config) *Registry {
 	stream := external.NewStreamService()
 	price := external.NewPriceService()
+
+	chartReader := &publicsvc.PortfolioChartReader{
+		Transactions: cfg.Repos.StockTransaction,
+		Price: &publicsvc.PriceService{
+			Stocks: cfg.Repos.Stock,
+			Price:  price,
+		},
+	}
+	agentChatSvc, agentTaskSvc := newAgentTaskServices(cfg.Repos, chartReader)
 
 	// Assign only on success: a failed *external.ChainVerifyService stored in
 	// a nil interface var would make publicsvc.RedeemVerifier(redeemVerifier)
@@ -125,5 +138,8 @@ func NewRegistry(cfg Config) *Registry {
 			Price:  price,
 			Config: cfg.TransferIndexerConfig,
 		},
+		AgentChat:      agentChatSvc,
+		AgentTask:      agentTaskSvc,
+		PortfolioChart: chartReader,
 	}
 }

@@ -13,6 +13,12 @@ type Registry struct {
 	StockTransaction   *StockTransactionRepository
 	StockAttestation   *StockAttestationRepository
 	TransferCheckpoint *TransferIndexerCheckpointRepository
+	AgentTask          *AgentTaskRepository
+	AgentChat          *AgentChatRepository
+	AgentChatMessage   *AgentChatMessageRepository
+	AgentSubTask       *AgentSubTaskRepository
+	AgentTrade         *AgentTradeRepository
+	AgentCheckpoint    *AgentCheckpointRepository
 }
 
 func NewRegistry(db *gorm.DB) *Registry {
@@ -27,5 +33,11 @@ func NewRegistry(db *gorm.DB) *Registry {
 		StockTransaction:   &StockTransactionRepository{DB: db},
 		StockAttestation:   &StockAttestationRepository{DB: db},
 		TransferCheckpoint: &TransferIndexerCheckpointRepository{DB: db},
+		AgentTask:          &AgentTaskRepository{DB: db},
+		AgentChat:          &AgentChatRepository{DB: db},
+		AgentChatMessage:   &AgentChatMessageRepository{DB: db},
+		AgentSubTask:       &AgentSubTaskRepository{DB: db},
+		AgentTrade:         &AgentTradeRepository{DB: db},
+		AgentCheckpoint:    &AgentCheckpointRepository{DB: db},
 	}
 }

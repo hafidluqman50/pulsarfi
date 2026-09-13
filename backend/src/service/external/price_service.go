@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -170,6 +171,58 @@ func (s *PriceService) GetOnchainPriceV4(protocolAddr, ticker, rpcURL string) (P
 	s.cache[cacheKey] = entry
 	s.cacheMu.Unlock()
 	return entry, nil
+}
+
+// QuoteStockToIdrxRaw values an arbitrary stock-token amount at the pool's
+// current spot price. Verified against the deployed contract, not assumed:
+// _quoteStockToIdrxV4 reads sqrtPriceX96 from getSlot0 and multiplies
+// linearly (tokenAmount * P) — it never consults liquidity depth and never
+// simulates the swap, so quoting 1000 tokens returns exactly 1000x the
+// 1-token figure. **This is a valuation, not a price-impact-aware quote.**
+// The real protection against impact remains minimumOutputAmount's slippage
+// tolerance in convertTradeAmounts, which is an assumed bound, not a
+// measured one. Deliberately uncached: it is read per decision against a
+// live pool, and a stale value would misprice a real trade. Returns raw
+// IDRX (2 decimals), matching the contract.
+func (s *PriceService) QuoteStockToIdrxRaw(protocolAddr, ticker string, stockAmountRaw *big.Int, rpcURL string) (*big.Int, error) {
+	if stockAmountRaw == nil || stockAmountRaw.Sign() <= 0 {
+		return nil, fmt.Errorf("quoteStockToIdrx: amount must be positive, got %v", stockAmountRaw)
+	}
+	data, err := encodeQuoteStockToIdrx(ticker, stockAmountRaw)
+	if err != nil {
+		return nil, fmt.Errorf("encode quote: %w", err)
+	}
+	result, err := s.ethCall(rpcURL, protocolAddr, data)
+	if err != nil {
+		return nil, fmt.Errorf("quoteStockToIdrx: %w", err)
+	}
+	raw, err := decodeUint256(result)
+	if err != nil {
+		return nil, fmt.Errorf("decode quote: %w", err)
+	}
+	if raw.Sign() == 0 {
+		return nil, fmt.Errorf("zero pool quote for %s", ticker)
+	}
+	return raw, nil
+}
+
+// ERC20BalanceOf reads a plain ERC20 balance. Lives here because this file
+// already owns the eth_call plumbing (s.ethCall) and nothing else in the
+// codebase read a balance on-chain before this.
+func (s *PriceService) ERC20BalanceOf(tokenAddr, holderAddr, rpcURL string) (*big.Int, error) {
+	selector := crypto.Keccak256([]byte("balanceOf(address)"))[:4]
+	holder := common.HexToAddress(holderAddr)
+	data := "0x" + hex.EncodeToString(selector) + hex.EncodeToString(common.LeftPadBytes(holder.Bytes(), 32))
+
+	result, err := s.ethCall(rpcURL, tokenAddr, data)
+	if err != nil {
+		return nil, fmt.Errorf("balanceOf: %w", err)
+	}
+	balance, err := decodeUint256(result)
+	if err != nil {
+		return nil, fmt.Errorf("decode balanceOf: %w", err)
+	}
+	return balance, nil
 }
 
 // encodeQuoteStockToIdrx ABI-encodes the calldata for quoteStockToIdrx(string,uint256).
@@ -357,10 +410,16 @@ func yahooRangeParams(rangeName string) (string, string) {
 		return "1d", "1m"
 	case "1W":
 		return "5d", "15m"
+	case "1M":
+		return "1mo", "1d"
 	case "3M":
 		return "3mo", "1d"
 	case "1Y":
 		return "1y", "1d"
+	case "YTD":
+		return "ytd", "1d"
+	case "ALL":
+		return "max", "1wk"
 	default:
 		return "1mo", "1d"
 	}
