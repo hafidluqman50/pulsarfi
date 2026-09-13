@@ -49,10 +49,17 @@ export function useProtocolStats() {
 }
 
 export function useStockTransactions(walletAddress?: string) {
+  const queryClient = useQueryClient();
+  const normalized = walletAddress?.toLowerCase();
+  useRealtimeTopic(normalized ? `stock-transactions:${normalized}` : undefined, () => {
+    queryClient.invalidateQueries({ queryKey: ['stock-transactions', walletAddress] });
+    queryClient.invalidateQueries({ queryKey: ['readContracts'] });
+  });
+
   return useQuery({
     queryKey: ['stock-transactions', walletAddress],
     queryFn: () => getStockTransactions(walletAddress!),
     enabled: Boolean(walletAddress),
-    refetchInterval: 15_000,
+    refetchInterval: 5_000,
   });
 }

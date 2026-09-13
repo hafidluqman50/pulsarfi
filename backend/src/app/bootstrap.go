@@ -111,8 +111,8 @@ func buildHandler() (*gin.Engine, func(), error) {
 	if transferIndexerEnabled() {
 		go svcs.TransferIndexer.Run(indexerCtx)
 	}
-	if svcs.AgentSubTaskRetry != nil {
-		go svcs.AgentSubTaskRetry.Run(indexerCtx)
+	if svcs.AgentTask != nil {
+		go svcs.AgentTask.RunSubTaskRetry(indexerCtx)
 	}
 	svcs.StartRealtimePublishers(indexerCtx)
 

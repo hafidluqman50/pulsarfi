@@ -9,12 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudwego/eino/schema"
-	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/cloudwego/eino/adk"
 	"github.com/google/uuid"
+	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	"gorm.io/datatypes"
 )
 
 var (
@@ -27,18 +26,19 @@ var (
 type AgentContractClient interface {
 	CreateTask(ctx context.Context, owner string, isActionable bool, summary string, promptHash [32]byte) (onChainTaskID uint64, err error)
 	GrantTradePermission(ctx context.Context, onChainTaskID uint64, totalBudget string, duration time.Duration) error
-	RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows []model.AgentSubTask) (txHash string, err error)
+	RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows []model.AgentSubTask) (onChainSubTaskIDs []uint64, txHash string, err error)
 	CancelTask(ctx context.Context, onChainTaskID uint64) error
+	TradePermissionRemaining(ctx context.Context, onChainTaskID uint) (string, error)
 }
 
 type TaskService struct {
 	Tasks        *repository.AgentTaskRepository
 	SubTasks     *repository.AgentSubTaskRepository
 	Trades       *repository.AgentTradeRepository
-	Chats        *repository.AgentChatRepository
 	ChatMessages *repository.AgentChatMessageRepository
-	Orchestrator *Orchestrator
+	Chats        *repository.AgentChatRepository
 	Chain        AgentContractClient
+	Executor     adk.Agent
 }
 
 type WorkflowCard struct {
@@ -53,10 +53,6 @@ func (s *TaskService) ListTasks(ctx context.Context, walletAddress string) ([]mo
 	return s.Tasks.FindByWallet(ctx, strings.ToLower(walletAddress))
 }
 
-func (s *TaskService) ListChats(ctx context.Context, walletAddress string) ([]model.AgentChat, error) {
-	return s.Chats.FindByOwnerWallet(ctx, strings.ToLower(walletAddress))
-}
-
 // activityFeedLimit caps the Activity Log to the most recent steps across
 // every one of the wallet's own Tasks — a live feed, not a paginated
 // archive; the full chain for any one Task is still available in full via
@@ -65,20 +61,6 @@ const activityFeedLimit = 200
 
 func (s *TaskService) GetActivity(ctx context.Context, walletAddress string) ([]model.AgentSubTask, error) {
 	return s.SubTasks.FindByOwnerWallet(ctx, strings.ToLower(walletAddress), activityFeedLimit)
-}
-
-func (s *TaskService) GetChatMessages(ctx context.Context, chatID uuid.UUID, walletAddress string) ([]model.AgentChatMessage, error) {
-	chat, found, err := s.Chats.FindByID(ctx, chatID)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return []model.AgentChatMessage{}, nil
-	}
-	if !strings.EqualFold(chat.OwnerWallet, walletAddress) {
-		return nil, ErrWalletMismatch
-	}
-	return s.ChatMessages.FindByChatID(ctx, chatID)
 }
 
 func (s *TaskService) GetReasoningChain(ctx context.Context, taskID int64) ([]model.AgentSubTask, error) {
@@ -108,144 +90,11 @@ func (s *TaskService) GetTrades(ctx context.Context, taskID int64, walletAddress
 
 var ErrNothingToRetry = errors.New("agent: no failed message to retry")
 
-// QuasarErrorMessage is what the user hears, in-chat, whenever a turn fails
-// for any reason — on-chain abort, LLM failure, DB error. Zero fallback
-// (docs/plans/agent-orchestration-graph-rebuild.md v2.5) means a failure is
-// never hidden or faked, but it must still reach the user as something
-// Quasar says, not a bare system string. A static constant, not a second
-// LLM call, since the thing that just failed might be the LLM/API itself.
-const QuasarErrorMessage = "Waduh, ada kendala pas aku memproses ini. Coba kirim ulang pesannya sebentar lagi ya."
-
-func (s *TaskService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, events AgentEventCallbacks) (WorkflowCard, error) {
-	chat, err := s.Chats.FindOrCreate(ctx, chatID, strings.ToLower(wallet), truncateRunes(message, 50))
-	if err != nil {
-		return WorkflowCard{}, err
-	}
-	if !strings.EqualFold(chat.OwnerWallet, wallet) {
-		return WorkflowCard{}, ErrWalletMismatch
-	}
-
-	existingMessages, err := s.ChatMessages.FindByChatID(ctx, chatID)
-	if err != nil {
-		return WorkflowCard{}, err
-	}
-
-	userMessage, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
-		ChatID: chatID, Sender: "user", ContentType: "text", Content: message,
-	})
-	if err != nil {
-		return WorkflowCard{}, fmt.Errorf("agent: persist user message: %w", err)
-	}
-
-	return s.runForMessage(ctx, chatID, userMessage, append(existingMessages, userMessage), strings.ToLower(wallet), events)
-}
-
-func (s *TaskService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string, events AgentEventCallbacks) (WorkflowCard, error) {
-	chat, found, err := s.Chats.FindByID(ctx, chatID)
-	if err != nil {
-		return WorkflowCard{}, err
-	}
-	if !found {
-		return WorkflowCard{}, ErrNothingToRetry
-	}
-	if !strings.EqualFold(chat.OwnerWallet, wallet) {
-		return WorkflowCard{}, ErrWalletMismatch
-	}
-
-	existingMessages, err := s.ChatMessages.FindByChatID(ctx, chatID)
-	if err != nil {
-		return WorkflowCard{}, err
-	}
-	if len(existingMessages) == 0 {
-		return WorkflowCard{}, ErrNothingToRetry
-	}
-	lastMessage := existingMessages[len(existingMessages)-1]
-	if lastMessage.Sender != "user" {
-		return WorkflowCard{}, ErrNothingToRetry
-	}
-
-	return s.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet), events)
-}
-
-// runForMessage delegates the whole route/analyze/execute/reply turn to the
-// Orchestrator (orchestrator_service.go) — this function is now just the
-// chat-message/HTTP-facing glue: build history, call the graph, persist the
-// reply. The Orchestrator owns Task creation, hash-chain recording, and the
-// on-chain createTask/RecordSubTasks calls itself (see
-// docs/plans/agent-orchestration-graph-rebuild.md).
-//
-// Not carried over from the pre-rebuild version, tracked as open items in
-// that same plan, not silently dropped: rebinding to an existing
-// needs_input Task (every message now opens a fresh Task), and chart/news
-// content_type classification (every reply persists as plain "text" for
-// now).
-func (s *TaskService) runForMessage(ctx context.Context, chatID uuid.UUID, userMessage model.AgentChatMessage, allMessages []model.AgentChatMessage, wallet string, events AgentEventCallbacks) (WorkflowCard, error) {
-	sourceMessageID := userMessage.ID
-
-	history := make([]*schema.Message, len(allMessages))
-	for i, m := range allMessages {
-		if m.Sender == "user" {
-			history[i] = schema.UserMessage(m.Content)
-		} else {
-			history[i] = schema.AssistantMessage(m.Content, nil)
-		}
-	}
-
-	result, err := s.Orchestrator.Run(ctx, OrchestratorInput{
-		Wallet:              wallet,
-		RawPrompt:           userMessage.Content,
-		Messages:            history,
-		SourceMessageID:     &sourceMessageID,
-		AgentEventCallbacks: events,
-	})
-	if err != nil {
-		// Zero fallback (docs/plans/agent-orchestration-graph-rebuild.md v2.5):
-		// the failure itself is never hidden or faked, but the user must
-		// still hear about it from Quasar, in the chat, not just a generic
-		// system string surfaced by the transport layer. Persisted like any
-		// other supervisor reply — visible on reload, not just a one-time
-		// toast — deliberately a static string, never a second LLM call,
-		// since the thing that just failed might be the LLM/API itself.
-		if _, persistErr := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
-			ChatID:      chatID,
-			Sender:      "supervisor",
-			ContentType: "text",
-			Content:     QuasarErrorMessage,
-		}); persistErr != nil {
-			slog.ErrorContext(ctx, "agent: persist error message failed", "error", persistErr)
-		}
-		return WorkflowCard{}, fmt.Errorf("agent: orchestrator run failed: %w", err)
-	}
-
-	card := WorkflowCard{TaskID: result.TaskID, Reply: result.Reply, ContentType: result.ContentType, UIProps: result.UIProps}
-
-	var uiProps datatypes.JSON
-	if len(card.UIProps) > 0 {
-		uiProps = datatypes.JSON(card.UIProps)
-	}
-	var refTaskID *int64
-	if result.TaskID != 0 {
-		refTaskID = &result.TaskID
-	}
-	if _, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
-		ChatID:      chatID,
-		Sender:      "supervisor",
-		ContentType: card.ContentType,
-		Content:     card.Reply,
-		UIProps:     uiProps,
-		UIRefTaskID: refTaskID,
-	}); err != nil {
-		slog.ErrorContext(ctx, "agent: persist supervisor reply failed", "error", err)
-	}
-
-	return card, nil
-}
-
 func (s *TaskService) recordSubTasksBatch(ctx context.Context, onChainTaskID int64, rows []model.AgentSubTask) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	txHash, err := s.Chain.RecordSubTasks(ctx, uint64(onChainTaskID), rows)
+	_, txHash, err := s.Chain.RecordSubTasks(ctx, uint64(onChainTaskID), rows)
 	if err != nil {
 		return err
 	}
@@ -280,27 +129,30 @@ func (s *TaskService) ArmTask(ctx context.Context, taskID int64, wallet string, 
 		return ArmTaskResult{}, ErrWalletMismatch
 	}
 
-	summary := ""
-	if task.Summary != nil {
-		summary = *task.Summary
+	// createTask already happened the instant this Task was recognized
+	// (orchestrator_service.go's runRoute, docs/plans/agent-orchestration-graph-rebuild.md
+	// v2.1) — every Task reaching Arm already has an on-chain id. Calling
+	// CreateTask again here (found while implementing agent-trade-execution.md,
+	// a leftover from before that rule existed, when this endpoint was the
+	// only place createTask ever ran) would open a second, orphaned on-chain
+	// Task and silently rebind Postgres to it, disconnecting any Sub Task
+	// already recorded against the real one.
+	if task.OnChainTaskID == nil {
+		return ArmTaskResult{}, fmt.Errorf("agent: task %d has no on-chain id — every Task must already be created on-chain by the time it reaches Arm, this should never happen", taskID)
 	}
-	rawPrompt := ""
-	if task.RawPrompt != nil {
-		rawPrompt = *task.RawPrompt
-	}
+	onChainTaskID := uint64(*task.OnChainTaskID)
 
-	onChainTaskID, err := s.Chain.CreateTask(ctx, task.WalletAddress, task.IsActionable, summary, crypto.Keccak256Hash([]byte(rawPrompt)))
-	if err != nil {
-		return ArmTaskResult{}, fmt.Errorf("agent: on-chain createTask: %w", err)
-	}
 	if task.IsActionable {
 		duration := time.Duration(input.DurationSec) * time.Second
 		if err := s.Chain.GrantTradePermission(ctx, onChainTaskID, input.TotalBudget, duration); err != nil {
 			return ArmTaskResult{}, fmt.Errorf("agent: on-chain grantTradePermission: %w", err)
 		}
-	}
-	if err := s.Tasks.SetOnChainTaskID(ctx, taskID, int64(onChainTaskID)); err != nil {
-		return ArmTaskResult{}, fmt.Errorf("agent: persist on_chain_task_id: %w", err)
+		// Only here, only after the chain call actually succeeded — a failed
+		// arm must leave armed_at null, since "armed" means exactly "the
+		// on-chain permission exists" (Defect B, docs/plans/fix-comet-trade-execution-blockers.md).
+		if err := s.Tasks.SetArmedAt(ctx, taskID, time.Now()); err != nil {
+			return ArmTaskResult{}, fmt.Errorf("agent: permission granted on-chain for task %d but persisting armed_at failed: %w", taskID, err)
+		}
 	}
 
 	allRows, err := s.SubTasks.FindByTaskID(ctx, taskID)
@@ -368,6 +220,193 @@ func (s *TaskService) ResumeTask(ctx context.Context, taskID int64, wallet strin
 	return s.Tasks.SetPaused(ctx, taskID, false)
 }
 
+type ExecuteTaskResult struct {
+	TaskID int64              `json:"task_id"`
+	Status string             `json:"status"`
+	Reply  string             `json:"reply"`
+	Trades []model.AgentTrade `json:"trades,omitempty"`
+}
+
+func (s *TaskService) ExecuteTask(ctx context.Context, taskID int64, wallet string) (ExecuteTaskResult, error) {
+	task, found, err := s.Tasks.FindByID(ctx, taskID)
+	if err != nil {
+		return ExecuteTaskResult{}, err
+	}
+	if !found {
+		return ExecuteTaskResult{}, ErrTaskNotFound
+	}
+	if !strings.EqualFold(task.WalletAddress, wallet) {
+		return ExecuteTaskResult{}, ErrWalletMismatch
+	}
+	if !task.IsActionable {
+		return ExecuteTaskResult{}, ErrTaskNotActionable
+	}
+	if task.ArmedAt == nil || task.OnChainTaskID == nil {
+		return ExecuteTaskResult{}, ErrTaskNotArmed
+	}
+	summary := ""
+	if task.Summary != nil {
+		summary = *task.Summary
+	}
+	prompt := ""
+	if task.RawPrompt != nil {
+		prompt = *task.RawPrompt
+	}
+
+	var card *contracts.CardContract
+	if task.TriggerDescription != nil && *task.TriggerDescription != "" {
+		var triggerData struct {
+			Card *contracts.CardContract `json:"card"`
+		}
+		if err := json.Unmarshal([]byte(*task.TriggerDescription), &triggerData); err == nil && triggerData.Card != nil {
+			card = triggerData.Card
+		}
+	}
+
+	if task.Status == "executed" {
+		trades, _ := s.Trades.FindByTaskID(ctx, taskID)
+		reply := "This task was already executed."
+		if card != nil && card.Ledger.ExecutedDesc != "" {
+			reply = card.Ledger.ExecutedDesc
+		}
+		return ExecuteTaskResult{
+			TaskID: taskID,
+			Status: task.Status,
+			Reply:  reply,
+			Trades: trades,
+		}, nil
+	}
+	if s.Executor == nil {
+		return ExecuteTaskResult{}, errors.New("agent: executor agent not initialized")
+	}
+
+	onChainTaskID := uint64(*task.OnChainTaskID)
+
+	// Check if on-chain budget permission is already exhausted before firing a doomed transaction
+	if remaining, err := s.Chain.TradePermissionRemaining(ctx, uint(onChainTaskID)); err == nil && remaining == "0" {
+		trades, _ := s.Trades.FindByTaskID(ctx, taskID)
+		if len(trades) > 0 {
+			_ = s.Tasks.SetStatus(ctx, taskID, "executed")
+			reply := "Task trade order was executed on-chain."
+			if card != nil && card.Footnotes.ExecutedSuccess != "" {
+				reply = card.Footnotes.ExecutedSuccess
+			}
+			return ExecuteTaskResult{
+				TaskID: taskID,
+				Status: "executed",
+				Reply:  reply,
+				Trades: trades,
+			}, nil
+		}
+	}
+
+	recorder, err := NewSubTaskRecorder(ctx, s.SubTasks, s.Chain, onChainTaskID, task.ID, summary, task.WalletAddress)
+	if err != nil {
+		return ExecuteTaskResult{}, fmt.Errorf("agent: build recorder: %w", err)
+	}
+
+	runCtx := &RunContext{
+		OnChainTaskID: task.OnChainTaskID,
+		Wallet:        task.WalletAddress,
+		Recorder:      recorder,
+	}
+
+	subtasks, _ := s.SubTasks.FindByTaskID(ctx, taskID)
+	var novaFindings strings.Builder
+	for _, st := range subtasks {
+		if strings.EqualFold(st.Agent, "analyzer") {
+			if st.Reasoning != "" {
+				novaFindings.WriteString(st.Reasoning)
+				novaFindings.WriteString("\n")
+			}
+			if st.Output != nil && *st.Output != "" {
+				novaFindings.WriteString(*st.Output)
+				novaFindings.WriteString("\n")
+			}
+		}
+	}
+
+	var request string
+	if novaFindings.Len() > 0 {
+		request = fmt.Sprintf("User instruction:\n%s\n\nNova's market findings:\n%s\n\nTask summary: %s\nThe task has been armed and approved on-chain. Based on Nova's findings above, check spot price and IDRX balance, and execute the trade on-chain using submit_trade.\n\n[CRITICAL LANGUAGE MANDATE]: Your entire final reply, explanation, and reasoning MUST 100%% match the language of the User instruction above (e.g. Indonesian if the user writes in Indonesian, English if in English, Turkish if in Turkish, Javanese if in Javanese, Banjar if in Banjar, etc.). Never use any other language!", prompt, novaFindings.String(), summary)
+	} else {
+		request = fmt.Sprintf("User instruction:\n%s\n\nTask summary: %s\nThe task has been armed and approved on-chain. Check spot price and IDRX balance, and execute the trade on-chain using submit_trade.\n\n[CRITICAL LANGUAGE MANDATE]: Your entire final reply, explanation, and reasoning MUST 100%% match the language of the User instruction above (e.g. Indonesian if the user writes in Indonesian, English if in English, Turkish if in Turkish, Javanese if in Javanese, Banjar if in Banjar, etc.). Never use any other language!", prompt, summary)
+	}
+
+	tradesBefore, _ := s.Trades.FindByTaskID(ctx, taskID)
+	countBefore := len(tradesBefore)
+
+	tipBefore := recorder.TerminalHash()
+	slog.InfoContext(ctx, "agent: executing task with comet", "task_id", taskID, "on_chain_id", onChainTaskID)
+
+	reply, _, err := runRoleAgent(WithRunContext(ctx, runCtx), s.Executor, request, nil, nil)
+	if err != nil {
+		_, _ = recorder.Record(ctx, "executor", "decide", "failed", err.Error(), summary, nil)
+		s.persistExecutionMessage(ctx, &task, fmt.Sprintf("Gagal menjalankan eksekusi on-chain: %s", err.Error()))
+		return ExecuteTaskResult{}, fmt.Errorf("agent: executor agent run: %w", err)
+	}
+
+	cleanReply := cleanExecutionReply(reply)
+	if recorder.TerminalHash() == tipBefore {
+		if _, err := recorder.Record(ctx, "executor", "decide", "done", cleanReply, summary, map[string]any{"action": "hold"}); err != nil {
+			slog.ErrorContext(ctx, "agent: record hold decision", "error", err)
+		}
+	}
+
+	tradesAfter, err := s.Trades.FindByTaskID(ctx, taskID)
+	status := task.Status
+	var executedTrades []model.AgentTrade
+	if err == nil && len(tradesAfter) > countBefore {
+		status = "executed"
+		_ = s.Tasks.SetStatus(ctx, taskID, "executed")
+		_ = s.Tasks.SetExecutedAt(ctx, taskID, time.Now())
+		executedTrades = tradesAfter[countBefore:]
+	}
+
+	// Persist Comet's conversational response into agent_chat_messages
+	if strings.TrimSpace(cleanReply) != "" {
+		s.persistExecutionMessage(ctx, &task, cleanReply)
+	}
+
+	return ExecuteTaskResult{
+		TaskID: taskID,
+		Status: status,
+		Reply:  cleanReply,
+		Trades: executedTrades,
+	}, nil
+}
+
+func (s *TaskService) persistExecutionMessage(ctx context.Context, task *model.AgentTask, content string) {
+	if s.ChatMessages == nil || strings.TrimSpace(content) == "" {
+		return
+	}
+	var chatID *uuid.UUID
+	if task.SourceMessageID != nil {
+		if sourceMsg, found, err := s.ChatMessages.FindByID(ctx, *task.SourceMessageID); err == nil && found {
+			cid := sourceMsg.ChatID
+			chatID = &cid
+		}
+	}
+	if chatID == nil && s.Chats != nil {
+		if chats, err := s.Chats.FindByOwnerWallet(ctx, task.WalletAddress); err == nil && len(chats) > 0 {
+			cid := chats[0].ID
+			chatID = &cid
+		}
+	}
+	if chatID != nil {
+		_, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+			ChatID:      *chatID,
+			Sender:      "supervisor",
+			ContentType: "text",
+			Content:     content,
+			UIRefTaskID: nil, // Do not duplicate PlanCard in chat thread
+		})
+		if err != nil {
+			slog.ErrorContext(ctx, "agent: persist execution reply to chat", "error", err)
+		}
+	}
+}
+
 // Evaluate (the scheduler-driven re-check tick for an armed, actionable
 // Task) is removed as of docs/plans/agent-orchestration-graph-rebuild.md
 // v2.2 — it had zero callers anywhere (no scheduler was ever wired to it),
@@ -384,3 +423,107 @@ func truncateRunes(s string, max int) string {
 	}
 	return string(runes[:max])
 }
+
+func cleanExecutionReply(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	// Remove markdown code fences if wrapped in ```json ... ``` or ``` ... ```
+	if strings.HasPrefix(trimmed, "```") {
+		lines := strings.Split(trimmed, "\n")
+		if len(lines) >= 2 {
+			if strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+				lines = lines[1 : len(lines)-1]
+			} else {
+				lines = lines[1:]
+			}
+			trimmed = strings.TrimSpace(strings.Join(lines, "\n"))
+		}
+	}
+
+	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
+		var parsed struct {
+			Reasoning   string `json:"reasoning"`
+			Reply       string `json:"reply"`
+			Message     string `json:"message"`
+			Explanation string `json:"explanation"`
+			Status      string `json:"status"`
+		}
+		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+			if parsed.Reasoning != "" {
+				return parsed.Reasoning
+			}
+			if parsed.Reply != "" {
+				return parsed.Reply
+			}
+			if parsed.Message != "" {
+				return parsed.Message
+			}
+			if parsed.Explanation != "" {
+				return parsed.Explanation
+			}
+			if parsed.Status != "" {
+				return fmt.Sprintf("Status eksekusi: %s", parsed.Status)
+			}
+		}
+	}
+	return trimmed
+}
+
+const (
+	recordSubTasksGracePeriod = 2 * time.Minute
+	subTaskRetryPollInterval  = 1 * time.Minute
+)
+
+func (s *TaskService) RunSubTaskRetry(ctx context.Context) {
+	s.runSubTaskRetryOnce(ctx)
+
+	ticker := time.NewTicker(subTaskRetryPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runSubTaskRetryOnce(ctx)
+		}
+	}
+}
+
+func (s *TaskService) runSubTaskRetryOnce(ctx context.Context) {
+	cutoff := time.Now().Add(-recordSubTasksGracePeriod)
+	unconfirmed, err := s.SubTasks.FindUnconfirmed(ctx, cutoff)
+	if err != nil {
+		slog.ErrorContext(ctx, "subtask_retry: failed to load unconfirmed rows", "error", err)
+		return
+	}
+	if len(unconfirmed) == 0 {
+		return
+	}
+
+	rowsByTask := map[int64][]model.AgentSubTask{}
+	for _, row := range unconfirmed {
+		rowsByTask[row.TaskID] = append(rowsByTask[row.TaskID], row)
+	}
+
+	for taskID, rows := range rowsByTask {
+		task, found, err := s.Tasks.FindByID(ctx, taskID)
+		if err != nil || !found || task.OnChainTaskID == nil {
+			slog.ErrorContext(ctx, "subtask_retry: task missing or not armed, skipping", "task_id", taskID, "error", err)
+			continue
+		}
+
+		_, txHash, err := s.Chain.RecordSubTasks(ctx, uint64(*task.OnChainTaskID), rows)
+		if err != nil {
+			slog.ErrorContext(ctx, "subtask_retry: resubmit failed, will retry next tick", "task_id", taskID, "error", err)
+			continue
+		}
+
+		ids := make([]int64, len(rows))
+		for i, row := range rows {
+			ids[i] = row.ID
+		}
+		if err := s.SubTasks.MarkRecordedOnChain(ctx, ids, txHash); err != nil {
+			slog.ErrorContext(ctx, "subtask_retry: confirmed on-chain but failed to mark locally", "task_id", taskID, "tx_hash", txHash, "error", err)
+		}
+	}
+}
+

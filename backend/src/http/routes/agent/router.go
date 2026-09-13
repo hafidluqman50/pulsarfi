@@ -12,6 +12,7 @@ func RegisterRoutes(rg *gin.RouterGroup, jwtConfig auth.Config) {
 	protected.GET("/tasks", agentHandler.ListTasksHandler)
 	protected.GET("/activity", agentHandler.GetActivityHandler)
 	protected.POST("/tasks/:id/arm", agentHandler.ArmTaskHandler)
+	protected.POST("/tasks/:id/execute", agentHandler.ExecuteTaskHandler)
 	protected.POST("/tasks/:id/disarm", agentHandler.DisarmTaskHandler)
 	protected.POST("/tasks/:id/pause", agentHandler.PauseTaskHandler)
 	protected.POST("/tasks/:id/resume", agentHandler.ResumeTaskHandler)

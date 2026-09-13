@@ -65,7 +65,7 @@ function extractHookFeeIdrx(logs: Log[], buyStock: boolean): bigint {
   return (args?.feeAmount0 ?? BigInt(0)) + (args?.feeAmount1 ?? BigInt(0));
 }
 
-function formatSwapError(error: unknown, ticker: string): string {
+function formatSwapError(error: unknown, ticker: string, buyStock: boolean = true): string {
   if (!(error instanceof BaseError)) {
     return error instanceof Error ? error.message : 'Swap failed';
   }
@@ -78,6 +78,31 @@ function formatSwapError(error: unknown, ticker: string): string {
     if (name === 'StockNotFound') return `${String(args[0] ?? ticker)} pool is not deployed on-chain.`;
     if (name === 'KYCRequired') return `Wallet ${shortAddress(String(args[0] ?? ''))} is not KYC approved.`;
     if (name === 'InvalidAmount') return 'Swap amount is invalid.';
+    if (name === 'SlippageExceeded') {
+      if (args.length >= 1) {
+        const actualRaw = BigInt(args[0] as string | number | bigint);
+        const formatted = buyStock ? (Number(actualRaw) / 1e18).toFixed(4) : (Number(actualRaw) / 100).toFixed(2);
+        const unit = buyStock ? ticker : 'IDRX';
+        return `Slippage tolerance exceeded: You can only receive ${formatted} ${unit} for this amount with current pool liquidity.`;
+      }
+      return 'Slippage tolerance exceeded: AMM pool price impact is too high for this amount. Reduce swap size.';
+    }
+  }
+
+  const hexMatch = error.message.match(/0x71c4efed([0-9a-fA-F]{64})/);
+  if (hexMatch) {
+    try {
+      const actualRaw = BigInt('0x' + hexMatch[1]);
+      const formatted = buyStock ? (Number(actualRaw) / 1e18).toFixed(4) : (Number(actualRaw) / 100).toFixed(2);
+      const unit = buyStock ? ticker : 'IDRX';
+      return `Slippage tolerance exceeded: You can only receive ${formatted} ${unit} for this amount with current pool liquidity.`;
+    } catch {
+      // fallback
+    }
+  }
+
+  if (error.message.includes('SlippageExceeded') || error.shortMessage?.includes('0x71c4efed')) {
+    return 'Slippage tolerance exceeded: AMM pool price impact is too high for this amount. Reduce swap size.';
   }
 
   if (error.shortMessage.includes('User rejected')) return 'User rejected the transaction.';
@@ -138,7 +163,7 @@ export function useExecuteSwap() {
           await publicClient.waitForTransactionReceipt({ hash: approveHash });
         }
       } catch (error) {
-        throw new Error(formatSwapError(error, input.ticker));
+        throw new Error(formatSwapError(error, input.ticker, input.buy_stock));
       }
 
       let txHash: Address;
@@ -160,7 +185,7 @@ export function useExecuteSwap() {
           chainId: appChainId,
         });
       } catch (error) {
-        throw new Error(formatSwapError(error, input.ticker));
+        throw new Error(formatSwapError(error, input.ticker, input.buy_stock));
       }
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });

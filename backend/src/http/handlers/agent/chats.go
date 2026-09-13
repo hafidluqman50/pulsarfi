@@ -33,7 +33,7 @@ type chatStreamEvent struct {
 }
 
 func PostChatMessageHandler(c *gin.Context) {
-	if !ensureService(c) {
+	if !ensureChatService(c) {
 		return
 	}
 	claims, ok := usermw.Get(c)
@@ -53,12 +53,12 @@ func PostChatMessageHandler(c *gin.Context) {
 	}
 
 	runAgentOverSocket(c, chatID, func(events agentsvc.AgentEventCallbacks) (agentsvc.WorkflowCard, error) {
-		return taskSvc.HandleChatMessage(c.Request.Context(), chatID, claims.WalletAddress, messageRequest.Message, events)
+		return chatSvc.HandleChatMessage(c.Request.Context(), chatID, claims.WalletAddress, messageRequest.Message, events)
 	})
 }
 
 func RetryLastMessageHandler(c *gin.Context) {
-	if !ensureService(c) {
+	if !ensureChatService(c) {
 		return
 	}
 	claims, ok := usermw.Get(c)
@@ -73,7 +73,7 @@ func RetryLastMessageHandler(c *gin.Context) {
 	}
 
 	runAgentOverSocket(c, chatID, func(events agentsvc.AgentEventCallbacks) (agentsvc.WorkflowCard, error) {
-		return taskSvc.RetryLastMessage(c.Request.Context(), chatID, claims.WalletAddress, events)
+		return chatSvc.RetryLastMessage(c.Request.Context(), chatID, claims.WalletAddress, events)
 	})
 }
 
@@ -101,6 +101,12 @@ func runAgentOverSocket(c *gin.Context, chatID uuid.UUID, run func(events agents
 		OnToolCall: func(agentName, toolName, phase string) {
 			realtime.Publish(topic, chatStreamEvent{Type: "tool_call", Data: gin.H{"agent": agentName, "tool": toolName, "phase": phase}})
 		},
+		OnThinking: func(agentName, delta string) {
+			realtime.Publish(topic, chatStreamEvent{Type: "thinking", Data: gin.H{"agent": agentName, "delta": delta}})
+		},
+		OnFinalizing: func() {
+			realtime.Publish(topic, chatStreamEvent{Type: "finalizing", Data: gin.H{}})
+		},
 	})
 
 	switch {
@@ -112,8 +118,8 @@ func runAgentOverSocket(c *gin.Context, chatID uuid.UUID, run func(events agents
 		return
 	case err != nil:
 		slog.ErrorContext(c.Request.Context(), "agent: process chat message failed", "error", err)
-		realtime.Publish(topic, chatStreamEvent{Type: "error", Data: gin.H{"message": agentsvc.QuasarErrorMessage}})
-		response.InternalError(c, agentsvc.QuasarErrorMessage)
+		realtime.Publish(topic, chatStreamEvent{Type: "error", Data: gin.H{"message": "Failed to process chat message"}})
+		response.InternalError(c, "Failed to process chat message")
 		return
 	}
 
@@ -122,7 +128,7 @@ func runAgentOverSocket(c *gin.Context, chatID uuid.UUID, run func(events agents
 }
 
 func ListChatsHandler(c *gin.Context) {
-	if !ensureService(c) {
+	if !ensureChatService(c) {
 		return
 	}
 	claims, ok := usermw.Get(c)
@@ -131,7 +137,7 @@ func ListChatsHandler(c *gin.Context) {
 		return
 	}
 
-	chats, err := taskSvc.ListChats(c.Request.Context(), claims.WalletAddress)
+	chats, err := chatSvc.ListChats(c.Request.Context(), claims.WalletAddress)
 	if err != nil {
 		response.InternalError(c, "failed to fetch chats")
 		return
@@ -141,7 +147,7 @@ func ListChatsHandler(c *gin.Context) {
 }
 
 func GetChatMessagesHandler(c *gin.Context) {
-	if !ensureService(c) {
+	if !ensureChatService(c) {
 		return
 	}
 	claims, ok := usermw.Get(c)
@@ -155,7 +161,7 @@ func GetChatMessagesHandler(c *gin.Context) {
 		return
 	}
 
-	messages, err := taskSvc.GetChatMessages(c.Request.Context(), chatID, claims.WalletAddress)
+	messages, err := chatSvc.GetChatMessages(c.Request.Context(), chatID, claims.WalletAddress)
 	if errors.Is(err, agentsvc.ErrWalletMismatch) {
 		response.Forbidden(c, "chat does not belong to the authenticated wallet")
 		return

@@ -58,6 +58,11 @@ function dedupeAscendingKeepLast(points: SeriesPoint[]): SeriesPoint[] {
 
 function LineChart({ series }: { series: { name: string; color: string; points: SeriesPoint[] }[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // lightweight-charts only draws once this effect runs post-mount, and the
+  // container has no height until then — without reserving the space and
+  // covering it, the chart previously popped in abruptly once its canvas
+  // appeared. Height is fixed at 220 to match the chart's own config below.
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -93,6 +98,7 @@ function LineChart({ series }: { series: { name: string; color: string; points: 
       lineSeries.setData(dedupeAscendingKeepLast(s.points));
     }
     chart.timeScale().fitContent();
+    setMounted(true);
 
     const observer = new ResizeObserver(() => chart.applyOptions({ width: container.clientWidth }));
     observer.observe(container);
@@ -100,10 +106,16 @@ function LineChart({ series }: { series: { name: string; color: string; points: 
     return () => {
       observer.disconnect();
       chart.remove();
+      setMounted(false);
     };
   }, [series]);
 
-  return <div ref={containerRef} style={{ width: '100%' }} />;
+  return (
+    <div style={{ position: 'relative', width: '100%', height: 220 }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      {!mounted && <div className="skeleton" style={{ position: 'absolute', inset: 0 }} />}
+    </div>
+  );
 }
 
 function BarChart({ entries }: { entries: { label: string; value: number }[] }) {
@@ -161,9 +173,16 @@ export function PortfolioChart({ payload }: { payload: ChartPayload }) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1M');
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
+  // Reset during render, not via a setState-in-effect: React explicitly
+  // supports adjusting state while rendering when a prop changes (bails out
+  // before painting the stale frame), which is exactly this case — a new
+  // `payload` (a different chart message) should replace `data` immediately,
+  // not one render tick later.
+  const [prevPayloadData, setPrevPayloadData] = useState(payload.data);
+  if (payload.data !== prevPayloadData) {
+    setPrevPayloadData(payload.data);
     setData(payload.data);
-  }, [payload.data]);
+  }
 
   async function handleTimeframeChange(next: Timeframe) {
     setTimeframe(next);

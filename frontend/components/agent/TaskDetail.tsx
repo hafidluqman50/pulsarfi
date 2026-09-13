@@ -2,8 +2,6 @@
 
 import type { AgentTask } from '@/http/agent/taskApi';
 import { PlanCard } from './PlanCard';
-import { ArmPanel } from './ArmPanel';
-import { TradeLedger } from './TradeLedger';
 
 type TaskDetailProps = {
   task: AgentTask;
@@ -13,7 +11,10 @@ type TaskDetailProps = {
 // plan card first, then either the pre-arm ArmPanel or the post-arm
 // TradeLedger (which itself covers armed/paused/disarmed banners).
 export function TaskDetail({ task }: TaskDetailProps) {
-  const isArmed = task.on_chain_task_id != null;
+  // armed_at, not on_chain_task_id: the latter is set the instant any Task
+  // is recognized, so inferring "armed" from it made this true immediately
+  // and ArmPanel could never render at all.
+  const isArmed = task.armed_at != null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '16px 14px' }}>
@@ -27,10 +28,6 @@ export function TaskDetail({ task }: TaskDetailProps) {
       </div>
 
       <PlanCard taskId={task.id} />
-
-      {task.is_actionable && !isArmed && <ArmPanel taskId={task.id} isActionable={task.is_actionable} durationSec={24 * 60 * 60} />}
-
-      {isArmed && <TradeLedger task={task} />}
     </div>
   );
 }

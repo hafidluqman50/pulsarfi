@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"gorm.io/gorm"
@@ -49,11 +50,12 @@ func (r *AgentTaskRepository) FindByChatMessageIDs(ctx context.Context, messageI
 }
 
 type AgentTaskCreateInput struct {
-	WalletAddress   string
-	SourceMessageID *int64
-	RawPrompt       *string
-	IsActionable    bool
-	Summary         string
+	WalletAddress      string
+	SourceMessageID    *int64
+	RawPrompt          *string
+	IsActionable       bool
+	Summary            string
+	TriggerDescription *string
 }
 
 func (r *AgentTaskRepository) Create(ctx context.Context, input AgentTaskCreateInput) (model.AgentTask, error) {
@@ -63,12 +65,13 @@ func (r *AgentTaskRepository) Create(ctx context.Context, input AgentTaskCreateI
 	}
 	summary := input.Summary
 	task := model.AgentTask{
-		WalletAddress:   input.WalletAddress,
-		SourceMessageID: input.SourceMessageID,
-		RawPrompt:       input.RawPrompt,
-		IsActionable:    input.IsActionable,
-		Status:          status,
-		Summary:         &summary,
+		WalletAddress:      input.WalletAddress,
+		SourceMessageID:    input.SourceMessageID,
+		RawPrompt:          input.RawPrompt,
+		IsActionable:       input.IsActionable,
+		Status:             status,
+		Summary:            &summary,
+		TriggerDescription: input.TriggerDescription,
 	}
 	return task, r.DB.WithContext(ctx).Create(&task).Error
 }
@@ -80,6 +83,15 @@ func (r *AgentTaskRepository) SetOnChainTaskID(ctx context.Context, id int64, on
 	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
 		Where("id = ?", id).
 		Update("on_chain_task_id", onChainTaskID).Error
+}
+
+// SetArmedAt records the moment GrantTradePermission actually succeeded.
+// Called only on that success path — a failed arm attempt must leave this
+// null, since "armed" is exactly "the on-chain permission exists".
+func (r *AgentTaskRepository) SetArmedAt(ctx context.Context, id int64, armedAt time.Time) error {
+	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
+		Where("id = ?", id).
+		Update("armed_at", armedAt).Error
 }
 
 // SetCancelled is unconditional once the caller has already verified
@@ -108,4 +120,16 @@ func (r *AgentTaskRepository) SetPaused(ctx context.Context, id int64, paused bo
 	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
 		Where("id = ?", id).
 		Updates(updates).Error
+}
+
+func (r *AgentTaskRepository) SetStatus(ctx context.Context, id int64, status string) error {
+	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
+		Where("id = ?", id).
+		Update("status", status).Error
+}
+
+func (r *AgentTaskRepository) SetExecutedAt(ctx context.Context, id int64, executedAt time.Time) error {
+	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
+		Where("id = ?", id).
+		Update("executed_at", executedAt).Error
 }

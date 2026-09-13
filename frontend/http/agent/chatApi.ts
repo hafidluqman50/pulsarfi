@@ -55,10 +55,17 @@ export interface ToolCallEvent {
   phase: 'start' | 'end';
 }
 
+export interface ThinkingEvent {
+  agent: string;
+  delta: string;
+}
+
 export type ChatStreamEvent =
   | { type: 'sub_task'; data: AgentSubTask }
   | { type: 'sub_task_started'; data: SubTaskStarted }
   | { type: 'tool_call'; data: ToolCallEvent }
+  | { type: 'thinking'; data: ThinkingEvent }
+  | { type: 'finalizing'; data: Record<string, never> }
   | { type: 'reply_delta'; data: { delta: string } }
   | { type: 'final'; data: WorkflowCard }
   | { type: 'error'; data: { message: string } };

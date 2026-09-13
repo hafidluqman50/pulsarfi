@@ -10,6 +10,9 @@ export interface AgentTask {
   summary: string | null;
   trigger_description: string | null;
   on_chain_task_id: number | null;
+  /** Set only when grantTradePermission actually succeeded. on_chain_task_id
+   *  is NOT a substitute — it is set at Task recognition for every Task. */
+  armed_at: string | null;
   paused: boolean;
   paused_at: string | null;
   created_at: string;
@@ -89,3 +92,16 @@ export async function pauseTask(taskId: number): Promise<void> {
 export async function resumeTask(taskId: number): Promise<void> {
   await client.post(`/agent/tasks/${taskId}/resume`);
 }
+
+export interface ExecuteTaskResult {
+  task_id: number;
+  status: string;
+  reply: string;
+  trades?: AgentTrade[];
+}
+
+export async function executeTask(taskId: number): Promise<ExecuteTaskResult> {
+  const res = await client.post(`/agent/tasks/${taskId}/execute`);
+  return res.data.data;
+}
+

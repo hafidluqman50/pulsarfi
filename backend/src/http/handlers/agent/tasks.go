@@ -82,8 +82,9 @@ func ArmTaskHandler(c *gin.Context) {
 	}
 
 	armResult, err := taskSvc.ArmTask(c.Request.Context(), taskID, claims.WalletAddress, agentsvc.ArmTaskInput{
-		TotalBudget: armRequest.TotalBudget,
-		DurationSec: armRequest.DurationSec,
+		TotalBudget:  armRequest.TotalBudget,
+		DurationSec:  armRequest.DurationSec,
+		TokenAddress: armRequest.TokenAddress,
 	})
 	if errors.Is(err, agentsvc.ErrTaskNotFound) {
 		response.NotFound(c, "task not found")
@@ -268,3 +269,45 @@ func GetReasoningHandler(c *gin.Context) {
 
 	response.OK(c, "reasoning chain retrieved", chain)
 }
+
+// ExecuteTaskHandler triggers Comet to execute an armed task on-chain.
+func ExecuteTaskHandler(c *gin.Context) {
+	if !ensureService(c) {
+		return
+	}
+	claims, ok := usermw.Get(c)
+	if !ok {
+		response.Unauthorized(c, "authentication required")
+		return
+	}
+	taskID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "invalid task id")
+		return
+	}
+
+	result, err := taskSvc.ExecuteTask(c.Request.Context(), taskID, claims.WalletAddress)
+	if errors.Is(err, agentsvc.ErrTaskNotFound) {
+		response.NotFound(c, "task not found")
+		return
+	}
+	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+		response.Forbidden(c, "task does not belong to the authenticated wallet")
+		return
+	}
+	if errors.Is(err, agentsvc.ErrTaskNotArmed) {
+		response.UnprocessableEntity(c, "task has not been armed yet", nil)
+		return
+	}
+	if errors.Is(err, agentsvc.ErrTaskNotActionable) {
+		response.UnprocessableEntity(c, "task is not actionable", nil)
+		return
+	}
+	if err != nil {
+		response.InternalError(c, "failed to execute task: "+err.Error())
+		return
+	}
+
+	response.OK(c, "task executed", result)
+}
+

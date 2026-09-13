@@ -40,15 +40,15 @@ func TestOrchestratorLiveConversation(t *testing.T) {
 	}
 	repos := repository.NewRegistry(db)
 	registry := service.NewRegistry(service.Config{Repos: repos})
-	if registry.AgentTask == nil {
-		t.Fatal("agent task service disabled — check DEEPSEEK_API_KEY/TAVILY_API_KEY/ALCHEMY_RPC_URL/AGENT_WALLET_PRIVATE_KEY/AGENT_TASK_MANAGER_ADDRESS in .env")
+	if registry.AgentChat == nil {
+		t.Fatal("agent chat service disabled — check DEEPSEEK_API_KEY/TAVILY_API_KEY/ALCHEMY_RPC_URL/AGENT_WALLET_PRIVATE_KEY/AGENT_TASK_MANAGER_ADDRESS in .env")
 	}
 
 	chatID := uuid.New()
 	wallet := "0x000000000000000000000000000000LiveTest"
 
 	var deltas []string
-	card, err := registry.AgentTask.HandleChatMessage(
+	card, err := registry.AgentChat.HandleChatMessage(
 		context.Background(),
 		chatID,
 		wallet,
@@ -66,6 +66,9 @@ func TestOrchestratorLiveConversation(t *testing.T) {
 			},
 			OnToolCall: func(agentName, toolName, phase string) {
 				fmt.Printf("\n[tool_call] %s / %s: %s\n", agentName, toolName, phase)
+			},
+			OnThinking: func(agentName, delta string) {
+				fmt.Printf("[thinking:%s]%s", agentName, delta)
 			},
 		},
 	)

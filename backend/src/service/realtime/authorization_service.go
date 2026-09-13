@@ -19,6 +19,9 @@ func isTopicAllowed(topic string, identity *auth.Claims) bool {
 	case topic == "market-stocks", topic == "protocol-stats", topic == "reserves":
 		// Matches GET /api/v1/public/stocks, /public/stats, /public/reserves — no auth.
 		return true
+	case strings.HasPrefix(topic, "stock-transactions:"):
+		// Matches GET /api/v1/public/transactions/:wallet — public on-chain trade activity.
+		return true
 	case strings.HasPrefix(topic, "agent-task-reasoning:"):
 		// Matches GET /api/v1/agent/tasks/:id/reasoning — deliberately public,
 		// independently verifiable by anyone (see task_service.go's own doc comment).

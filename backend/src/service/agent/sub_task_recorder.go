@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/realtime"
@@ -17,11 +18,12 @@ import (
 // through the same recorder instance so every row in a run shares one
 // continuous chain.
 type SubTaskRecorder struct {
-	subTasks  *repository.AgentSubTaskRepository
-	taskID    int64
-	nextOrder int
-	prevHash  string
-	rows      []model.AgentSubTask // every row this instance has written, in order
+	subTasks      *repository.AgentSubTaskRepository
+	chain         ChainSubTaskRecorder
+	onChainTaskID uint64
+	taskID        int64
+	nextOrder     int
+	prevHash      string
 	// OnRecord, if set, fires synchronously right after a row is persisted
 	// — the hook HandleChatMessage uses to stream each Sub Task out over
 	// SSE the moment it's created, instead of the frontend only learning
@@ -29,19 +31,27 @@ type SubTaskRecorder struct {
 	OnRecord func(model.AgentSubTask)
 }
 
+// ChainSubTaskRecorder is the narrow chain capability SubTaskRecorder
+// itself needs — a subset of OrchestratorChainClient (ISP): this package
+// never needs CreateTask, only the ability to record one Sub Task on-chain
+// and learn its real, contract-assigned id.
+type ChainSubTaskRecorder interface {
+	RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows []model.AgentSubTask) (onChainSubTaskIDs []uint64, txHash string, err error)
+}
+
 // NewSubTaskRecorder loads the current tip of taskID's chain, or computes
 // its genesis hash if this Task has never recorded a step before — so a
 // recorder built fresh for a re-evaluation tick continues the same chain
 // instead of starting a new, disconnected one.
-func NewSubTaskRecorder(ctx context.Context, subTasks *repository.AgentSubTaskRepository, taskID int64, triggerDescription, owner string) (*SubTaskRecorder, error) {
+func NewSubTaskRecorder(ctx context.Context, subTasks *repository.AgentSubTaskRepository, chain ChainSubTaskRecorder, onChainTaskID uint64, taskID int64, triggerDescription, owner string) (*SubTaskRecorder, error) {
 	last, found, err := subTasks.LastForTask(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("sub_task_recorder: load chain tip: %w", err)
 	}
 	if found {
-		return &SubTaskRecorder{subTasks: subTasks, taskID: taskID, nextOrder: last.StepOrder + 1, prevHash: last.DecisionHash}, nil
+		return &SubTaskRecorder{subTasks: subTasks, chain: chain, onChainTaskID: onChainTaskID, taskID: taskID, nextOrder: last.StepOrder + 1, prevHash: last.DecisionHash}, nil
 	}
-	return &SubTaskRecorder{subTasks: subTasks, taskID: taskID, nextOrder: 1, prevHash: GenesisHash(taskID, triggerDescription, owner)}, nil
+	return &SubTaskRecorder{subTasks: subTasks, chain: chain, onChainTaskID: onChainTaskID, taskID: taskID, nextOrder: 1, prevHash: contracts.GenesisHash(taskID, triggerDescription, owner)}, nil
 }
 
 // Record appends one link to the chain. output is marshaled as given; pass
@@ -63,7 +73,7 @@ func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, statu
 		}
 	}
 
-	decisionHash := DecisionHash(agentName, stepName, reasoning, outputJSON, r.prevHash)
+	decisionHash := contracts.DecisionHash(agentName, stepName, reasoning, outputJSON, r.prevHash)
 
 	var outputStr *string
 	if outputJSON != nil {
@@ -76,7 +86,7 @@ func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, statu
 		labelPtr = &label
 	}
 
-	row, err := r.subTasks.Create(ctx, model.AgentSubTask{
+	unsaved := model.AgentSubTask{
 		TaskID:           r.taskID,
 		StepOrder:        r.nextOrder,
 		Agent:            agentName,
@@ -87,14 +97,32 @@ func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, statu
 		Output:           outputStr,
 		PrevDecisionHash: r.prevHash,
 		DecisionHash:     decisionHash,
-	})
+	}
+
+	// On-chain first, same absolute rule as createTask (v2.1) — applies to
+	// every Sub Task, not just trade-related ones
+	// (docs/plans/agent-orchestration-graph-rebuild.md v2.14/v2.15). If this
+	// fails, the whole turn aborts right here: no Postgres row, nothing
+	// partially created. A step existing off-chain only, even transiently,
+	// is not a degraded state to tolerate — the hash chain's own value as a
+	// commitment made *before* the next (possibly irreversible) step
+	// depends on this never happening.
+	onChainIDs, txHash, chainErr := r.chain.RecordSubTasks(ctx, r.onChainTaskID, []model.AgentSubTask{unsaved})
+	if chainErr != nil {
+		return model.AgentSubTask{}, fmt.Errorf("sub_task_recorder: on-chain recordSubTasks failed, aborting (on-chain is the source of truth, no off-chain-only step is allowed): %w", chainErr)
+	}
+	onChainID := int64(onChainIDs[0])
+	unsaved.OnChainSubTaskID = &onChainID
+	unsaved.RecordedOnChain = true
+	unsaved.OnChainTxHash = &txHash
+
+	row, err := r.subTasks.Create(ctx, unsaved)
 	if err != nil {
-		return model.AgentSubTask{}, fmt.Errorf("sub_task_recorder: persist row: %w", err)
+		return model.AgentSubTask{}, fmt.Errorf("sub_task_recorder: on-chain step %d recorded but Postgres insert failed: %w", onChainID, err)
 	}
 
 	r.nextOrder++
 	r.prevHash = decisionHash
-	r.rows = append(r.rows, row)
 	if r.OnRecord != nil {
 		r.OnRecord(row)
 	}
@@ -115,17 +143,9 @@ func (r *SubTaskRecorder) TerminalHash() string {
 	return r.prevHash
 }
 
-// RowCount is how many rows this instance has written so far in its own
-// lifetime (not the Task's lifetime total) — a caller captures this before
-// a run starts so RowsSince can report only what that run actually wrote.
-func (r *SubTaskRecorder) RowCount() int {
-	return len(r.rows)
-}
-
-// RowsSince returns every row recorded from index n onward — what
-// HandleChatMessage/Evaluate (docs/plans/agent-task-manager-code-implementation.md
-// §7.B/§7.D) batch into one on-chain recordSubTasks call once their run
-// finishes.
-func (r *SubTaskRecorder) RowsSince(n int) []model.AgentSubTask {
-	return r.rows[n:]
+// TaskID is the Postgres id of the Task this recorder's chain belongs to —
+// needed by submit_trade to attach a real agent_trades row to the right
+// Task (docs/plans/agent-trade-execution.md).
+func (r *SubTaskRecorder) TaskID() int64 {
+	return r.taskID
 }

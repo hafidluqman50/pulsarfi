@@ -26,14 +26,14 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, chartReader 
 		return nil, fmt.Errorf("analyzer: build news tools: %w", err)
 	}
 	baseTools := []tool.BaseTool{portfolioSnapshotTool, stockChartTool, readArticleTool, webSearchTool}
-	tools := agent.WrapToolsGraceful(append(baseTools, extraTools...))
+	tools := append(baseTools, extraTools...)
 
 	analyzerAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        "analyzer_agent",
 		Description: "Gathers news and/or technical evidence for a Task's trigger condition and concludes whether it is satisfied, citing the specific evidence that drove the conclusion. Also answers portfolio/chart questions.",
 		Instruction: instructions,
 		Model:       chatModel,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools}},
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agent.WrapToolsGraceful(tools)}},
 		// Raised from 10, found live: a genuinely legitimate two-ticker
 		// request ("berita & sentimen BUMI dan ENRG sekaligus") needs
 		// web_search + read_article for each ticker separately, plus the

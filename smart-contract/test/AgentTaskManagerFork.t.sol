@@ -446,6 +446,90 @@ contract AgentTaskManagerForkTest is Test {
         manager.cancelTask(taskId);
     }
 
+    function test_executeTrade_buyBMRIP_20MillionIDRX() public {
+        if (!forked) return;
+        address owner = makeAddr("bmripBuyer");
+        uint256 idrxAmount = 20_000_000 * 100; // 20 million IDRX (2 decimals = 2,000,000,000 raw units)
+        _mintIdrx(owner, idrxAmount);
+
+        (uint256 taskId, uint256 decideSubTaskId) = _armAndRecordDecide(owner, idrxAmount);
+
+        vm.prank(owner);
+        (bool ok,) = idrxAddr.call(abi.encodeWithSignature("approve(address,uint256)", address(manager), idrxAmount));
+        require(ok, "idrx approve failed");
+
+        address bmripAddr = protocol.stocks("BMRIP");
+        assertTrue(bmripAddr != address(0), "BMRIP must exist");
+        uint256 ownerStockBefore = _balanceOf(bmripAddr, owner);
+
+        vm.prank(agent);
+        uint256 tradeId = manager.executeTrade(
+            taskId,
+            decideSubTaskId,
+            idrxAddr,
+            "BMRIP",
+            AgentTaskManager.TradeSide.Buy,
+            idrxAmount,
+            0,
+            "Beli 20.000.000 IDRX BMRIP",
+            keccak256("exec-reasoning-bmrip-buy")
+        );
+
+        uint256 ownerStockAfter = _balanceOf(bmripAddr, owner);
+        assertGt(ownerStockAfter, ownerStockBefore, "owner must receive BMRIP stock tokens");
+
+        (, uint256 usedBudget,) = manager.tradePermissions(taskId);
+        assertEq(usedBudget, idrxAmount, "usedBudget must equal 20M IDRX spent");
+
+        console.log("SUCCESS: 20 Million IDRX BMRIP Buy executed, BMRIP tokens received:", ownerStockAfter - ownerStockBefore);
+    }
+
+    function test_executeTrade_sellBMRIP_fullPosition() public {
+        if (!forked) return;
+        address owner = makeAddr("bmripSeller");
+        uint256 idrxIn = 20_000_000 * 100;
+        _mintIdrx(owner, idrxIn);
+
+        address bmripAddr = protocol.stocks("BMRIP");
+        vm.prank(owner);
+        (bool ok,) = idrxAddr.call(abi.encodeWithSignature("approve(address,uint256)", PROXY, idrxIn));
+        require(ok, "idrx approve to proxy failed");
+        vm.prank(owner);
+        protocol.swapV4("BMRIP", idrxIn, 0, true);
+
+        uint256 stockBalance = _balanceOf(bmripAddr, owner);
+        assertGt(stockBalance, 0, "must hold BMRIP before selling");
+
+        (uint256 taskId, uint256 decideSubTaskId) = _armAndRecordDecide(owner, type(uint128).max);
+
+        vm.prank(owner);
+        (bool okApprove,) = bmripAddr.call(abi.encodeWithSignature("approve(address,uint256)", address(manager), stockBalance));
+        require(okApprove, "bmrip approve failed");
+
+        uint256 ownerIdrxBefore = _balanceOf(idrxAddr, owner);
+
+        vm.prank(agent);
+        uint256 tradeId = manager.executeTrade(
+            taskId,
+            decideSubTaskId,
+            bmripAddr,
+            "BMRIP",
+            AgentTaskManager.TradeSide.Sell,
+            stockBalance,
+            0,
+            "Jual full posisi BMRIP",
+            keccak256("exec-reasoning-bmrip-sell")
+        );
+
+        (, uint256 usedBudget,) = manager.tradePermissions(taskId);
+        assertGt(usedBudget, 0, "usedBudget must increase by realized IDRX");
+
+        uint256 ownerIdrxAfter = _balanceOf(idrxAddr, owner);
+        assertEq(ownerIdrxAfter - ownerIdrxBefore, usedBudget, "owner must receive realized IDRX");
+
+        console.log("SUCCESS: Full position BMRIP Sell executed, realized IDRX:", usedBudget);
+    }
+
     function _balanceOf(address token, address account) internal returns (uint256) {
         (bool ok, bytes memory ret) = token.call(abi.encodeWithSignature("balanceOf(address)", account));
         require(ok, "balanceOf failed");

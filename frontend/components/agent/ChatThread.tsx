@@ -3,20 +3,34 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { sendChatMessage, retryLastMessage, chatStreamTopic, type AgentChatMessage, type ChatStreamEvent, type SubTaskStarted } from '@/http/agent/chatApi';
 import type { AgentSubTask } from '@/http/agent/taskApi';
 import { useRealtimeTopic } from '@/http/realtime/useRealtimeSocket';
+import { ClarifyingQuestions } from './ClarifyingQuestions';
 import { NewsBrief } from './NewsBrief';
 import { PlanCard } from './PlanCard';
 import { PortfolioChart } from './PortfolioChart';
-import { agentDisplayName, humanizeKey, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
+import { agentDisplayName, humanizeKey, MessageMarkdown, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
 import { useChatMessages } from '@/http/agent/hooks';
 
 type ChatThreadProps = {
   chatId: string;
 };
+
+// Tool names that produce chart-shaped output (matches classifyReply's own
+// check, orchestrator_service.go) — used here purely to know, the instant
+// the tool_call event fires, that a chart is on its way, so a skeleton can
+// appear immediately instead of only once the whole turn finishes and the
+// real chart shows up in the persisted message.
+const CHART_TOOLS = new Set(['get_portfolio_snapshot', 'get_stock_chart']);
+
+function ChartSkeletonCard() {
+  return (
+    <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
+      <div className="skeleton" style={{ height: 220, width: '100%' }} />
+    </div>
+  );
+}
 
 let placeholderIdCounter = 0;
 
@@ -55,9 +69,14 @@ function placeholderSubTask(started: SubTaskStarted, stepOrder: number): AgentSu
 // mergeSubTaskDone's "find the matching placeholder" below stays
 // unambiguous even across a retry.
 function addStartedPlaceholder(prev: AgentSubTask[], started: SubTaskStarted): AgentSubTask[] {
-  const superseded = prev.map((row) =>
-    row.status === 'in_progress' && row.agent === started.agent && row.step_name === started.step_name ? { ...row, status: 'retried' } : row,
-  );
+  const superseded = prev.map((row) => {
+    if (row.status !== 'in_progress') return row;
+    if (row.agent === started.agent && row.step_name === started.step_name) {
+      return { ...row, status: 'retried' as const };
+    }
+    // Graph execution is strictly serial — when a new step starts, the prior in_progress step is completed
+    return { ...row, status: 'done' as const };
+  });
   return [...superseded, placeholderSubTask(started, superseded.length + 1)];
 }
 
@@ -83,14 +102,33 @@ function mergeSubTaskDone(prev: AgentSubTask[], done: AgentSubTask): AgentSubTas
 // placeholder text between two tool calls in the same step — it only changes
 // once the next tool call starts, or the row disappears once the step itself
 // is done.
-function LiveSubTasks({ subTasks, toolActivityByAgent }: { subTasks: AgentSubTask[]; toolActivityByAgent: Record<string, string> }) {
+function LiveSubTasks({
+  subTasks,
+  toolActivityByAgent,
+  thinkingByAgent,
+  isFinalizing,
+}: {
+  subTasks: AgentSubTask[];
+  toolActivityByAgent: Record<string, string>;
+  thinkingByAgent: Record<string, string>;
+  isFinalizing: boolean;
+}) {
   const [openRow, setOpenRow] = useState<number | null>(null);
   if (subTasks.length === 0) return null;
+  // Every listed Sub Task can already say DONE while the panel's own header
+  // still says "Working" with nothing left to point at — confusing, flagged
+  // live ("apa yang masih working? gak jelas"). Once nothing is in_progress
+  // anymore, the remaining work is either Quasar composing the final reply,
+  // or (once that's also done) the turn's on-chain Sub Task batch write —
+  // the one real, possibly multi-second stretch that previously had no
+  // signal reaching the UI at all ("semua done, tapi no info").
+  const anyInProgress = subTasks.some((subTask) => subTask.status === 'in_progress');
+  const label = isFinalizing ? 'Finalizing on-chain' : anyInProgress ? 'Working' : 'Composing reply';
   return (
     <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)' }}>
       <div style={{ background: 'var(--ink)', color: 'var(--canvas)', padding: '10px 13px', display: 'flex', alignItems: 'center', gap: 9 }}>
         <span className="pulsar" />
-        <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>Working</span>
+        <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>{label}</span>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--hairline-strong)' }}>{subTasks.length} sub tasks so far</span>
       </div>
       {subTasks.map((subTask) => {
@@ -121,21 +159,31 @@ function LiveSubTasks({ subTasks, toolActivityByAgent }: { subTasks: AgentSubTas
                   Reasoning · {agentDisplayName(subTask.agent)}
                 </div>
                 <div style={{ marginBottom: subTask.output ? 14 : 0 }}>
-                  {subTask.status === 'in_progress' || subTask.status === 'retried' ? (
-                    // Nothing to show yet, not a bug — the step's reasoning only
-                    // exists once SubTaskRecorder.Record actually persists it, and
-                    // that only happens once the whole step (e.g. Analyzer's
-                    // search/read/conclude pass) has finished. A blank div here
-                    // read as broken; say plainly what's actually going on instead.
+                  {subTask.status === 'retried' ? (
                     // "retried" means Supervisor started this same step again
                     // before this attempt ever finished — this one simply never
                     // got a result, not a bug in this render.
                     <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ticker)', fontStyle: 'italic' }}>
-                      {subTask.status === 'retried'
-                        ? `${agentDisplayName(subTask.agent)} mengulang langkah ini sebelum percobaan ini selesai.`
-                        : toolActivityByAgent[subTask.agent]
-                          ? `${agentDisplayName(subTask.agent)} memanggil ${toolActivityByAgent[subTask.agent]}…`
-                          : `${agentDisplayName(subTask.agent)} sedang memproses langkah ini…`}
+                      {`${agentDisplayName(subTask.agent)} mengulang langkah ini sebelum percobaan ini selesai.`}
+                    </div>
+                  ) : subTask.status === 'in_progress' ? (
+                    // Real, live content only — Nova's/Comet's own streamed
+                    // reasoning (thinking events) and the tool it's currently
+                    // calling, both sourced from actual events, never a
+                    // stand-in sentence invented for the gap before the first
+                    // one arrives. Deliberately blank in that brief gap rather
+                    // than a fake "sedang memproses…" placeholder.
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {toolActivityByAgent[subTask.agent] && (
+                        <span style={{ font: '600 9px/1.3 var(--font-mono)', letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--ticker)' }}>
+                          {toolActivityByAgent[subTask.agent]}
+                        </span>
+                      )}
+                      {thinkingByAgent[subTask.agent] && (
+                        <div style={{ color: 'var(--ink-soft)' }}>
+                          <MessageMarkdown content={thinkingByAgent[subTask.agent]} fontSize={12.5} />
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <StructuredOrProse raw={subTask.reasoning} />
@@ -154,45 +202,6 @@ function LiveSubTasks({ subTasks, toolActivityByAgent }: { subTasks: AgentSubTas
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function MessageMarkdown({ content }: { content: string }) {
-  return (
-    // overflowWrap/wordBreak here, not just on the link itself: a raw URL
-    // (no natural break points, unlike prose) otherwise overflows its
-    // container's width outright — most visible in a narrow viewport,
-    // where a long news link pushed the whole reply bubble past its edge.
-    <div style={{ fontSize: 14.5, lineHeight: 1.55, overflowWrap: 'anywhere', wordBreak: 'break-word', minWidth: 0 }}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          p: ({ children }) => <p style={{ margin: '0 0 10px' }}>{children}</p>,
-          strong: ({ children }) => <strong style={{ fontWeight: 600, color: 'var(--ink)' }}>{children}</strong>,
-          ul: ({ children }) => <ul style={{ margin: '0 0 10px', paddingLeft: 20 }}>{children}</ul>,
-          ol: ({ children }) => <ol style={{ margin: '0 0 10px', paddingLeft: 20 }}>{children}</ol>,
-          li: ({ children }) => <li style={{ marginBottom: 4 }}>{children}</li>,
-          a: ({ children, href }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--merah)', overflowWrap: 'anywhere' }}>
-              {children}
-            </a>
-          ),
-          table: ({ children }) => (
-            <div style={{ overflowX: 'auto', margin: '0 0 10px' }}>
-              <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>{children}</table>
-            </div>
-          ),
-          thead: ({ children }) => <thead style={{ borderBottom: '1px solid var(--hairline-strong)' }}>{children}</thead>,
-          th: ({ children }) => <th style={{ textAlign: 'left', padding: '6px 10px', fontWeight: 600, color: 'var(--ink)' }}>{children}</th>,
-          td: ({ children }) => <td style={{ padding: '6px 10px', borderTop: '1px solid var(--hairline)' }}>{children}</td>,
-          code: ({ children }) => (
-            <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, background: 'var(--canvas-soft)', padding: '1px 4px' }}>{children}</code>
-          ),
-        }}
-      >
-        {content}
-      </ReactMarkdown>
     </div>
   );
 }
@@ -224,7 +233,7 @@ function ChartCard({ uiProps }: { uiProps: unknown }) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {(uiProps as ChartUIProps[]).map((props, i) => (
-          <SingleChartCard key={props.ticker ?? props.lens ?? i} props={props} />
+          <SingleChartCard key={`${props.ticker ?? props.lens ?? 'chart'}-${i}`} props={props} />
         ))}
       </div>
     );
@@ -241,6 +250,9 @@ type MessageListProps = {
   failedMessage: { text: string; description: string } | null;
   liveSubTasks: AgentSubTask[];
   toolActivityByAgent: Record<string, string>;
+  thinkingByAgent: Record<string, string>;
+  isFinalizing: boolean;
+  chartPending: boolean;
   streamingReplyText: string;
   onRetry: () => void;
 };
@@ -251,14 +263,14 @@ type MessageListProps = {
 // supervisor reply doing its own data fetching, on every single keystroke,
 // as a chat's history grows. Now this only re-renders when its own props
 // (real content) actually change, not when the user is just typing.
-const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, toolActivityByAgent, streamingReplyText, onRetry }: MessageListProps) {
+const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, toolActivityByAgent, thinkingByAgent, isFinalizing, chartPending, streamingReplyText, onRetry }: MessageListProps) {
   const threadRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = threadRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, pendingText, liveSubTasks, streamingReplyText, isStreaming]);
+  }, [messages, pendingText, liveSubTasks, streamingReplyText, isStreaming, isFinalizing, chartPending]);
 
   return (
     <div ref={threadRef} className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -286,12 +298,15 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
           </div>
         ) : (
           <div key={message.id} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {message.content && (
+              <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
+                <MessageMarkdown content={message.content} />
+              </div>
+            )}
             {message.ui_ref_task_id != null && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
-            <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
-              <MessageMarkdown content={message.content} />
-            </div>
             {message.content_type === 'chart' && <ChartCard uiProps={message.ui_props} />}
             {message.content_type === 'news' && <NewsBrief uiProps={message.ui_props} />}
+            {message.ui_component === 'clarifying_questions' && <ClarifyingQuestions uiProps={message.ui_props} chatId={chatId} />}
           </div>
         );
       })}
@@ -302,7 +317,9 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
         </div>
       )}
 
-      {isStreaming && <LiveSubTasks subTasks={liveSubTasks} toolActivityByAgent={toolActivityByAgent} />}
+      {isStreaming && <LiveSubTasks subTasks={liveSubTasks} toolActivityByAgent={toolActivityByAgent} thinkingByAgent={thinkingByAgent} isFinalizing={isFinalizing} />}
+
+      {isStreaming && chartPending && <ChartSkeletonCard />}
 
       {isStreaming && streamingReplyText && (
         <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
@@ -328,6 +345,9 @@ export function ChatThread({ chatId }: ChatThreadProps) {
   const [failedMessage, setFailedMessage] = useState<{ text: string; description: string } | null>(null);
   const [liveSubTasks, setLiveSubTasks] = useState<AgentSubTask[]>([]);
   const [toolActivityByAgent, setToolActivityByAgent] = useState<Record<string, string>>({});
+  const [thinkingByAgent, setThinkingByAgent] = useState<Record<string, string>>({});
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [chartPending, setChartPending] = useState(false);
   const [streamingReplyText, setStreamingReplyText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const isSendingRef = useRef(false);
@@ -350,12 +370,28 @@ export function ChatThread({ chatId }: ChatThreadProps) {
         delete next[event.data.agent];
         return next;
       });
+      // Same reasoning as toolActivityByAgent above: a fresh step hasn't
+      // produced any thinking of its own yet, so the previous step's
+      // leftover text can't linger and get mistaken for this one's.
+      setThinkingByAgent((prev) => {
+        if (!(event.data.agent in prev)) return prev;
+        const next = { ...prev };
+        delete next[event.data.agent];
+        return next;
+      });
     }
     if (event.type === 'sub_task') {
       setLiveSubTasks((prev) => mergeSubTaskDone(prev, event.data));
     }
     if (event.type === 'tool_call' && event.data.phase === 'start') {
       setToolActivityByAgent((prev) => ({ ...prev, [event.data.agent]: humanizeKey(event.data.tool) }));
+      if (CHART_TOOLS.has(event.data.tool)) setChartPending(true);
+    }
+    if (event.type === 'thinking') {
+      setThinkingByAgent((prev) => ({ ...prev, [event.data.agent]: (prev[event.data.agent] ?? '') + event.data.delta }));
+    }
+    if (event.type === 'finalizing') {
+      setIsFinalizing(true);
     }
     if (event.type === 'reply_delta') {
       setStreamingReplyText((prev) => prev + event.data.delta);
@@ -377,11 +413,20 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     setFailedMessage(null);
     setLiveSubTasks([]);
     setToolActivityByAgent({});
+    setThinkingByAgent({});
+    setIsFinalizing(false);
+    setChartPending(false);
     setStreamingReplyText('');
     if (!overrideText) setDraft('');
     try {
       await sendChatMessage(chatId, trimmed);
-      queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
+      // Awaited on purpose: the streaming bubble below is cleared in
+      // `finally` right after this. If the persisted message list hasn't
+      // actually refetched yet by then, there's a gap where neither the
+      // streaming bubble nor the real message is on screen — the reply
+      // visibly disappears for a beat before popping back in once the
+      // refetch lands. Awaiting here makes the swap atomic instead.
+      await queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
       queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
@@ -403,10 +448,15 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     setFailedMessage(null);
     setLiveSubTasks([]);
     setToolActivityByAgent({});
+    setThinkingByAgent({});
+    setIsFinalizing(false);
+    setChartPending(false);
     setStreamingReplyText('');
     try {
       await retryLastMessage(chatId);
-      queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
+      // Same reasoning as handleSend: await so the message list already has
+      // the real reply before the streaming bubble is cleared below.
+      await queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
       queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
@@ -431,6 +481,9 @@ export function ChatThread({ chatId }: ChatThreadProps) {
         failedMessage={failedMessage}
         liveSubTasks={liveSubTasks}
         toolActivityByAgent={toolActivityByAgent}
+        thinkingByAgent={thinkingByAgent}
+        isFinalizing={isFinalizing}
+        chartPending={chartPending}
         streamingReplyText={streamingReplyText}
         onRetry={handleRetry}
       />

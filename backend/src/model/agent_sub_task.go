@@ -23,14 +23,19 @@ type AgentSubTask struct {
 	// by the calling model in the conversation's own language — display
 	// only, never part of the hash (StepName is the stable, language-
 	// independent identifier DecisionHash actually uses).
-	Label            *string   `gorm:"column:label" json:"label"`
-	Status           string    `gorm:"column:status" json:"status"`
-	Reasoning        string    `gorm:"column:reasoning" json:"reasoning"`
-	Output           *string   `gorm:"column:output" json:"output"`
-	PrevDecisionHash string    `gorm:"column:prev_decision_hash" json:"prev_decision_hash"`
-	DecisionHash     string    `gorm:"column:decision_hash" json:"decision_hash"`
-	RecordedOnChain  bool      `gorm:"column:recorded_on_chain" json:"recorded_on_chain"`
-	OnChainTxHash    *string   `gorm:"column:on_chain_tx_hash" json:"on_chain_tx_hash"`
+	Label            *string `gorm:"column:label" json:"label"`
+	Status           string  `gorm:"column:status" json:"status"`
+	Reasoning        string  `gorm:"column:reasoning" json:"reasoning"`
+	Output           *string `gorm:"column:output" json:"output"`
+	PrevDecisionHash string  `gorm:"column:prev_decision_hash" json:"prev_decision_hash"`
+	DecisionHash     string  `gorm:"column:decision_hash" json:"decision_hash"`
+	RecordedOnChain  bool    `gorm:"column:recorded_on_chain" json:"recorded_on_chain"`
+	OnChainTxHash    *string `gorm:"column:on_chain_tx_hash" json:"on_chain_tx_hash"`
+	// OnChainSubTaskID is the real id the contract itself assigned in
+	// recordSubTasks's own SubTaskRecorded event — not a Postgres-side
+	// guess. A real executeTrade call must reference this exact value, not
+	// this row's own Postgres ID (docs/plans/agent-trade-execution.md).
+	OnChainSubTaskID *int64    `gorm:"column:on_chain_sub_task_id" json:"on_chain_sub_task_id"`
 	CreatedAt        time.Time `gorm:"column:created_at;autoCreateTime" json:"created_at"`
 }
 

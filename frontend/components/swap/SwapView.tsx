@@ -277,10 +277,13 @@ export function SwapView({ headline }: SwapViewProps) {
 								<input
 									type="number"
 									step="0.1"
+									min="0.1"
+									max="1.0"
 									value={slippage}
-									onChange={(e) =>
-										setSlippage(parseFloat(e.target.value) || 0)
-									}
+									onChange={(e) => {
+										const val = parseFloat(e.target.value) || 0;
+										setSlippage(Math.min(1.0, Math.max(0.1, val)));
+									}}
 									className="input mono !w-[90px] !text-right"
 								/>
 							</div>

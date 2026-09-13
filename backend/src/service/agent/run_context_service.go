@@ -19,6 +19,7 @@ type RunContext struct {
 	OnChainTaskID *int64
 	Wallet        string
 	Recorder      *SubTaskRecorder
+	Locale        string
 	// OnSubTaskStarted fires the instant a step begins, before its actual
 	// work runs — never persisted (SubTaskRecorder only ever writes a step
 	// once it's done, so the hash chain stays exactly as before), purely an

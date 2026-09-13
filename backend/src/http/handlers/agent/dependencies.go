@@ -9,16 +9,26 @@ import (
 )
 
 var taskSvc *agentsvc.TaskService
+var chatSvc *agentsvc.ChatService
 var chartSvc *publicsvc.PortfolioChartReader
 
 func ConfigureServices(s *service.Registry) {
 	taskSvc = s.AgentTask
+	chatSvc = s.AgentChat
 	chartSvc = s.PortfolioChart
 }
 
 func ensureService(c *gin.Context) bool {
 	if taskSvc == nil {
 		response.InternalError(c, "agent task service not configured")
+		return false
+	}
+	return true
+}
+
+func ensureChatService(c *gin.Context) bool {
+	if chatSvc == nil {
+		response.InternalError(c, "agent chat service not configured")
 		return false
 	}
 	return true

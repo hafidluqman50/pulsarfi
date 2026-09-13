@@ -28,8 +28,8 @@ type Registry struct {
 	Stream                 *external.StreamService
 	Price                  *external.PriceService
 	TransferIndexer        *indexersvc.TransferIndexerService
+	AgentChat              *agentsvc.ChatService
 	AgentTask              *agentsvc.TaskService
-	AgentSubTaskRetry      *agentsvc.SubTaskRetryService
 	PortfolioChart         *publicsvc.PortfolioChartReader
 }
 
@@ -53,7 +53,7 @@ func NewRegistry(cfg Config) *Registry {
 			Price:  price,
 		},
 	}
-	agentTaskSvc, agentSubTaskRetrySvc := newAgentTaskServices(cfg.Repos, chartReader)
+	agentChatSvc, agentTaskSvc := newAgentTaskServices(cfg.Repos, chartReader)
 
 	return &Registry{
 		Repos: cfg.Repos,
@@ -116,8 +116,8 @@ func NewRegistry(cfg Config) *Registry {
 			Price:  price,
 			Config: cfg.TransferIndexerConfig,
 		},
-		AgentTask:         agentTaskSvc,
-		AgentSubTaskRetry: agentSubTaskRetrySvc,
-		PortfolioChart:    chartReader,
+		AgentChat:      agentChatSvc,
+		AgentTask:      agentTaskSvc,
+		PortfolioChart: chartReader,
 	}
 }

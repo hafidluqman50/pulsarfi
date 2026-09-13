@@ -1,4 +1,4 @@
-package agenttaskmanager
+package agent
 
 import (
 	"context"
@@ -12,20 +12,23 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/horizonlabs/pulsarfi-backend/src/abi"
+	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
-// Client wraps the abigen-generated AgentTaskManager binding with a real
-// signer (AGENT_WALLET_PRIVATE_KEY) — the piece the old StubAgentContractClient
-// (deleted, docs/plans/agent-orchestration-graph-rebuild.md v2.7) used to
-// stand in for; executor.UnimplementedTaskExecutor still fails loudly for
-// ExecuteTrade specifically, see below. Implements agent.AgentContractClient, agent.ChainClient,
-// and executor.TaskExecutor all at once — all three are narrow views of
-// the same underlying contract calls (ISP for each consumer), satisfied
-// structurally; this package never imports executor to avoid a cycle
-// (executor already imports agent for TradeIntent/TradeSide, and this
-// package imports agent for the same reason — never the reverse).
+// Client wraps the abigen-generated AgentTaskManager binding (src/abi) with
+// a real signer (AGENT_WALLET_PRIVATE_KEY) — the piece the old
+// StubAgentContractClient (deleted, docs/plans/agent-orchestration-graph-rebuild.md
+// v2.7) used to stand in for; executor.UnimplementedTaskExecutor (also since
+// deleted, docs/plans/agent-trade-execution.md) used to stand in for
+// ExecuteTrade specifically, until this Client's own real implementation,
+// below, replaced it. Implements AgentContractClient, ChainClient (both
+// same-package), and executor.TaskExecutor (a different package) all at
+// once — all three are narrow views of the same underlying contract calls
+// (ISP for each consumer), satisfied structurally; executor.TaskExecutor is
+// never imported here, since Go interface satisfaction needs no import from
+// the implementing side.
 //
 // Known simplification, not hidden: nonce management relies on
 // go-ethereum's default PendingNonceAt-per-call behavior (TransactOpts.Nonce
@@ -34,7 +37,7 @@ import (
 // pass, revisit with an explicit nonce manager if throughput ever requires
 // concurrent sends.
 type Client struct {
-	contract   *AgentTaskManager
+	contract   *abi.AgentTaskManager
 	ethClient  *ethclient.Client
 	privateKey *bind.TransactOpts
 	chainID    *big.Int
@@ -45,7 +48,7 @@ type Client struct {
 // if any of these aren't configured — callers should degrade to a stub,
 // matching the existing "disabled, not fatal" pattern already used for
 // DeepSeek/search-tool wiring in service/index.go.
-func NewClientFromEnv(ctx context.Context) (*Client, error) {
+func NewClient(ctx context.Context) (*Client, error) {
 	rpcURL := os.Getenv("ALCHEMY_RPC_URL")
 	if rpcURL == "" {
 		return nil, fmt.Errorf("onchain: ALCHEMY_RPC_URL not set")
@@ -79,7 +82,7 @@ func NewClientFromEnv(ctx context.Context) (*Client, error) {
 		return nil, fmt.Errorf("onchain: build transactor: %w", err)
 	}
 
-	contract, err := NewAgentTaskManager(common.HexToAddress(contractAddr), ethClient)
+	contract, err := abi.NewAgentTaskManager(common.HexToAddress(contractAddr), ethClient)
 	if err != nil {
 		return nil, fmt.Errorf("onchain: bind contract: %w", err)
 	}
@@ -166,22 +169,28 @@ func subTaskStatusEnum(status string) (uint8, error) {
 // RoutingTarget is not currently captured by agent_sub_tasks at all (no
 // such column exists) — passed through as "" until that gap is closed,
 // not invented.
-func (c *Client) RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows []model.AgentSubTask) (string, error) {
-	records := make([]AgentTaskManagerSubTaskRecord, 0, len(rows))
+// RecordSubTasks returns the contract's own assigned ids alongside the tx
+// hash — previously discarded entirely (docs/plans/agent-orchestration-graph-rebuild.md
+// v2.14). Parsed from each row's own SubTaskRecorded event in the mined
+// receipt, in emission order, which the contract guarantees matches the
+// input order (recordSubTasks's own for-loop emits one event per record,
+// in the order given).
+func (c *Client) RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows []model.AgentSubTask) ([]uint64, string, error) {
+	records := make([]abi.AgentTaskManagerSubTaskRecord, 0, len(rows))
 	for _, row := range rows {
 		agentEnum, err := subTaskAgentEnum(row.Agent)
 		if err != nil {
-			return "", err
+			return nil, "", err
 		}
 		statusEnum, err := subTaskStatusEnum(row.Status)
 		if err != nil {
-			return "", err
+			return nil, "", err
 		}
 		output := ""
 		if row.Output != nil {
 			output = *row.Output
 		}
-		records = append(records, AgentTaskManagerSubTaskRecord{
+		records = append(records, abi.AgentTaskManagerSubTaskRecord{
 			TaskId:               new(big.Int).SetUint64(onChainTaskID),
 			Agent:                agentEnum,
 			StepName:             row.StepName,
@@ -198,12 +207,25 @@ func (c *Client) RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows 
 	opts := c.authFor(ctx)
 	tx, err := c.contract.RecordSubTasks(opts, new(big.Int).SetUint64(onChainTaskID), records)
 	if err != nil {
-		return "", fmt.Errorf("onchain: recordSubTasks: %w", err)
+		return nil, "", fmt.Errorf("onchain: recordSubTasks: %w", err)
 	}
-	if _, err := bind.WaitMined(ctx, c.ethClient, tx); err != nil {
-		return "", fmt.Errorf("onchain: wait recordSubTasks: %w", err)
+	receipt, err := bind.WaitMined(ctx, c.ethClient, tx)
+	if err != nil {
+		return nil, "", fmt.Errorf("onchain: wait recordSubTasks: %w", err)
 	}
-	return tx.Hash().Hex(), nil
+
+	subTaskIDs := make([]uint64, 0, len(rows))
+	for _, log := range receipt.Logs {
+		event, err := c.contract.ParseSubTaskRecorded(*log)
+		if err != nil {
+			continue
+		}
+		subTaskIDs = append(subTaskIDs, event.SubTaskId.Uint64())
+	}
+	if len(subTaskIDs) != len(rows) {
+		return nil, "", fmt.Errorf("onchain: recordSubTasks: expected %d SubTaskRecorded events, got %d in receipt %s", len(rows), len(subTaskIDs), tx.Hash())
+	}
+	return subTaskIDs, tx.Hash().Hex(), nil
 }
 
 func (c *Client) CancelTask(ctx context.Context, onChainTaskID uint64) error {
@@ -216,22 +238,80 @@ func (c *Client) CancelTask(ctx context.Context, onChainTaskID uint64) error {
 	return err
 }
 
-// ExecuteTrade is intentionally NOT implemented yet — found to be a real
-// interface gap while wiring this client, not a laziness shortcut.
-// AgentTaskManager.executeTrade needs subTaskId, the ERC20 token address
-// being pulled (the stock token for a sell, IDRX for a buy — resolvable
-// via PulsarProtocol.stocks(ticker)/idrx(), but that is a second
-// contract this package does not yet bind), minimumOutputAmount (slippage
-// protection), and summary — none of which executor.TaskExecutor's
-// current signature (agent.TradeIntent + reasoningHash only) carries.
-// CreateTask/GrantTradePermission/RecordSubTasks/CancelTask/
-// TradePermissionRemaining above are fully real; executor.UnimplementedTaskExecutor
-// (executor/stub_service.go) remains the TaskExecutor implementation
-// service/agent_registry.go wires in until this interface is extended —
-// it fails loudly (ErrTradeExecutionNotImplemented) rather than faking a
-// fill, per the zero-fallback rule.
-func (c *Client) ExecuteTrade(ctx context.Context, onChainTaskID uint, intent agent.TradeIntent, reasoningHash [32]byte) (string, uint64, error) {
-	return "", 0, fmt.Errorf("onchain: executeTrade not implemented — executor.TaskExecutor's interface is missing subTaskId/token/minimumOutputAmount/summary, see this method's own doc comment")
+// tradeSideEnum mirrors AgentTaskManager.sol's TradeSide enum ordering
+// exactly (Buy=0, Sell=1) — same integer-by-declaration-order rule as
+// subTaskAgentEnum/subTaskStatusEnum above.
+func tradeSideEnum(side contracts.TradeSide) uint8 {
+	if side == contracts.TradeSideSell {
+		return 1
+	}
+	return 0
+}
+
+type ExecuteTradeOutput struct {
+	TxHash         string
+	TradeID        uint64
+	BlockNumber    int64
+	LogIndex       int
+	Amount         *big.Int
+	ReceivedAmount *big.Int
+	ProtocolFee    *big.Int
+}
+
+// ExecuteTrade calls the real contract — subTaskID must already be
+// on-chain (SubTaskRecorder.Record is chain-first, docs/plans/agent-orchestration-graph-rebuild.md
+// v2.14, so this is guaranteed by the time submit_trade reaches this call),
+// token is the stock's own ERC20 contract address (used by the contract
+// for a Sell; ignored for a Buy, which always pulls IDRX directly — passed
+// through unconditionally regardless of side, since the contract decides
+// what to do with it), and amount/minimumOutputAmount are already in the
+// correct raw units for the given side (docs/plans/agent-trade-execution.md
+// Gap C — that conversion happens in submit_trade, not here).
+func (c *Client) ExecuteTrade(ctx context.Context, onChainTaskID uint64, subTaskID uint64, token common.Address, ticker string, side contracts.TradeSide, amount *big.Int, minimumOutputAmount *big.Int, summary string, reasoningHash [32]byte) (*ExecuteTradeOutput, error) {
+	if side == contracts.TradeSideBuy {
+		if idrxAddr, err := c.contract.Idrx(nil); err == nil && idrxAddr != (common.Address{}) {
+			token = idrxAddr
+		} else if envIDRX := os.Getenv("IDRX_ADDRESS"); envIDRX != "" {
+			token = common.HexToAddress(envIDRX)
+		}
+	}
+	opts := c.authFor(ctx)
+	tx, err := c.contract.ExecuteTrade(opts,
+		new(big.Int).SetUint64(onChainTaskID),
+		new(big.Int).SetUint64(subTaskID),
+		token, ticker, tradeSideEnum(side), amount, minimumOutputAmount, summary, reasoningHash,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("onchain: executeTrade: %w", err)
+	}
+	receipt, err := bind.WaitMined(ctx, c.ethClient, tx)
+	if err != nil {
+		return nil, fmt.Errorf("onchain: wait executeTrade: %w", err)
+	}
+	for _, log := range receipt.Logs {
+		if event, err := c.contract.ParseTradeExecuted(*log); err == nil {
+			tradeID := event.TradeId.Uint64()
+			out := &ExecuteTradeOutput{
+				TxHash:         tx.Hash().Hex(),
+				TradeID:        tradeID,
+				BlockNumber:    receipt.BlockNumber.Int64(),
+				LogIndex:       int(log.Index),
+				Amount:         amount,
+				ReceivedAmount: minimumOutputAmount,
+				ProtocolFee:    big.NewInt(0),
+			}
+			if tradeRecord, err := c.contract.Trades(&bind.CallOpts{Context: ctx}, event.TradeId); err == nil {
+				if tradeRecord.Amount != nil && tradeRecord.Amount.Sign() > 0 {
+					out.Amount = tradeRecord.Amount
+				}
+				if tradeRecord.ReceivedAmount != nil && tradeRecord.ReceivedAmount.Sign() > 0 {
+					out.ReceivedAmount = tradeRecord.ReceivedAmount
+				}
+			}
+			return out, nil
+		}
+	}
+	return nil, fmt.Errorf("onchain: executeTrade: TradeExecuted event not found in receipt %s", tx.Hash())
 }
 
 // truncateSummary bounds what gets written on-chain as a Sub Task's

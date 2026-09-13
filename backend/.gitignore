@@ -10,6 +10,9 @@ server
 *.test
 *.out
 
+# Persistent log output (src/logger/logger.go)
+logs/
+
 # IDE
 .idea/
 .vscode/

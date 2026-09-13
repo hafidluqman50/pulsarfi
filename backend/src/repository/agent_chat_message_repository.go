@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
@@ -11,6 +12,15 @@ import (
 
 type AgentChatMessageRepository struct {
 	DB *gorm.DB
+}
+
+func (r *AgentChatMessageRepository) FindByID(ctx context.Context, id int64) (model.AgentChatMessage, bool, error) {
+	var message model.AgentChatMessage
+	err := r.DB.WithContext(ctx).First(&message, "id = ?", id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.AgentChatMessage{}, false, nil
+	}
+	return message, err == nil, err
 }
 
 func (r *AgentChatMessageRepository) FindByChatID(ctx context.Context, chatID uuid.UUID) ([]model.AgentChatMessage, error) {

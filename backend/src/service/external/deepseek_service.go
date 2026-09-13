@@ -20,12 +20,18 @@ import (
 // genuine hang into a real error the frontend's toastAgentError can show.
 const requestTimeout = 90 * time.Second
 
-// Model name constants — verified directly against the live API (both
-// accepted, echoed back unchanged in resp.Model), not assumed from docs.
-const (
-	ModelFlash = "deepseek-v4-flash" // cheap, used for the frequent heartbeat judgment call
-	ModelPro   = "deepseek-v4-pro"   // costlier, reserved for the rarer fund-manager analysis call
-)
+// ModelFlash is the only model this app calls. "deepseek-v4-pro" is
+// discontinued 2026-09-14 (per DeepSeek's own notice); confirmed live
+// (matching system_fingerprint against the reported pre-release beta id
+// deepseek-v4.1-flash-expires-on-0910) that "deepseek-flash" is the real
+// V4.1 Flash, not the old V4-Flash under a shortened name, and DeepSeek's
+// own claim that it beats V4-Pro on Pro's own benchmarks holds up under a
+// direct side-by-side test on a real trading-judgment prompt: Pro needed
+// ~3x the token budget just to avoid truncating mid-answer, took ~6x
+// longer, and cost ~7x more for an equivalent conclusion. No second tier
+// exists to route between right now, so there is nothing left for a
+// ModelPro constant to name.
+const ModelFlash = "deepseek-flash" // used for every role — no tiering, one model
 
 // NewDeepSeekChatModelFromEnv builds an Eino-native ToolCallingChatModel
 // backed by DeepSeek's OpenAI-compatible API — the model each role's
@@ -39,7 +45,7 @@ const (
 // constraint with nothing valid left to say. InvokeAgentStructured (the
 // only caller that would actually need structured JSON back) has no
 // callers anywhere in this codebase.
-func NewDeepSeekChatModelFromEnv(ctx context.Context, model string) (einomodel.ToolCallingChatModel, error) {
+func NewDeepSeekChatModel(ctx context.Context, model string) (einomodel.ToolCallingChatModel, error) {
 	key := strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
 	if key == "" {
 		return nil, fmt.Errorf("deepseek: missing DEEPSEEK_API_KEY")
