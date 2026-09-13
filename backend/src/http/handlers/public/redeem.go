@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
+	usermw "github.com/horizonlabs/pulsarfi-backend/src/http/middleware/user"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
 	"github.com/horizonlabs/pulsarfi-backend/src/logger"
 	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
@@ -26,6 +27,12 @@ func RecordRedeemHandler(c *gin.Context) {
 		return
 	}
 
+	claims, ok := usermw.Get(c)
+	if !ok {
+		response.Unauthorized(c, "authentication required")
+		return
+	}
+
 	var req recordRedeemBody
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
@@ -33,17 +40,30 @@ func RecordRedeemHandler(c *gin.Context) {
 	}
 
 	proposal, created, err := publicRedeemSvc.Record(c.Request.Context(), publicsvc.RecordRedeemRequest{
-		OnChainID:       *req.OnChainID,
-		Ticker:          req.Ticker,
-		TokenAmount:     req.TokenAmount,
-		FeeIdrx:         req.FeeIdrx,
-		UserAddress:     req.UserAddress,
-		AttestationHash: req.AttestationHash,
-		TxHash:          req.TxHash,
-		BlockNumber:     req.BlockNumber,
+		OnChainID:           *req.OnChainID,
+		Ticker:              req.Ticker,
+		TokenAmount:         req.TokenAmount,
+		FeeIdrx:             req.FeeIdrx,
+		UserAddress:         req.UserAddress,
+		AttestationHash:     req.AttestationHash,
+		TxHash:              req.TxHash,
+		BlockNumber:         req.BlockNumber,
+		AuthenticatedWallet: claims.WalletAddress,
 	})
 	if errors.Is(err, publicsvc.ErrStockNotFound) {
 		response.NotFound(c, "stock not found")
+		return
+	}
+	if errors.Is(err, publicsvc.ErrWalletMismatch) {
+		response.Forbidden(c, "authenticated wallet does not match user_address")
+		return
+	}
+	if errors.Is(err, publicsvc.ErrOnChainMismatch) {
+		response.UnprocessableEntity(c, "submitted redeem data does not match the on-chain transaction", nil)
+		return
+	}
+	if errors.Is(err, publicsvc.ErrVerifierUnavailable) {
+		response.InternalError(c, "on-chain verification is unavailable, try again later")
 		return
 	}
 	if err != nil {

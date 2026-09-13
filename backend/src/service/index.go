@@ -1,6 +1,8 @@
 package service
 
 import (
+	"log"
+
 	"github.com/horizonlabs/pulsarfi-backend/src/auth"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
@@ -55,6 +57,23 @@ func NewRegistry(cfg Config) *Registry {
 	}
 	agentChatSvc, agentTaskSvc := newAgentTaskServices(cfg.Repos, chartReader)
 
+	// Assign only on success: a failed *external.ChainVerifyService stored in
+	// a nil interface var would make publicsvc.RedeemVerifier(redeemVerifier)
+	// != nil even though the underlying pointer is nil (Go typed-nil trap).
+	var chainVerifier *external.ChainVerifyService
+	if v, err := external.NewChainVerifyServiceFromEnv(); err != nil {
+		log.Printf("chainverify disabled: %v (redeem/swap/transfer recording will reject writes)", err)
+	} else {
+		chainVerifier = v
+	}
+
+	var redeemVerifier publicsvc.RedeemVerifier
+	var swapVerifier publicsvc.SwapVerifier
+	if chainVerifier != nil {
+		redeemVerifier = chainVerifier
+		swapVerifier = chainVerifier
+	}
+
 	return &Registry{
 		Repos: cfg.Repos,
 		Auth: &authsvc.AuthService{
@@ -81,6 +100,7 @@ func NewRegistry(cfg Config) *Registry {
 		PublicStockTransaction: &publicsvc.StockTransactionService{
 			Stocks:       cfg.Repos.Stock,
 			Transactions: cfg.Repos.StockTransaction,
+			Verifier:     swapVerifier,
 		},
 		PublicStats: &publicsvc.StatsService{
 			Transactions: cfg.Repos.StockTransaction,
@@ -91,6 +111,7 @@ func NewRegistry(cfg Config) *Registry {
 			Stocks:            cfg.Repos.Stock,
 			RedeemProposals:   cfg.Repos.RedeemProposal,
 			StockTransactions: cfg.Repos.StockTransaction,
+			Verifier:          redeemVerifier,
 		},
 		CustodianRedeem: &custodiansvc.RedeemService{
 			RedeemProposals:    cfg.Repos.RedeemProposal,
@@ -112,6 +133,7 @@ func NewRegistry(cfg Config) *Registry {
 			Recorder: &publicsvc.StockTransactionService{
 				Stocks:       cfg.Repos.Stock,
 				Transactions: cfg.Repos.StockTransaction,
+				Verifier:     swapVerifier,
 			},
 			Price:  price,
 			Config: cfg.TransferIndexerConfig,
