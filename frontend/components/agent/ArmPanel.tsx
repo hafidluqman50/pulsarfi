@@ -134,7 +134,7 @@ export function ArmPanel({ taskId, isActionable, tokenAddress, tokenSymbol, side
   const managerAddress = process.env.NEXT_PUBLIC_AGENT_TASK_MANAGER_ADDRESS as Address | undefined;
   const needsApproval = isActionable && !!effectiveTokenAddress && !!effectiveRawBudget && !!managerAddress;
 
-  const { data: onChainAllowance, refetch: refetchAllowance } = useReadContract({
+  const { refetch: refetchAllowance } = useReadContract({
     address: effectiveTokenAddress,
     abi: erc20Abi,
     functionName: 'allowance',
@@ -143,10 +143,6 @@ export function ArmPanel({ taskId, isActionable, tokenAddress, tokenSymbol, side
       enabled: Boolean(address && managerAddress && effectiveTokenAddress),
     },
   });
-
-  const hasSufficientAllowance = Boolean(
-    onChainAllowance !== undefined && onChainAllowance >= BigInt(effectiveRawBudget)
-  );
 
   const isArmed = Boolean(initialArmed || currentTask?.armed_at);
   const missingBudget = isActionable && (!budgetDisplay || Number(budgetDisplay) <= 0);
@@ -183,7 +179,12 @@ export function ArmPanel({ taskId, isActionable, tokenAddress, tokenSymbol, side
         });
       }
 
-      if (needsApproval && !hasSufficientAllowance) {
+      // Always approve, unconditionally, on every arm — never skip it based
+      // on a read of current on-chain allowance. A stale/cached read (e.g.
+      // right after the contract address itself changes) can report
+      // "already sufficient" when it is not, silently skipping the one
+      // step that actually grants the new contract spending rights.
+      if (needsApproval) {
         setStep('approving');
         setSubProgress(contract.button_labels.approving);
 
