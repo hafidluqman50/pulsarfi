@@ -143,6 +143,7 @@ func (s *TaskScheduler) dispatchHorizonNotice(ctx context.Context, t dbmodel.Age
 
 	ticker := "ASET"
 	side := "buy"
+	shape := ""
 	if t.TriggerDescription != nil {
 		var td map[string]any
 		if err := json.Unmarshal([]byte(*t.TriggerDescription), &td); err == nil {
@@ -152,7 +153,22 @@ func (s *TaskScheduler) dispatchHorizonNotice(ctx context.Context, t dbmodel.Age
 			if s, ok := td["side"].(string); ok && s != "" {
 				side = s
 			}
+			if sh, ok := td["shape"].(string); ok {
+				shape = sh
+			}
 		}
+	}
+
+	// This notice is written entirely around "your swing position is
+	// nearing its holding horizon" — scalp's own horizon_expires_at is a
+	// same-day trade-permission validity window, not a position anyone is
+	// holding, so it has nothing to prompt an exit/keep decision about.
+	// Still mark it notified so the scheduler stops re-checking it forever.
+	if shape != "swing" && shape != "investment" {
+		if err := s.Tasks.MarkHorizonNotified(ctx, t.ID); err != nil {
+			slog.ErrorContext(ctx, "scheduler: mark non-swing horizon task notified failed", "task_id", t.ID, "error", err)
+		}
+		return
 	}
 
 	hoursLeft := 24
