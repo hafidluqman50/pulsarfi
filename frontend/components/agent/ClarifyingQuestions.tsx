@@ -14,6 +14,10 @@ type IntakeField = {
 type ClarifyingQuestionsProps = {
   uiProps: unknown;
   chatId: string;
+  // When provided, send() and cancelPlan() call this instead of mutating
+  // directly — routes through ChatThread.handleSend so isStreaming and
+  // pendingText are set correctly (streaming indicator + no false retry).
+  onSendPrompt?: (text: string) => void;
 };
 
 function formatNumberWithDots(val: string | number): string {
@@ -49,7 +53,7 @@ const STOCK_PERCENTAGE_PRESETS = [
   { label: '100%', value: '100%' },
 ];
 
-export function ClarifyingQuestions({ uiProps, chatId }: ClarifyingQuestionsProps) {
+export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt }: ClarifyingQuestionsProps) {
   const parsed = uiProps as { questions?: IntakeField[]; card?: CardContract } | undefined;
   const questions = parsed?.questions ?? [];
   const contract = parsed?.card ?? parseCardContract(null);
@@ -90,24 +94,36 @@ export function ClarifyingQuestions({ uiProps, chatId }: ClarifyingQuestionsProp
 
   function cancelPlan() {
     if (isSendingRef.current || sendMessage.isPending) return;
-    isSendingRef.current = true;
+    const cancelText = contract.needs_input.cancel_button || contract.ledger.disarm_button;
     setIsCancelled(true);
-    sendMessage.mutate(contract.needs_input.cancel_button || contract.ledger.disarm_button, {
-      onSettled: () => {
-        isSendingRef.current = false;
-      },
-    });
+    if (onSendPrompt) {
+      onSendPrompt(cancelText);
+    } else {
+      isSendingRef.current = true;
+      sendMessage.mutate(cancelText, {
+        onSettled: () => {
+          isSendingRef.current = false;
+        },
+      });
+    }
   }
 
   function send() {
     if (!allAnswered || isSendingRef.current) return;
-    isSendingRef.current = true;
-    const body = questions.map((q) => `${q.question}: ${draft[q.key].trim()}`).join('\n');
-    sendMessage.mutate(body, {
-      onSettled: () => {
-        isSendingRef.current = false;
-      },
-    });
+    // key: value pairs — concise, not full question text repeated in bubble
+    const body = questions.map((q) => `${q.key}: ${draft[q.key].trim()}`).join('\n');
+    if (onSendPrompt) {
+      // Route through ChatThread.handleSend — sets isStreaming + pendingText,
+      // activating streaming indicator and preventing the false retry state.
+      onSendPrompt(body);
+    } else {
+      isSendingRef.current = true;
+      sendMessage.mutate(body, {
+        onSettled: () => {
+          isSendingRef.current = false;
+        },
+      });
+    }
   }
 
   return (
