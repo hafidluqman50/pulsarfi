@@ -225,7 +225,9 @@ func (o *Orchestrator) updateTask(ctx context.Context, turn *orchestratorTurn, d
 	if decision.Summary == "" {
 		decision.Summary = defaultSummary(side, decision, turn.ResolvedTicker)
 	}
-	triggerDescription, err := buildTriggerDescription(turn, decision, card, side)
+
+	stockContractAddress := o.resolveStockContractAddress(ctx, side, turn.ResolvedTicker)
+	triggerDescription, err := buildTriggerDescription(turn, decision, card, side, stockContractAddress)
 	if err != nil {
 		return fmt.Errorf("orchestrator: marshal updated trigger description: %w", err)
 	}
@@ -345,7 +347,8 @@ func (o *Orchestrator) commitTask(ctx context.Context, turn *orchestratorTurn, d
 		decision.Summary = defaultSummary(side, decision, turn.ResolvedTicker)
 	}
 
-	triggerDescription, err := buildTriggerDescription(turn, decision, card, side)
+	stockContractAddress := o.resolveStockContractAddress(ctx, side, turn.ResolvedTicker)
+	triggerDescription, err := buildTriggerDescription(turn, decision, card, side, stockContractAddress)
 	if err != nil {
 		return turn, fmt.Errorf("orchestrator: marshal trigger description: %w", err)
 	}
@@ -376,10 +379,30 @@ func defaultSummary(side string, decision routeDecision, ticker string) string {
 	return fmt.Sprintf("Buy %s IDRX of %s", decision.BudgetIDRX, ticker)
 }
 
+// resolveStockContractAddress returns the on-chain ERC-20 address for a sell
+// task's stock token. It is called by commitTask and updateTask — both already
+// hold a context — so the single catalog read stays co-located with the rest
+// of the trigger-description build and does not leak into node functions.
+// Returns "" (non-fatal) when: Stocks is nil, ticker is empty, the ticker is
+// not in the catalog, or the stock has no deployed contract yet. The caller
+// writes the result into trigger_description only when non-empty.
+func (o *Orchestrator) resolveStockContractAddress(ctx context.Context, side, ticker string) string {
+	if side != "sell" || ticker == "" || o.Stocks == nil {
+		return ""
+	}
+	stock, found, err := o.Stocks.FindByTickerOrIdxTicker(ctx, ticker)
+	if err != nil || !found || stock.ContractAddress == nil || *stock.ContractAddress == "" {
+		return ""
+	}
+	return *stock.ContractAddress
+}
+
 // buildTriggerDescription maps the settled decision into the JSON blob
 // persisted on the Task row and read back by the frontend card — pure
 // struct-to-JSON mapping, no lookups.
-func buildTriggerDescription(turn *orchestratorTurn, decision routeDecision, card *contracts.CardContract, side string) (string, error) {
+// stockContractAddress is non-empty only for sell tasks; the caller resolves
+// it via o.Stocks before calling here so this function stays IO-free.
+func buildTriggerDescription(turn *orchestratorTurn, decision routeDecision, card *contracts.CardContract, side string, stockContractAddress string) (string, error) {
 	cleanShape := strings.ToLower(strings.TrimSpace(decision.Shape))
 
 	triggerMap := map[string]any{
@@ -410,6 +433,12 @@ func buildTriggerDescription(turn *orchestratorTurn, decision routeDecision, car
 		} else {
 			triggerMap["token_symbol"] = "IDRX"
 		}
+	}
+	// For sell tasks, write the stock token's contract address so the frontend
+	// knows which ERC-20 to approve (ArmPanel reads "stock_contract_address").
+	// Buy tasks never need this — IDRX address is hardcoded in the frontend env.
+	if side == "sell" && stockContractAddress != "" {
+		triggerMap["stock_contract_address"] = stockContractAddress
 	}
 
 	triggerBytes, err := json.Marshal(triggerMap)
