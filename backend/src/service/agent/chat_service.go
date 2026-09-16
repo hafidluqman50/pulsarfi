@@ -2,11 +2,12 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
@@ -14,35 +15,52 @@ import (
 	"gorm.io/datatypes"
 )
 
-// ChatService manages chat threads, message histories, and orchestrates
-// the chat-facing AI turn. Extracted from task_service.go to enforce
-// Single Responsibility: conversation domain stays here, financial task
-// and on-chain execution domain stays in TaskService.
+var ErrChatNotFound = errors.New("agent: chat not found")
+
+// ChatService manages chat threads, user messages, and supervisor replies.
+// It delegates the entire route/analyze/execute/reply turn to Orchestrator —
+// pause and resume are handled natively by Eino's compose.CheckPointStore,
+// never by any hand-rolled state of ChatService's own
+// (docs/plans/quasar-clean-routing-scalp-refactor.md Finding #8). This
+// package never builds LLM prompts or invokes an agent directly; that stays
+// inside Orchestrator.
 type ChatService struct {
 	Chats           *repository.AgentChatRepository
 	ChatMessages    *repository.AgentChatMessageRepository
 	Orchestrator    *Orchestrator
-	CheckPointStore *PostgresCheckPointStore
+	CheckPointStore compose.CheckPointStore
 }
 
-func (s *ChatService) ListChats(ctx context.Context, walletAddress string) ([]model.AgentChat, error) {
-	return s.Chats.FindByOwnerWallet(ctx, strings.ToLower(walletAddress))
+func (s *ChatService) ListChats(ctx context.Context, wallet string) ([]model.AgentChat, error) {
+	return s.Chats.FindByOwnerWallet(ctx, strings.ToLower(wallet))
 }
 
-func (s *ChatService) GetChatMessages(ctx context.Context, chatID uuid.UUID, walletAddress string) ([]model.AgentChatMessage, error) {
+func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID, wallet string) (model.AgentChat, []model.AgentChatMessage, error) {
 	chat, found, err := s.Chats.FindByID(ctx, chatID)
 	if err != nil {
-		return nil, err
+		return model.AgentChat{}, nil, err
 	}
 	if !found {
-		return []model.AgentChatMessage{}, nil
+		return model.AgentChat{}, nil, ErrChatNotFound
 	}
-	if !strings.EqualFold(chat.OwnerWallet, walletAddress) {
-		return nil, ErrWalletMismatch
+	if !strings.EqualFold(chat.OwnerWallet, wallet) {
+		return model.AgentChat{}, nil, ErrWalletMismatch
 	}
-	return s.ChatMessages.FindByChatID(ctx, chatID)
+	messages, err := s.ChatMessages.FindByChatID(ctx, chatID)
+	if err != nil {
+		return model.AgentChat{}, nil, err
+	}
+	return chat, messages, nil
 }
 
+func (s *ChatService) GetChatMessages(ctx context.Context, chatID uuid.UUID, wallet string) ([]model.AgentChatMessage, error) {
+	_, messages, err := s.GetChat(ctx, chatID, wallet)
+	return messages, err
+}
+
+// HandleChatMessage persists the user's message and either resumes a paused
+// graph run or starts a fresh one, depending on whether an active checkpoint
+// exists for this chat.
 func (s *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, events AgentEventCallbacks) (WorkflowCard, error) {
 	chat, err := s.Chats.FindOrCreate(ctx, chatID, strings.ToLower(wallet), truncateRunes(message, 50))
 	if err != nil {
@@ -52,50 +70,10 @@ func (s *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, w
 		return WorkflowCard{}, ErrWalletMismatch
 	}
 
-	// 1. Check for active pending trade checkpoint (HITL)
-	var pendingCP *PendingTradeCheckpoint
-	var hasCheckpoint bool
-	if s.CheckPointStore != nil {
-		pendingCP, hasCheckpoint, _ = s.CheckPointStore.GetPendingTrade(ctx, chatID.String())
-	}
+	hasCheckpoint := s.hasActiveCheckpoint(ctx, chatID)
 
-	// 2. Explicit cancellation intent via structured button action when a trade confirmation is pending
 	if hasCheckpoint && isCancellationAction(message) {
-		_ = s.CheckPointStore.DeletePendingTrade(ctx, chatID.String())
-
-		// Persist user's cancellation message
-		if _, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
-			ChatID: chatID, Sender: "user", ContentType: "text", Content: message,
-		}); err != nil {
-			slog.ErrorContext(ctx, "agent: persist user cancel message failed", "error", err)
-		}
-
-		cancelReply := "Trade plan cancelled. No orders were executed or recorded on-chain."
-		ticker := ""
-		if pendingCP != nil {
-			if pendingCP.ResolvedTicker != "" {
-				ticker = pendingCP.ResolvedTicker
-			} else if pendingCP.MentionedTicker != "" {
-				ticker = pendingCP.MentionedTicker
-			}
-		}
-		if ticker != "" {
-			cancelReply = fmt.Sprintf("Trade plan for %s cancelled. No orders were executed or recorded on-chain.", ticker)
-		}
-
-		if _, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
-			ChatID:      chatID,
-			Sender:      "supervisor",
-			ContentType: "text",
-			Content:     cancelReply,
-		}); err != nil {
-			slog.ErrorContext(ctx, "agent: persist supervisor cancel reply failed", "error", err)
-		}
-
-		if events.OnTextDelta != nil {
-			events.OnTextDelta(cancelReply)
-		}
-		return WorkflowCard{Reply: cancelReply, ContentType: "text"}, nil
+		return s.handleCancellation(ctx, chatID, message, events)
 	}
 
 	existingMessages, err := s.ChatMessages.FindByChatID(ctx, chatID)
@@ -110,7 +88,7 @@ func (s *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, w
 		return WorkflowCard{}, fmt.Errorf("agent: persist user message: %w", err)
 	}
 
-	return s.runForMessage(ctx, chatID, userMessage, append(existingMessages, userMessage), strings.ToLower(wallet), events, pendingCP)
+	return s.runForMessage(ctx, chatID, userMessage, append(existingMessages, userMessage), strings.ToLower(wallet), events)
 }
 
 func (s *ChatService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string, events AgentEventCallbacks) (WorkflowCard, error) {
@@ -137,46 +115,56 @@ func (s *ChatService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wa
 		return WorkflowCard{}, ErrNothingToRetry
 	}
 
-	var pendingCP *PendingTradeCheckpoint
-	if s.CheckPointStore != nil {
-		pendingCP, _, _ = s.CheckPointStore.GetPendingTrade(ctx, chatID.String())
-	}
-
-	return s.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet), events, pendingCP)
+	return s.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet), events)
 }
 
-// runForMessage delegates the whole route/analyze/execute/reply turn to the
-// Orchestrator (orchestrator_service.go) — build history, call the graph, persist the
-// reply. The Orchestrator owns Task creation, hash-chain recording, and the
-// on-chain createTask/RecordSubTasks calls itself.
-func (s *ChatService) runForMessage(ctx context.Context, chatID uuid.UUID, userMessage model.AgentChatMessage, allMessages []model.AgentChatMessage, wallet string, events AgentEventCallbacks, pendingCP *PendingTradeCheckpoint) (WorkflowCard, error) {
-	sourceMessageID := userMessage.ID
+func (s *ChatService) hasActiveCheckpoint(ctx context.Context, chatID uuid.UUID) bool {
+	cpStore, ok := s.CheckPointStore.(ExtendedCheckPointStore)
+	if !ok {
+		return false
+	}
+	has, _ := cpStore.Has(ctx, chatID.String())
+	return has
+}
 
-	history := make([]*schema.Message, len(allMessages))
-	for i, m := range allMessages {
-		if m.Sender == "user" {
-			history[i] = schema.UserMessage(m.Content)
-		} else {
-			history[i] = schema.AssistantMessage(m.Content, nil)
-		}
+func (s *ChatService) handleCancellation(ctx context.Context, chatID uuid.UUID, message string, events AgentEventCallbacks) (WorkflowCard, error) {
+	if cpStore, ok := s.CheckPointStore.(ExtendedCheckPointStore); ok {
+		_ = cpStore.Delete(ctx, chatID.String())
 	}
 
-	result, err := s.Orchestrator.Run(ctx, OrchestratorInput{
-		ChatID:              chatID,
-		Wallet:              wallet,
-		RawPrompt:           userMessage.Content,
-		Messages:            history,
-		SourceMessageID:     &sourceMessageID,
-		AgentEventCallbacks: events,
-	})
+	if _, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+		ChatID: chatID, Sender: "user", ContentType: "text", Content: message,
+	}); err != nil {
+		slog.ErrorContext(ctx, "agent: persist user cancel message failed", "error", err)
+	}
+
+	existingMessages, _ := s.ChatMessages.FindByChatID(ctx, chatID)
+	cancelReply := s.generateCancellationReply(ctx, "the asset", existingMessages)
+
+	if _, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+		ChatID:      chatID,
+		Sender:      "supervisor",
+		ContentType: "text",
+		Content:     cancelReply,
+	}); err != nil {
+		slog.ErrorContext(ctx, "agent: persist supervisor cancel reply failed", "error", err)
+	}
+
+	if events.OnTextDelta != nil {
+		events.OnTextDelta(cancelReply)
+	}
+	return WorkflowCard{Reply: cancelReply, ContentType: "text"}, nil
+}
+
+// runForMessage delegates the whole turn to Orchestrator. If an active pause
+// exists in CheckPointStore, it resumes via Orchestrator.ResumeRoute (feeding
+// the new message in as the answer to whatever was pending) rather than
+// starting a fresh, stateless decision from the full message history.
+func (s *ChatService) runForMessage(ctx context.Context, chatID uuid.UUID, userMessage model.AgentChatMessage, allMessages []model.AgentChatMessage, wallet string, events AgentEventCallbacks) (WorkflowCard, error) {
+	sourceMessageID := userMessage.ID
+
+	result, err := s.resumeOrRun(ctx, chatID, userMessage, allMessages, wallet, sourceMessageID, events)
 	if err != nil {
-		// Zero fallback (docs/plans/agent-orchestration-graph-rebuild.md v2.5):
-		// the failure itself is never hidden or faked, but the user must
-		// still hear about it from Quasar, in the chat, not just a generic
-		// system string surfaced by the transport layer. Persisted like any
-		// other supervisor reply — visible on reload, not just a one-time
-		// toast — deliberately a static string, never a second LLM call,
-		// since the thing that just failed might be the LLM/API itself.
 		if _, persistErr := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
 			ChatID:      chatID,
 			Sender:      "supervisor",
@@ -188,42 +176,38 @@ func (s *ChatService) runForMessage(ctx context.Context, chatID uuid.UUID, userM
 		return WorkflowCard{}, fmt.Errorf("agent: orchestrator run failed: %w", err)
 	}
 
-	// Handle Checkpoint lifecycle
-	if s.CheckPointStore != nil {
-		if result.ContentType == "workflow_card" {
-			// Confirmation gate active: save or update checkpoint
-			newCP := PendingTradeCheckpoint{
-				ChatID:           chatID,
-				MentionedTicker:  result.Decision.MentionedTicker,
-				ResolvedTicker:   result.ResolvedTicker,
-				Shape:            result.Decision.Shape,
-				Side:             result.Decision.Side,
-				Summary:          result.Decision.Summary,
-				PendingQuestions: result.PendingQuestions,
-				CreatedAt:        time.Now(),
-			}
-			_ = s.CheckPointStore.SetPendingTrade(ctx, chatID.String(), newCP)
-		} else if result.TaskID != 0 {
-			// Trade confirmed and executed: delete checkpoint
-			_ = s.CheckPointStore.DeletePendingTrade(ctx, chatID.String())
-		} else if pendingCP != nil {
-			// Side-question or informational turn: retain checkpoint (keep-alive)
-			// and append footnote reminder about the pending trade.
-			ticker := pendingCP.ResolvedTicker
-			if ticker == "" {
-				ticker = pendingCP.MentionedTicker
-			}
-			reminder := "\n\n*Catatan: Rencana trading Anda di atas masih menunggu konfirmasi. Anda dapat melanjutkan kapan saja melalui kartu konfirmasi atau chat.*"
-			if ticker != "" {
-				reminder = fmt.Sprintf("\n\n*Catatan: Rencana trading %s Anda masih menunggu konfirmasi. Anda dapat melanjutkan kapan saja melalui kartu konfirmasi atau chat.*", ticker)
-			}
-			result.Reply += reminder
-			if events.OnTextDelta != nil {
-				events.OnTextDelta(reminder)
+	return s.persistSupervisorReply(ctx, chatID, result)
+}
+
+func (s *ChatService) resumeOrRun(ctx context.Context, chatID uuid.UUID, userMessage model.AgentChatMessage, allMessages []model.AgentChatMessage, wallet string, sourceMessageID int64, events AgentEventCallbacks) (OrchestratorResult, error) {
+	if cpStore, ok := s.CheckPointStore.(ExtendedCheckPointStore); ok {
+		if has, hErr := cpStore.Has(ctx, chatID.String()); hErr == nil && has {
+			if interruptID, found, _ := cpStore.GetInterruptID(ctx, chatID.String()); found && interruptID != "" {
+				return s.Orchestrator.ResumeRoute(ctx, chatID, interruptID, userMessage.Content, wallet, &sourceMessageID, events)
 			}
 		}
 	}
 
+	history := make([]*schema.Message, len(allMessages))
+	for i, m := range allMessages {
+		if m.Sender == "user" {
+			history[i] = schema.UserMessage(m.Content)
+		} else {
+			history[i] = schema.AssistantMessage(m.Content, nil)
+		}
+	}
+
+	return s.Orchestrator.Run(ctx, OrchestratorInput{
+		ChatID:              chatID,
+		Wallet:              wallet,
+		RawPrompt:           userMessage.Content,
+		Messages:            history,
+		SourceMessageID:     &sourceMessageID,
+		AgentEventCallbacks: events,
+	})
+}
+
+func (s *ChatService) persistSupervisorReply(ctx context.Context, chatID uuid.UUID, result OrchestratorResult) (WorkflowCard, error) {
 	card := WorkflowCard{TaskID: result.TaskID, Reply: result.Reply, ContentType: result.ContentType, UIProps: result.UIProps}
 	if result.UIComponent != "" {
 		component := result.UIComponent
@@ -253,8 +237,48 @@ func (s *ChatService) runForMessage(ctx context.Context, chatID uuid.UUID, userM
 	return card, nil
 }
 
-// isCancellationAction detects whether a user message signals intent to abort
-// an open trade confirmation via explicit button payload.
+func (s *ChatService) generateCancellationReply(ctx context.Context, ticker string, history []model.AgentChatMessage) string {
+	if s.Orchestrator == nil || s.Orchestrator.ReplyModel == nil {
+		return ""
+	}
+
+	var chatHistory []*schema.Message
+	limit := 10
+	if len(history) < limit {
+		limit = len(history)
+	}
+	for _, m := range history[len(history)-limit:] {
+		if m.Sender == "user" {
+			chatHistory = append(chatHistory, schema.UserMessage(m.Content))
+		} else {
+			chatHistory = append(chatHistory, schema.AssistantMessage(m.Content, nil))
+		}
+	}
+
+	target := ticker
+	if target == "" {
+		target = "the asset"
+	}
+
+	systemPrompt := fmt.Sprintf(`You are Quasar, PulsarFi's AI trading assistant.
+The user has explicitly cancelled the pending trade confirmation for %s.
+
+CRITICAL USER-DRIVEN LANGUAGE POLICY:
+Detect and mirror 100%% the user's active language from the chat history (Indonesian, English, Javanese, Turkish, Japanese, etc.).
+NEVER hardcode or assume any single language. Do NOT use em dashes.
+Produce a single friendly, professional confirmation sentence stating that the trade plan for %s has been cancelled and no orders or on-chain transactions were executed.
+Return ONLY the confirmation sentence, with no markdown fences, greetings, or extra commentary.`, target, target)
+
+	msgs := append([]*schema.Message{schema.SystemMessage(systemPrompt)}, chatHistory...)
+	resp, err := s.Orchestrator.ReplyModel.Generate(ctx, msgs)
+	if err == nil && resp != nil && strings.TrimSpace(resp.Content) != "" {
+		return strings.TrimSpace(resp.Content)
+	}
+	return ""
+}
+
+// isCancellationAction detects whether a user message signals intent to
+// abort an open trade confirmation, via an explicit button payload.
 func isCancellationAction(msg string) bool {
 	lower := strings.ToLower(strings.TrimSpace(msg))
 	if lower == "" {
@@ -262,6 +286,8 @@ func isCancellationAction(msg string) bool {
 	}
 	return lower == "cancel" ||
 		lower == "cancel_trade" ||
+		lower == "batal" ||
+		lower == "batalkan" ||
 		strings.Contains(lower, `"action":"cancel"`) ||
 		strings.Contains(lower, `"action":"cancel_trade"`) ||
 		strings.Contains(lower, `"action": "cancel"`) ||

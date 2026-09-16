@@ -27,6 +27,15 @@ type AgentTask struct {
 	CreatedAt  time.Time  `gorm:"column:created_at;autoCreateTime" json:"created_at"`
 	UpdatedAt  time.Time  `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
 	ExecutedAt *time.Time `gorm:"column:executed_at" json:"executed_at"`
+
+	// Standing orders (DCA) and horizon guardrails
+	IsRecurring       bool       `gorm:"column:is_recurring;default:false" json:"is_recurring"`
+	CooldownSec       int32      `gorm:"column:cooldown_sec;default:0" json:"cooldown_sec"`
+	MaxPerTrade       int64      `gorm:"column:max_per_trade;default:0" json:"max_per_trade"`
+	NextRunAt         *time.Time `gorm:"column:next_run_at" json:"next_run_at"`
+	HorizonExpiresAt  *time.Time `gorm:"column:horizon_expires_at" json:"horizon_expires_at"`
+	HorizonNotifiedAt *time.Time `gorm:"column:horizon_notified_at" json:"horizon_notified_at"`
+	ExitPolicy        string     `gorm:"column:exit_policy;default:'undecided'" json:"exit_policy"`
 }
 
 func (AgentTask) TableName() string { return "agent_tasks" }

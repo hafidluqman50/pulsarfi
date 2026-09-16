@@ -28,9 +28,14 @@ export type CardFootnotes = {
 };
 
 export type CardNeedsInput = {
+  title?: string;
   notice: string;
   placeholder: string;
   button: string;
+  sending_button?: string;
+  cancel_button?: string;
+  cancelled_title?: string;
+  cancelled_desc?: string;
 };
 
 export type CardLedger = {
@@ -72,6 +77,26 @@ export type CardContract = {
   needs_input: CardNeedsInput;
   status_labels: Record<string, string>;
   ledger: CardLedger;
+
+  // Dynamic Guardrails & Shape-Aware UI (100% User-Driven Language)
+  shape_badge?: string;
+  guardrail_label?: string;
+  guardrail_hide_label?: string;
+  recurring_label?: string;
+  max_per_trade_label?: string;
+  max_per_trade_placeholder?: string;
+  cooldown_label?: string;
+  cooldown_none_option?: string;
+  cooldown_1h_option?: string;
+  cooldown_4h_option?: string;
+  cooldown_1d_option?: string;
+  cooldown_1w_option?: string;
+  horizon_label?: string;
+  horizon_notice?: string;
+  sell_budget_label?: string;
+  sell_budget_placeholder?: string;
+  sell_arm_description?: string;
+  sell_presets?: CardPreset[];
 };
 
 const DEFAULT_CARD_CONTRACT: CardContract = {
@@ -122,10 +147,15 @@ const DEFAULT_CARD_CONTRACT: CardContract = {
     execution_failed: 'Order could not be executed on-chain. Comet sent the details to the chat message above.',
   },
   needs_input: {
+    title: 'Additional Information Required',
     notice:
       'This Sub Task has status needs_input. Parameters cannot be guessed — execution cannot be armed while required information is missing.',
     placeholder: 'Your answer',
     button: 'Send answer',
+    sending_button: 'Sending answer…',
+    cancel_button: 'Cancel',
+    cancelled_title: 'Questions Cancelled',
+    cancelled_desc: 'Questionnaire cancelled by user.',
   },
   status_labels: {
     done: 'DONE',
@@ -158,6 +188,30 @@ const DEFAULT_CARD_CONTRACT: CardContract = {
     pause_button: 'Pause',
     disarm_button: 'Disarm',
   },
+  shape_badge: 'Trading Plan',
+  guardrail_label: 'DCA & Transaction Limits (Optional)',
+  guardrail_hide_label: 'Hide Guardrail & DCA Options',
+  recurring_label: 'Recurring Execution (DCA)',
+  max_per_trade_label: 'Max per Trade ({token})',
+  max_per_trade_placeholder: 'Unlimited (entire budget)',
+  cooldown_label: 'Cooldown Between Trades',
+  cooldown_none_option: 'No Cooldown (All at once)',
+  cooldown_1h_option: '1 Hour',
+  cooldown_4h_option: '4 Hours',
+  cooldown_1d_option: '1 Day (24 Hours)',
+  cooldown_1w_option: '7 Days (1 Week)',
+  horizon_label: 'Holding Horizon',
+  horizon_notice: 'Proactive Alert: You will be notified 24 hours prior to horizon expiry to decide whether to exit or hold.',
+  sell_budget_label: 'Stock Sale Quantity Limit ({token})',
+  sell_budget_placeholder: 'e.g. 10',
+  sell_arm_description: 'Your stock tokens never leave your wallet before execution occurs. You are granting an allowance limit that the smart contract pulls upon execution, strictly capped, and revokable at any time.',
+  sell_presets: [
+    { label: '1 Token', value: '1' },
+    { label: '5 Tokens', value: '5' },
+    { label: '10 Tokens', value: '10' },
+    { label: '50 Tokens', value: '50' },
+    { label: '100 Tokens', value: '100' },
+  ],
 };
 
 export function parseCardContract(task?: { trigger_description?: string | null } | null): CardContract {
@@ -211,6 +265,24 @@ export function parseCardContract(task?: { trigger_description?: string | null }
         ...DEFAULT_CARD_CONTRACT.ledger,
         ...(c.ledger || {}),
       },
+      shape_badge: c.shape_badge || DEFAULT_CARD_CONTRACT.shape_badge,
+      guardrail_label: c.guardrail_label || DEFAULT_CARD_CONTRACT.guardrail_label,
+      guardrail_hide_label: c.guardrail_hide_label || DEFAULT_CARD_CONTRACT.guardrail_hide_label,
+      recurring_label: c.recurring_label || DEFAULT_CARD_CONTRACT.recurring_label,
+      max_per_trade_label: c.max_per_trade_label || DEFAULT_CARD_CONTRACT.max_per_trade_label,
+      max_per_trade_placeholder: c.max_per_trade_placeholder || DEFAULT_CARD_CONTRACT.max_per_trade_placeholder,
+      cooldown_label: c.cooldown_label || DEFAULT_CARD_CONTRACT.cooldown_label,
+      cooldown_none_option: c.cooldown_none_option || DEFAULT_CARD_CONTRACT.cooldown_none_option,
+      cooldown_1h_option: c.cooldown_1h_option || DEFAULT_CARD_CONTRACT.cooldown_1h_option,
+      cooldown_4h_option: c.cooldown_4h_option || DEFAULT_CARD_CONTRACT.cooldown_4h_option,
+      cooldown_1d_option: c.cooldown_1d_option || DEFAULT_CARD_CONTRACT.cooldown_1d_option,
+      cooldown_1w_option: c.cooldown_1w_option || DEFAULT_CARD_CONTRACT.cooldown_1w_option,
+      horizon_label: c.horizon_label || DEFAULT_CARD_CONTRACT.horizon_label,
+      horizon_notice: c.horizon_notice || DEFAULT_CARD_CONTRACT.horizon_notice,
+      sell_budget_label: c.sell_budget_label || DEFAULT_CARD_CONTRACT.sell_budget_label,
+      sell_budget_placeholder: c.sell_budget_placeholder || DEFAULT_CARD_CONTRACT.sell_budget_placeholder,
+      sell_arm_description: c.sell_arm_description || DEFAULT_CARD_CONTRACT.sell_arm_description,
+      sell_presets: Array.isArray(c.sell_presets) && c.sell_presets.length > 0 ? c.sell_presets : DEFAULT_CARD_CONTRACT.sell_presets,
     };
   } catch {
     return DEFAULT_CARD_CONTRACT;

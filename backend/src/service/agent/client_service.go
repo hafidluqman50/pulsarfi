@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -30,17 +31,15 @@ import (
 // never imported here, since Go interface satisfaction needs no import from
 // the implementing side.
 //
-// Known simplification, not hidden: nonce management relies on
-// go-ethereum's default PendingNonceAt-per-call behavior (TransactOpts.Nonce
-// left nil). That is correct for serial calls but not safe under truly
-// concurrent submissions from the same AGENT_WALLET — acceptable for this
-// pass, revisit with an explicit nonce manager if throughput ever requires
-// concurrent sends.
+// Nonce synchronization: a sync.Mutex protects all mutating on-chain
+// submissions signed by AGENT_WALLET, ensuring serial execution and preventing
+// nonce collisions under concurrent chat turns.
 type Client struct {
 	contract   *abi.AgentTaskManager
 	ethClient  *ethclient.Client
 	privateKey *bind.TransactOpts
 	chainID    *big.Int
+	mu         sync.Mutex
 }
 
 // NewClientFromEnv dials ALCHEMY_RPC_URL, loads AGENT_WALLET_PRIVATE_KEY,
@@ -99,6 +98,9 @@ func (c *Client) authFor(ctx context.Context) *bind.TransactOpts {
 }
 
 func (c *Client) CreateTask(ctx context.Context, owner string, isActionable bool, summary string, promptHash [32]byte) (uint64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	opts := c.authFor(ctx)
 	tx, err := c.contract.CreateTask(opts, common.HexToAddress(owner), isActionable, summary, promptHash)
 	if err != nil {
@@ -116,13 +118,49 @@ func (c *Client) CreateTask(ctx context.Context, owner string, isActionable bool
 	return 0, fmt.Errorf("onchain: createTask: TaskCreated event not found in receipt %s", tx.Hash())
 }
 
-func (c *Client) GrantTradePermission(ctx context.Context, onChainTaskID uint64, totalBudget string, duration time.Duration) error {
+// MarkActionable flips a Task from informational to actionable on-chain —
+// needed because a Task can open before its own parameters are fully known
+// (Supervisor's intake may still be gathering answers), so isActionable at
+// createTask time can genuinely still be false when the request turns out
+// actionable once the user finishes answering.
+func (c *Client) MarkActionable(ctx context.Context, onChainTaskID uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	opts := c.authFor(ctx)
+	tx, err := c.contract.MarkActionable(opts, new(big.Int).SetUint64(onChainTaskID))
+	if err != nil {
+		return fmt.Errorf("onchain: markActionable: %w", err)
+	}
+	_, err = bind.WaitMined(ctx, c.ethClient, tx)
+	return err
+}
+
+func (c *Client) GrantTradePermission(ctx context.Context, onChainTaskID uint64, totalBudget string, duration time.Duration, maxAmountPerTrade string, cooldownInterval uint32) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Idempotency check: if trade permission was already confirmed on-chain
+	// (e.g. previous network timeout or retry), treat as success.
+	optsCall := &bind.CallOpts{Context: ctx}
+	if perm, err := c.contract.TradePermissions(optsCall, new(big.Int).SetUint64(onChainTaskID)); err == nil && perm.ExpiresAt > 0 {
+		return nil
+	}
+
 	budget, ok := new(big.Int).SetString(totalBudget, 10)
 	if !ok {
 		return fmt.Errorf("onchain: grantTradePermission: invalid totalBudget %q", totalBudget)
 	}
+	maxTrade := big.NewInt(0)
+	if maxAmountPerTrade != "" {
+		if m, ok := new(big.Int).SetString(maxAmountPerTrade, 10); ok {
+			maxTrade = m
+		}
+	}
+	cooldown := big.NewInt(int64(cooldownInterval))
+
 	opts := c.authFor(ctx)
-	tx, err := c.contract.GrantTradePermission(opts, new(big.Int).SetUint64(onChainTaskID), budget, big.NewInt(int64(duration.Seconds())))
+	tx, err := c.contract.GrantTradePermission(opts, new(big.Int).SetUint64(onChainTaskID), budget, big.NewInt(int64(duration.Seconds())), maxTrade, cooldown)
 	if err != nil {
 		return fmt.Errorf("onchain: grantTradePermission: %w", err)
 	}
@@ -176,6 +214,9 @@ func subTaskStatusEnum(status string) (uint8, error) {
 // input order (recordSubTasks's own for-loop emits one event per record,
 // in the order given).
 func (c *Client) RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows []model.AgentSubTask) ([]uint64, string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	records := make([]abi.AgentTaskManagerSubTaskRecord, 0, len(rows))
 	for _, row := range rows {
 		agentEnum, err := subTaskAgentEnum(row.Agent)
@@ -229,6 +270,9 @@ func (c *Client) RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows 
 }
 
 func (c *Client) CancelTask(ctx context.Context, onChainTaskID uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	opts := c.authFor(ctx)
 	tx, err := c.contract.CancelTask(opts, new(big.Int).SetUint64(onChainTaskID))
 	if err != nil {
@@ -268,6 +312,8 @@ type ExecuteTradeOutput struct {
 // correct raw units for the given side (docs/plans/agent-trade-execution.md
 // Gap C — that conversion happens in submit_trade, not here).
 func (c *Client) ExecuteTrade(ctx context.Context, onChainTaskID uint64, subTaskID uint64, token common.Address, ticker string, side contracts.TradeSide, amount *big.Int, minimumOutputAmount *big.Int, summary string, reasoningHash [32]byte) (*ExecuteTradeOutput, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if side == contracts.TradeSideBuy {
 		if idrxAddr, err := c.contract.Idrx(nil); err == nil && idrxAddr != (common.Address{}) {
 			token = idrxAddr

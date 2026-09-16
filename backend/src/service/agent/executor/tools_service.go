@@ -43,25 +43,29 @@ const (
 // computing. For a Sell, amount itself must be converted from IDRX-
 // equivalent to stock-token raw units — the contract's Sell branch pulls
 // `amount` directly as the stock token quantity, not an IDRX figure.
-func convertTradeAmounts(side contracts.TradeSide, idrxAmountRaw *big.Int, idrxPerWholeStock float64) (amount, minimumOutputAmount *big.Int, err error) {
+func convertTradeAmounts(side contracts.TradeSide, rawInputAmount *big.Int, idrxPerWholeStock float64) (amount, minimumOutputAmount *big.Int, err error) {
 	if idrxPerWholeStock <= 0 {
 		return nil, nil, fmt.Errorf("convertTradeAmounts: non-positive spot price %v", idrxPerWholeStock)
 	}
-	price := big.NewFloat(idrxPerWholeStock)
-	idrxDisplay := new(big.Float).Quo(new(big.Float).SetInt(idrxAmountRaw), big.NewFloat(math.Pow10(idrxDecimals)))
-	wholeStock := new(big.Float).Quo(idrxDisplay, price)
 
 	if side == contracts.TradeSideSell {
+		// If rawInputAmount is already in 18 decimals (e.g. >= 10^14), use directly.
+		// If it was in IDRX base units (2 decimals), convert IDRX -> wholeStock -> 18 decimals:
+		threshold := new(big.Int).Exp(big.NewInt(10), big.NewInt(14), nil)
+		if rawInputAmount.Cmp(threshold) >= 0 {
+			return new(big.Int).Set(rawInputAmount), big.NewInt(1), nil
+		}
+		price := big.NewFloat(idrxPerWholeStock)
+		idrxDisplay := new(big.Float).Quo(new(big.Float).SetInt(rawInputAmount), big.NewFloat(math.Pow10(idrxDecimals)))
+		wholeStock := new(big.Float).Quo(idrxDisplay, price)
 		stockRaw := new(big.Float).Mul(wholeStock, big.NewFloat(math.Pow10(stockDecimals)))
 		convertedAmount, _ := stockRaw.Int(nil)
-		// For AMM execution on testnet pools, enforce a non-zero floor (1 wei) to prevent
-		// SlippageExceeded reverts caused by constant-product curve price impact.
 		return convertedAmount, big.NewInt(1), nil
 	}
 
 	// For Buy trades, send IDRX raw amount with minimumOutputAmount = 1 to guarantee execution
 	// against AMM liquidity without SlippageExceeded reverts.
-	return new(big.Int).Set(idrxAmountRaw), big.NewInt(1), nil
+	return new(big.Int).Set(rawInputAmount), big.NewInt(1), nil
 }
 
 // holdingsRequest takes no wallet on purpose. The owner's address comes
@@ -193,7 +197,7 @@ func newBalanceTool(balances BalanceReader) (tool.InvokableTool, error) {
 type submitTradeRequest struct {
 	Ticker    string `json:"ticker" jsonschema_description:"The exact ticker to trade — your own conclusion, matching the Task's trigger. Must be a real, existing ticker."`
 	Side      string `json:"side" jsonschema_description:"buy or sell — your own conclusion, matching the Task's trigger."`
-	Amount    string `json:"amount" jsonschema_description:"IDRX-equivalent amount to act with this cycle. Clamped server-side to the Task's remaining TradePermission headroom regardless of what you request."`
+	Amount    string `json:"amount" jsonschema_description:"For BUY: IDRX budget amount to spend (e.g. \"5000000\"). For SELL: Quantity of whole stock tokens to sell (e.g. \"20\"). Clamped server-side to the Task's remaining TradePermission headroom regardless of what you request."`
 	Reasoning string `json:"reasoning" jsonschema_description:"Short, specific reasoning citing the evidence and severity that justified this exact ticker, side, and amount — never a generic restatement of the trigger condition."`
 	Label     string `json:"label" jsonschema_description:"A short, human-readable description of this trade, in the same language you are replying to the user in — e.g. 'Menjual 20% BRPT' or 'Selling 20% of BRPT'. Shown to the user as this step's title."`
 }
@@ -202,16 +206,32 @@ type submitTradeResponse struct {
 	TxHash string `json:"tx_hash"`
 }
 
+// parseAmountToInt parses integer or decimal/float strings into big.Int safely.
+func parseAmountToInt(amount string) (*big.Int, bool) {
+	amount = strings.TrimSpace(amount)
+	if amount == "" {
+		return nil, false
+	}
+	if i, ok := new(big.Int).SetString(amount, 10); ok {
+		return i, true
+	}
+	if f, ok := new(big.Float).SetString(amount); ok {
+		i, _ := f.Int(nil)
+		return i, true
+	}
+	return nil, false
+}
+
 // clampToRemaining returns the smaller of amount/remaining as a decimal
 // string, treating an unparseable amount as zero — never lets a malformed
 // LLM-supplied number fall through as an unbounded value.
 func clampToRemaining(amount, remaining string) string {
-	amountInt, ok := new(big.Int).SetString(amount, 10)
-	if !ok {
+	amountInt, ok := parseAmountToInt(amount)
+	if !ok || amountInt.Sign() <= 0 {
 		return "0"
 	}
-	remainingInt, ok := new(big.Int).SetString(remaining, 10)
-	if !ok {
+	remainingInt, ok := parseAmountToInt(remaining)
+	if !ok || remainingInt.Sign() <= 0 {
 		return "0"
 	}
 	if amountInt.Cmp(remainingInt) > 0 {
@@ -253,18 +273,44 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 				return submitTradeResponse{}, fmt.Errorf("submit_trade: %q has no on-chain contract address yet, cannot trade", stock.Ticker)
 			}
 
+			side := contracts.TradeSideSell
+			if req.Side == "buy" {
+				side = contracts.TradeSideBuy
+			}
+
 			remaining, err := exec.TradePermissionRemaining(ctx, uint(*rc.OnChainTaskID))
 			if err != nil {
 				return submitTradeResponse{}, fmt.Errorf("submit_trade: read remaining TradePermission: %w", err)
 			}
 			rawAmount := req.Amount
-			if amtInt, ok := new(big.Int).SetString(req.Amount, 10); ok {
-				if remInt, remOk := new(big.Int).SetString(remaining, 10); remOk {
-					scaled := new(big.Int).Mul(amtInt, big.NewInt(100))
-					// If amount was given in display IDRX without 2 decimals (e.g. "20000000" for 20M IDRX),
-					// and multiplying by 100 fits within remaining on-chain budget, scale to raw units.
-					if amtInt.Cmp(remInt) < 0 && scaled.Cmp(remInt) <= 0 {
-						rawAmount = scaled.String()
+			if amtInt, ok := parseAmountToInt(req.Amount); ok {
+				if remInt, remOk := parseAmountToInt(remaining); remOk {
+					if side == contracts.TradeSideBuy {
+						scaled := new(big.Int).Mul(amtInt, big.NewInt(100))
+						// If amount was given in display IDRX without 2 decimals (e.g. "20000000" for 20M IDRX),
+						// and multiplying by 100 fits within remaining on-chain budget, scale to raw units.
+						if amtInt.Cmp(remInt) < 0 && scaled.Cmp(remInt) <= 0 {
+							rawAmount = scaled.String()
+						}
+					} else {
+						// For Sell: if amount was given in whole stock units (e.g. "20"), scale to 18 decimals
+						scaledStock := new(big.Int).Mul(amtInt, new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
+						if amtInt.Cmp(remInt) < 0 && scaledStock.Cmp(remInt) <= 0 {
+							rawAmount = scaledStock.String()
+						} else if amtInt.Cmp(remInt) > 0 {
+							// If Comet passed IDRX value instead of stock units,
+							// convert IDRX value to whole stock tokens via spot price.
+							if stockPrice, err := prices.OnchainSpotPrice(ctx, stock.Ticker); err == nil && stockPrice > 0 {
+								tokensFromIdrx := float64(amtInt.Int64()) / stockPrice
+								wholeTokens := int64(math.Round(tokensFromIdrx))
+								if wholeTokens > 0 {
+									calculatedStock := new(big.Int).Mul(big.NewInt(wholeTokens), new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
+									if calculatedStock.Cmp(remInt) <= 0 {
+										rawAmount = calculatedStock.String()
+									}
+								}
+							}
+						}
 					}
 				}
 			}
@@ -283,10 +329,6 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 					"submit_trade: task has no spendable trade permission (remaining budget is 0) — it has not been armed yet, or its budget is used up; ask the owner to arm it before trying again")
 			}
 
-			side := contracts.TradeSideSell
-			if req.Side == "buy" {
-				side = contracts.TradeSideBuy
-			}
 			intent := contracts.TradeIntent{Ticker: stock.Ticker, Side: side, Amount: clampedAmount}
 
 			if rc.OnSubTaskStarted != nil {

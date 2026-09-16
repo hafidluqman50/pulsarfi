@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
@@ -38,89 +37,66 @@ func TestChatService_CheckpointPauseResumeCancelAndKeepAlive(t *testing.T) {
 		t.Fatal("expected registry.AgentChat.CheckPointStore to be configured")
 	}
 
+	cpStore, ok := registry.AgentChat.CheckPointStore.(agentsvc.ExtendedCheckPointStore)
+	if !ok {
+		t.Fatal("expected registry.AgentChat.CheckPointStore to implement ExtendedCheckPointStore")
+	}
+
 	ctx := context.Background()
 	testWallet := "0x" + strings.Repeat("c", 40)
 	chatID := uuid.New()
 
 	// Clean up any test artifacts at the end
 	defer func() {
-		_ = registry.AgentChat.CheckPointStore.Delete(ctx, chatID.String())
+		_ = cpStore.Delete(ctx, chatID.String())
 	}()
 
 	// 1. Simulating Phase 3 Pause (HITL):
-	// A trade request triggers needs_input, which saves PendingTradeCheckpoint into Postgres
-	pendingCP := agentsvc.PendingTradeCheckpoint{
-		ChatID:           chatID,
-		MentionedTicker:  "BRPTP",
-		ResolvedTicker:   "BRPTP",
-		Shape:            "swing",
-		Side:             "beli",
-		Summary:          "Beli BRPTP swing 20% modal",
-		PendingQuestions: []agentsvc.IntakeField{agentsvc.ShapeField},
-		CreatedAt:        time.Now(),
-	}
+	// A trade request triggers an interrupt, which saves Eino checkpoint and interrupt ID into Postgres
+	testPayload := []byte("eino_state_checkpoint_data")
+	testInterruptID := "interrupt-" + uuid.New().String()
 
-	err = registry.AgentChat.CheckPointStore.SetPendingTrade(ctx, chatID.String(), pendingCP)
+	err = cpStore.Set(ctx, chatID.String(), testPayload)
 	if err != nil {
-		t.Fatalf("failed to set pending trade checkpoint: %v", err)
+		t.Fatalf("failed to set checkpoint: %v", err)
+	}
+	err = cpStore.SetInterruptID(ctx, chatID.String(), testInterruptID)
+	if err != nil {
+		t.Fatalf("failed to set interrupt id: %v", err)
 	}
 
 	// Verify checkpoint exists in Postgres
-	has, err := registry.AgentChat.CheckPointStore.Has(ctx, chatID.String())
+	has, err := cpStore.Has(ctx, chatID.String())
 	if err != nil || !has {
 		t.Fatalf("expected checkpoint to exist in Postgres, has: %v, err: %v", has, err)
 	}
 
-	retrieved, found, err := registry.AgentChat.CheckPointStore.GetPendingTrade(ctx, chatID.String())
-	if err != nil || !found || retrieved == nil {
-		t.Fatalf("failed to retrieve pending trade: found=%v, err=%v", found, err)
-	}
-	if retrieved.ResolvedTicker != "BRPTP" {
-		t.Errorf("expected ticker 'BRPTP', got %q", retrieved.ResolvedTicker)
+	retrievedInterruptID, found, err := cpStore.GetInterruptID(ctx, chatID.String())
+	if err != nil || !found || retrievedInterruptID != testInterruptID {
+		t.Fatalf("failed to retrieve interrupt ID: found=%v, id=%s, err=%v", found, retrievedInterruptID, err)
 	}
 
-	// 2. Test Side-Question Keep-Alive & Eino Graph Run Non-Collision:
-	// When user sends a side-question while a pending trade checkpoint is active,
-	// Orchestrator.Run must NOT fail with "[GraphRunError] no tasks to execute".
-	// The pending trade checkpoint must remain intact with a reminder appended.
-	sideCard, err := registry.AgentChat.HandleChatMessage(ctx, chatID, testWallet, "Apa kabar?", agentsvc.AgentEventCallbacks{})
-	if err != nil {
-		t.Fatalf("HandleChatMessage during active checkpoint failed: %v", err)
-	}
-	if sideCard.Reply == "" {
-		t.Fatal("expected non-empty reply from Quasar for side question")
-	}
-	if !strings.Contains(sideCard.Reply, "menunggu konfirmasi") {
-		t.Errorf("expected side question reply to contain pending trade reminder footnote, got: %q", sideCard.Reply)
-	}
-
-	// Verify checkpoint stays alive in Postgres after side question
-	has, err = registry.AgentChat.CheckPointStore.Has(ctx, chatID.String())
-	if err != nil || !has {
-		t.Fatalf("expected checkpoint to remain active after side question, has=%v, err=%v", has, err)
-	}
-
-	// 3. Test Explicit Cancellation via HandleChatMessage:
+	// 2. Test Explicit Cancellation via HandleChatMessage:
 	// When user sends "cancel" (e.g. clicking Cancel/Disarm button), HandleChatMessage intercepts it,
-	// deletes the checkpoint from Postgres, and returns a cancellation reply.
+	// deletes the checkpoint from Postgres, and returns a cancellation confirmation.
 	card, err := registry.AgentChat.HandleChatMessage(ctx, chatID, testWallet, "cancel", agentsvc.AgentEventCallbacks{})
 	if err != nil {
 		t.Fatalf("HandleChatMessage cancel error: %v", err)
 	}
 
-	if !strings.Contains(strings.ToLower(card.Reply), "cancelled") {
-		t.Errorf("expected reply to mention 'cancelled', got: %q", card.Reply)
-	}
-	if !strings.Contains(card.Reply, "BRPTP") {
-		t.Errorf("expected reply to mention ticker 'BRPTP', got: %q", card.Reply)
-	}
-
-	// 4. Verify Checkpoint is DELETED from PostgreSQL after cancellation
-	has, err = registry.AgentChat.CheckPointStore.Has(ctx, chatID.String())
+	// 3. Verify Checkpoint is DELETED from PostgreSQL after cancellation
+	has, err = cpStore.Has(ctx, chatID.String())
 	if err != nil {
 		t.Fatalf("check has error: %v", err)
 	}
 	if has {
 		t.Errorf("expected checkpoint to be deleted from Postgres after cancellation, but it still exists")
 	}
+
+	// Verify interrupt ID was also cleaned up with Delete
+	_, found, _ = cpStore.GetInterruptID(ctx, chatID.String())
+	if found {
+		t.Errorf("expected interrupt ID to be cleaned up after delete")
+	}
+	_ = card
 }

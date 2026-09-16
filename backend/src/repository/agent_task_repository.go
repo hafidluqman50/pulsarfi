@@ -76,6 +76,28 @@ func (r *AgentTaskRepository) Create(ctx context.Context, input AgentTaskCreateI
 	return task, r.DB.WithContext(ctx).Create(&task).Error
 }
 
+// UpdateDecision patches a Task already committed early (understand-time,
+// before every field was known) with the latest settled summary/trigger
+// description once the user finishes answering clarifying questions —
+// never a second Create, the on-chain Task id and row both stay the same.
+// Status flips pending/answered the same way Create's own IsActionable
+// branch does, since a Task can go from not-yet-actionable to actionable
+// as answers come in.
+func (r *AgentTaskRepository) UpdateDecision(ctx context.Context, id int64, summary, triggerDescription string, isActionable bool) error {
+	status := "pending"
+	if !isActionable {
+		status = "answered"
+	}
+	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"summary":             summary,
+			"trigger_description": triggerDescription,
+			"is_actionable":       isActionable,
+			"status":              status,
+		}).Error
+}
+
 // SetOnChainTaskID persists the id ArmTask received back from the
 // contract's createTask call — the link this row needs before any
 // recordSubTasks batch or executeTrade check can target it.
@@ -133,3 +155,64 @@ func (r *AgentTaskRepository) SetExecutedAt(ctx context.Context, id int64, execu
 		Where("id = ?", id).
 		Update("executed_at", executedAt).Error
 }
+
+func (r *AgentTaskRepository) SetArmedWithGuardrails(ctx context.Context, id int64, armedAt time.Time, isRecurring bool, cooldownSec int32, maxPerTrade int64, nextRunAt *time.Time, horizonExpiresAt *time.Time) error {
+	updates := map[string]any{
+		"armed_at":           armedAt,
+		"status":             "armed",
+		"is_recurring":       isRecurring,
+		"cooldown_sec":       cooldownSec,
+		"max_per_trade":      maxPerTrade,
+		"next_run_at":        nextRunAt,
+		"horizon_expires_at": horizonExpiresAt,
+	}
+	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
+		Where("id = ?", id).
+		Updates(updates).Error
+}
+
+func (r *AgentTaskRepository) FindDueRecurringTasks(ctx context.Context, limit int) ([]model.AgentTask, error) {
+	var tasks []model.AgentTask
+	err := r.DB.WithContext(ctx).
+		Where("is_recurring = ? AND status = ? AND paused = ? AND next_run_at <= NOW()", true, "armed", false).
+		Order("next_run_at ASC").
+		Limit(limit).
+		Find(&tasks).Error
+	return tasks, err
+}
+
+func (r *AgentTaskRepository) FindPendingHorizonTasks(ctx context.Context, threshold time.Duration, limit int) ([]model.AgentTask, error) {
+	var tasks []model.AgentTask
+	cutoff := time.Now().Add(threshold)
+	err := r.DB.WithContext(ctx).
+		Where("horizon_expires_at IS NOT NULL AND horizon_notified_at IS NULL AND horizon_expires_at <= ?", cutoff).
+		Order("horizon_expires_at ASC").
+		Limit(limit).
+		Find(&tasks).Error
+	return tasks, err
+}
+
+func (r *AgentTaskRepository) MarkHorizonNotified(ctx context.Context, id int64) error {
+	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
+		Where("id = ?", id).
+		Update("horizon_notified_at", gorm.Expr("NOW()")).Error
+}
+
+func (r *AgentTaskRepository) UpdateNextRunAt(ctx context.Context, id int64, nextRunAt *time.Time) error {
+	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
+		Where("id = ?", id).
+		Update("next_run_at", nextRunAt).Error
+}
+
+func (r *AgentTaskRepository) SetExitPolicy(ctx context.Context, id int64, policy string, status string) error {
+	updates := map[string]any{
+		"exit_policy": policy,
+	}
+	if status != "" {
+		updates["status"] = status
+	}
+	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
+		Where("id = ?", id).
+		Updates(updates).Error
+}
+

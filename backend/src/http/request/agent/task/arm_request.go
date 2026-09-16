@@ -12,7 +12,10 @@ type ArmRequest struct {
 	// at all — but ArmTaskInput has carried the field all along with nothing
 	// ever populating it, so it was always empty before this
 	// (docs/plans/fix-comet-trade-execution-blockers.md Defect C).
-	TokenAddress string `json:"token_address"`
+	TokenAddress      string `json:"token_address"`
+	MaxAmountPerTrade string `json:"max_amount_per_trade"`
+	CooldownInterval  uint32 `json:"cooldown_interval"`
+	IsRecurring       bool   `json:"is_recurring"`
 }
 
 func NewArmRequest(c *gin.Context) (ArmRequest, error) {

@@ -76,9 +76,29 @@ export async function getTaskTrades(taskId: number): Promise<AgentTrade[]> {
   return Array.isArray(res.data?.data) ? res.data.data : [];
 }
 
-export async function armTask(taskId: number, totalBudget: string, durationSec: number): Promise<ArmTaskResult> {
-  const res = await client.post(`/agent/tasks/${taskId}/arm`, { total_budget: totalBudget, duration_sec: durationSec });
+export interface ArmTaskParams {
+  totalBudget: string;
+  durationSec: number;
+  tokenAddress?: string;
+  maxAmountPerTrade?: string;
+  cooldownInterval?: number;
+  isRecurring?: boolean;
+}
+
+export async function armTask(taskId: number, params: ArmTaskParams): Promise<ArmTaskResult> {
+  const res = await client.post(`/agent/tasks/${taskId}/arm`, {
+    total_budget: params.totalBudget,
+    duration_sec: params.durationSec,
+    token_address: params.tokenAddress,
+    max_amount_per_trade: params.maxAmountPerTrade,
+    cooldown_interval: params.cooldownInterval,
+    is_recurring: params.isRecurring,
+  });
   return res.data.data;
+}
+
+export async function settleHorizonTask(taskId: number, policy: 'leave_open' | 'close_position'): Promise<void> {
+  await client.post(`/agent/tasks/${taskId}/horizon`, { policy });
 }
 
 export async function disarmTask(taskId: number): Promise<void> {

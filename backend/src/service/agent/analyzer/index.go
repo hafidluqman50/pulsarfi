@@ -21,11 +21,15 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, chartReader 
 	if err != nil {
 		return nil, fmt.Errorf("analyzer: build get_stock_chart tool: %w", err)
 	}
+	verifyTickerTool, err := newVerifyTickerTool(priceSvc)
+	if err != nil {
+		return nil, fmt.Errorf("analyzer: build verify_ticker tool: %w", err)
+	}
 	readArticleTool, webSearchTool, err := NewNewsTools()
 	if err != nil {
 		return nil, fmt.Errorf("analyzer: build news tools: %w", err)
 	}
-	baseTools := []tool.BaseTool{portfolioSnapshotTool, stockChartTool, readArticleTool, webSearchTool}
+	baseTools := []tool.BaseTool{portfolioSnapshotTool, stockChartTool, verifyTickerTool, readArticleTool, webSearchTool}
 	tools := append(baseTools, extraTools...)
 
 	analyzerAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{

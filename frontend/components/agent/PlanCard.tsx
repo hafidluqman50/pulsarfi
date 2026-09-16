@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { useTaskReasoning, useSendChatMessage, useAgentTasks } from '@/http/agent/hooks';
+import type { AgentTask } from '@/http/agent/taskApi';
 import { agentDisplayName, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
 import { ArmPanel } from './ArmPanel';
 import { TradeLedger } from './TradeLedger';
@@ -17,7 +18,10 @@ function extractTaskBudget(task?: { trigger_description?: string | null; summary
   if (task.trigger_description) {
     try {
       const parsed = JSON.parse(task.trigger_description);
-      if (parsed.budget_idrx && Number(parsed.budget_idrx) > 0) return String(parsed.budget_idrx);
+      const isSell = parsed.side === 'sell' || parsed.side === 'jual';
+      if (isSell && parsed.sell_amount && Number(parsed.sell_amount) > 0) return String(parsed.sell_amount);
+      if (!isSell && parsed.confirmed_budget_idrx && Number(parsed.confirmed_budget_idrx) > 0) return String(parsed.confirmed_budget_idrx);
+      if (!isSell && parsed.budget_idrx && Number(parsed.budget_idrx) > 0) return String(parsed.budget_idrx);
       if (parsed.budget && Number(parsed.budget) > 0) return String(parsed.budget);
     } catch {
       const match = task.trigger_description.match(/\b(\d+)\b/);
@@ -26,15 +30,52 @@ function extractTaskBudget(task?: { trigger_description?: string | null; summary
   }
   if (task.summary) {
     const clean = task.summary.replace(/\./g, '');
-    const match = clean.match(/(?:budget|senilai|sebesar)\s*(\d+)/i) || clean.match(/(\d+)\s*idrx/i);
+    const match = clean.match(/(?:budget|senilai|sebesar|jual|sebanyak)\s*(\d+)/i) || clean.match(/(\d+)\s*(?:idrx|token|lembar)/i);
     if (match && Number(match[1]) > 0) return match[1];
   }
   if (task.raw_prompt) {
     const clean = task.raw_prompt.replace(/\./g, '');
-    const match = clean.match(/(?:budget|idrx_cap|batas.*budget).*?:\s*(\d+)/i);
+    const match = clean.match(/(?:budget|idrx_cap|batas.*budget|jual|sebanyak).*?:\s*(\d+)/i) || clean.match(/(\d+)\s*(?:token|lembar)/i);
     if (match && Number(match[1]) > 0) return match[1];
   }
   return undefined;
+}
+
+function extractTaskTokenDetails(task?: AgentTask) {
+  const defaultBuy = {
+    side: 'buy' as const,
+    tokenAddress: process.env.NEXT_PUBLIC_IDRX_ADDRESS as `0x${string}` | undefined,
+    tokenSymbol: 'IDRX',
+    shape: 'scalp',
+    stockTicker: '',
+  };
+  if (!task?.trigger_description) return defaultBuy;
+  try {
+    const parsed = JSON.parse(task.trigger_description);
+    const side = (parsed.side === 'sell' || parsed.side === 'jual' ? 'sell' : 'buy') as 'buy' | 'sell';
+    const stockTicker = (parsed.stock_ticker || parsed.resolved_ticker || '') as string;
+    const shape = (parsed.shape || 'scalp') as string;
+
+    if (side === 'sell') {
+      return {
+        side: 'sell' as const,
+        tokenAddress: (parsed.token_address || parsed.stock_contract_address) as `0x${string}` | undefined,
+        tokenSymbol: (parsed.token_symbol || stockTicker || 'TOKEN') as string,
+        shape,
+        stockTicker,
+      };
+    }
+
+    return {
+      side: 'buy' as const,
+      tokenAddress: process.env.NEXT_PUBLIC_IDRX_ADDRESS as `0x${string}` | undefined,
+      tokenSymbol: 'IDRX',
+      shape,
+      stockTicker,
+    };
+  } catch {
+    return defaultBuy;
+  }
 }
 
 export function PlanCard({ taskId, chatId }: PlanCardProps) {
@@ -42,6 +83,7 @@ export function PlanCard({ taskId, chatId }: PlanCardProps) {
   const { data: tasks = [] } = useAgentTasks();
   const task = tasks.find((t) => t.id === taskId);
   const confirmedBudget = extractTaskBudget(task);
+  const tokenDetails = extractTaskTokenDetails(task);
   const contract = parseCardContract(task);
   const [openRow, setOpenRow] = useState<number | null>(null);
   const [answerDraft, setAnswerDraft] = useState('');
@@ -171,6 +213,10 @@ export function PlanCard({ taskId, chatId }: PlanCardProps) {
             durationSec={24 * 60 * 60}
             initialArmed={Boolean(task.armed_at)}
             totalBudget={confirmedBudget}
+            tokenAddress={tokenDetails.tokenAddress}
+            tokenSymbol={tokenDetails.tokenSymbol}
+            side={tokenDetails.side}
+            shape={tokenDetails.shape}
             contract={contract}
           />
         </div>

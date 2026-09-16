@@ -78,8 +78,8 @@ contract AgentTaskManagerForkTest is Test {
         (,, AgentTaskManager.TaskStatus statusI,,) = manager.tasks(infoId);
         assertEq(uint256(statusI), uint256(AgentTaskManager.TaskStatus.Active));
 
-        (,, uint64 expiresAtA) = manager.tradePermissions(actionableId);
-        (,, uint64 expiresAtI) = manager.tradePermissions(infoId);
+        (,, uint64 expiresAtA,,,) = manager.tradePermissions(actionableId);
+        (,, uint64 expiresAtI,,,) = manager.tradePermissions(infoId);
         assertEq(expiresAtA, 0, "no TradePermission until explicitly granted, even for an actionable Task");
         assertEq(expiresAtI, 0, "informational Task never gets a TradePermission");
 
@@ -219,7 +219,7 @@ contract AgentTaskManagerForkTest is Test {
         (uint256 stockBalance, address stockAddr) = _buyRealBBCAP(owner, 50_000);
         assertGt(stockBalance, 0);
 
-        (uint256 taskId, uint256 decideSubTaskId) = _armAndRecordDecide(owner, type(uint128).max);
+        (uint256 taskId, uint256 decideSubTaskId) = _armAndRecordDecide(owner, stockBalance);
 
         vm.prank(owner);
         (bool ok,) = stockAddr.call(abi.encodeWithSignature("approve(address,uint256)", address(manager), stockBalance));
@@ -240,11 +240,11 @@ contract AgentTaskManagerForkTest is Test {
             keccak256("exec-reasoning")
         );
 
-        (, uint256 usedBudget,) = manager.tradePermissions(taskId);
-        assertGt(usedBudget, 0, "usedBudget must increase by the realized IDRX proceeds");
+        (, uint256 usedBudget,,,,) = manager.tradePermissions(taskId);
+        assertEq(usedBudget, stockBalance, "usedBudget must equal the stock amount sold");
 
         uint256 ownerIdrxAfter = _balanceOf(idrxAddr, owner);
-        assertEq(ownerIdrxAfter - ownerIdrxBefore, usedBudget, "owner must receive exactly the realized IDRX proceeds");
+        assertGt(ownerIdrxAfter, ownerIdrxBefore, "owner must receive realized IDRX proceeds");
 
         uint256[] memory tradeIds = manager.tradeIdsForTask(taskId);
         assertEq(tradeIds.length, 1);
@@ -284,7 +284,7 @@ contract AgentTaskManagerForkTest is Test {
         uint256 ownerStockAfter = _balanceOf(stockAddr, owner);
         assertGt(ownerStockAfter, ownerStockBefore, "owner must receive stock tokens from the buy");
 
-        (, uint256 usedBudget,) = manager.tradePermissions(taskId);
+        (, uint256 usedBudget,,,,) = manager.tradePermissions(taskId);
         assertEq(usedBudget, idrxAmount, "buy path: usedBudget equals the IDRX amount spent, known immediately");
     }
 
@@ -478,7 +478,7 @@ contract AgentTaskManagerForkTest is Test {
         uint256 ownerStockAfter = _balanceOf(bmripAddr, owner);
         assertGt(ownerStockAfter, ownerStockBefore, "owner must receive BMRIP stock tokens");
 
-        (, uint256 usedBudget,) = manager.tradePermissions(taskId);
+        (, uint256 usedBudget,,,,) = manager.tradePermissions(taskId);
         assertEq(usedBudget, idrxAmount, "usedBudget must equal 20M IDRX spent");
 
         console.log("SUCCESS: 20 Million IDRX BMRIP Buy executed, BMRIP tokens received:", ownerStockAfter - ownerStockBefore);
@@ -500,7 +500,7 @@ contract AgentTaskManagerForkTest is Test {
         uint256 stockBalance = _balanceOf(bmripAddr, owner);
         assertGt(stockBalance, 0, "must hold BMRIP before selling");
 
-        (uint256 taskId, uint256 decideSubTaskId) = _armAndRecordDecide(owner, type(uint128).max);
+        (uint256 taskId, uint256 decideSubTaskId) = _armAndRecordDecide(owner, stockBalance);
 
         vm.prank(owner);
         (bool okApprove,) = bmripAddr.call(abi.encodeWithSignature("approve(address,uint256)", address(manager), stockBalance));
@@ -521,13 +521,158 @@ contract AgentTaskManagerForkTest is Test {
             keccak256("exec-reasoning-bmrip-sell")
         );
 
-        (, uint256 usedBudget,) = manager.tradePermissions(taskId);
-        assertGt(usedBudget, 0, "usedBudget must increase by realized IDRX");
+        (, uint256 usedBudget,,,,) = manager.tradePermissions(taskId);
+        assertEq(usedBudget, stockBalance, "usedBudget must equal stock amount sold");
 
         uint256 ownerIdrxAfter = _balanceOf(idrxAddr, owner);
-        assertEq(ownerIdrxAfter - ownerIdrxBefore, usedBudget, "owner must receive realized IDRX");
+        assertGt(ownerIdrxAfter, ownerIdrxBefore, "owner must receive realized IDRX");
 
-        console.log("SUCCESS: Full position BMRIP Sell executed, realized IDRX:", usedBudget);
+        console.log("SUCCESS: Full position BMRIP Sell executed, realized IDRX:", ownerIdrxAfter - ownerIdrxBefore);
+    }
+
+    function test_executeTrade_enforcesMaxAmountPerTrade() public {
+        if (!forked) return;
+        address owner = makeAddr("guardrailOwner1");
+        _mintIdrx(owner, 200_000);
+
+        vm.prank(owner);
+        (bool ok,) = idrxAddr.call(abi.encodeWithSignature("approve(address,uint256)", address(manager), 200_000));
+        require(ok, "idrx approve failed");
+
+        vm.prank(agent);
+        uint256 taskId = manager.createTask(owner, true, "DCA Buy with max limit", bytes32(0));
+
+        // Total 200k, max per trade 50k, 0 cooldown
+        vm.prank(agent);
+        manager.grantTradePermission(taskId, 200_000, 7 days, 50_000, 0);
+
+        AgentTaskManager.SubTaskRecord[] memory rows = new AgentTaskManager.SubTaskRecord[](1);
+        rows[0] = AgentTaskManager.SubTaskRecord({
+            taskId: taskId,
+            agent: AgentTaskManager.TaskAgent.Executor,
+            stepName: "decide",
+            status: AgentTaskManager.SubTaskStatus.Done,
+            routingTarget: "",
+            summary: "Attempt exceeding max per trade",
+            reasoningHash: keccak256("decide-reasoning"),
+            outputHash: keccak256("decide-output"),
+            decisionHash: keccak256("decide-hash"),
+            previousDecisionHash: bytes32(0)
+        });
+        vm.prank(agent);
+        uint256[] memory ids = manager.recordSubTasks(taskId, rows);
+
+        // Attempting to trade 60k (exceeds max 50k) should revert with MaxAmountPerTradeExceeded
+        vm.prank(agent);
+        vm.expectRevert(abi.encodeWithSelector(AgentTaskManager.MaxAmountPerTradeExceeded.selector, 60_000, 50_000));
+        manager.executeTrade(
+            taskId,
+            ids[0],
+            idrxAddr,
+            "BBCAP",
+            AgentTaskManager.TradeSide.Buy,
+            60_000,
+            0,
+            "Exceeding tranche cap",
+            keccak256("reasoning")
+        );
+
+        // Trading 50k should succeed
+        vm.prank(agent);
+        manager.executeTrade(
+            taskId,
+            ids[0],
+            idrxAddr,
+            "BBCAP",
+            AgentTaskManager.TradeSide.Buy,
+            50_000,
+            0,
+            "Exact tranche cap",
+            keccak256("reasoning")
+        );
+
+        (, uint256 usedBudget,,,,) = manager.tradePermissions(taskId);
+        assertEq(usedBudget, 50_000, "usedBudget must equal 50k");
+    }
+
+    function test_executeTrade_enforcesCooldownInterval() public {
+        if (!forked) return;
+        address owner = makeAddr("guardrailOwner2");
+        _mintIdrx(owner, 200_000);
+
+        vm.prank(owner);
+        (bool ok,) = idrxAddr.call(abi.encodeWithSignature("approve(address,uint256)", address(manager), 200_000));
+        require(ok, "idrx approve failed");
+
+        vm.prank(agent);
+        uint256 taskId = manager.createTask(owner, true, "DCA Buy with cooldown", bytes32(0));
+
+        // Total 200k, max per trade 100k, cooldown 1 days
+        vm.prank(agent);
+        manager.grantTradePermission(taskId, 200_000, 7 days, 100_000, 1 days);
+
+        AgentTaskManager.SubTaskRecord[] memory rows = new AgentTaskManager.SubTaskRecord[](1);
+        rows[0] = AgentTaskManager.SubTaskRecord({
+            taskId: taskId,
+            agent: AgentTaskManager.TaskAgent.Executor,
+            stepName: "decide",
+            status: AgentTaskManager.SubTaskStatus.Done,
+            routingTarget: "",
+            summary: "Cooldown test",
+            reasoningHash: keccak256("decide-reasoning"),
+            outputHash: keccak256("decide-output"),
+            decisionHash: keccak256("decide-hash"),
+            previousDecisionHash: bytes32(0)
+        });
+        vm.prank(agent);
+        uint256[] memory ids = manager.recordSubTasks(taskId, rows);
+
+        // Tranche 1: 50k succeeds immediately
+        vm.prank(agent);
+        manager.executeTrade(
+            taskId,
+            ids[0],
+            idrxAddr,
+            "BBCAP",
+            AgentTaskManager.TradeSide.Buy,
+            50_000,
+            0,
+            "Tranche 1",
+            keccak256("reasoning")
+        );
+
+        // Tranche 2 immediately: must revert with CooldownActive
+        vm.prank(agent);
+        vm.expectRevert(abi.encodeWithSelector(AgentTaskManager.CooldownActive.selector, block.timestamp, block.timestamp + 1 days));
+        manager.executeTrade(
+            taskId,
+            ids[0],
+            idrxAddr,
+            "BBCAP",
+            AgentTaskManager.TradeSide.Buy,
+            50_000,
+            0,
+            "Tranche 2 too early",
+            keccak256("reasoning")
+        );
+
+        // Warp forward 1 day: Tranche 2 succeeds!
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(agent);
+        manager.executeTrade(
+            taskId,
+            ids[0],
+            idrxAddr,
+            "BBCAP",
+            AgentTaskManager.TradeSide.Buy,
+            50_000,
+            0,
+            "Tranche 2 after cooldown",
+            keccak256("reasoning")
+        );
+
+        (, uint256 usedBudget,,,,) = manager.tradePermissions(taskId);
+        assertEq(usedBudget, 100_000, "usedBudget must equal 100k after 2 tranches");
     }
 
     function _balanceOf(address token, address account) internal returns (uint256) {

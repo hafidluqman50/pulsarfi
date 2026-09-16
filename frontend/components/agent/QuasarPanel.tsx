@@ -218,29 +218,27 @@ export function QuasarPanel() {
         </div>
       )}
 
-      {destination === 'chat' && (
-        <>
-          {!activeChatId && (
-            <div className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
-                <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>
-                  I am Quasar. Write the instruction in your own words — a fast trade or a long mandate, I read the horizon out of what you wrote. Standing
-                  instructions I turn into a rule with named sources, a number and hard caps, and show you every step before anything is armed.
-                </div>
+      <div style={{ display: destination === 'chat' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+        {!activeChatId && (
+          <div className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
+              <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+                I am Quasar. Write the instruction in your own words — a fast trade or a long mandate, I read the horizon out of what you wrote. Standing
+                instructions I turn into a rule with named sources, a number and hard caps, and show you every step before anything is armed.
               </div>
-              <RosterCard />
-              <button
-                onClick={handleNewChat}
-                style={{ appearance: 'none', cursor: 'pointer', border: '1px solid var(--hairline-strong)', background: 'transparent', color: 'var(--ink)', font: '400 13.5px/1.45 var(--font-sans)', padding: '10px 12px', textAlign: 'left', display: 'flex', gap: 9 }}
-              >
-                <span style={{ color: 'var(--merah)', fontFamily: 'var(--font-mono)', fontSize: 12, flex: 'none' }}>&rarr;</span>
-                <span>Start a new chat to talk to Quasar</span>
-              </button>
             </div>
-          )}
-          {activeChatId && <ChatThread chatId={activeChatId} />}
-        </>
-      )}
+            <RosterCard />
+            <button
+              onClick={handleNewChat}
+              style={{ appearance: 'none', cursor: 'pointer', border: '1px solid var(--hairline-strong)', background: 'transparent', color: 'var(--ink)', font: '400 13.5px/1.45 var(--font-sans)', padding: '10px 12px', textAlign: 'left', display: 'flex', gap: 9 }}
+            >
+              <span style={{ color: 'var(--merah)', fontFamily: 'var(--font-mono)', fontSize: 12, flex: 'none' }}>&rarr;</span>
+              <span>Start a new chat to talk to Quasar</span>
+            </button>
+          </div>
+        )}
+        {activeChatId && <ChatThread chatId={activeChatId} />}
+      </div>
     </div>
   );
 }

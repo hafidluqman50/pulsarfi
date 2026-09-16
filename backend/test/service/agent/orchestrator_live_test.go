@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -89,3 +90,182 @@ func TestOrchestratorLiveConversation(t *testing.T) {
 
 	t.Logf("Reply (%d chars, streamed in %d chunks): %s", len(card.Reply), len(deltas), card.Reply)
 }
+
+func TestDirectSellPromptWithNovaOptOutProducesConfirmationCard(t *testing.T) {
+	if err := godotenv.Load("../../../.env"); err != nil {
+		t.Logf("no .env loaded (%v), relying on already-exported environment", err)
+	}
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL not set, skipping live test")
+	}
+
+	db, err := config.NewDatabase(databaseURL)
+	if err != nil {
+		t.Fatalf("connect db: %v", err)
+	}
+	repos := repository.NewRegistry(db)
+	registry := service.NewRegistry(service.Config{Repos: repos})
+	if registry.AgentChat == nil {
+		t.Fatal("agent chat service disabled")
+	}
+
+	ctx := context.Background()
+	chatID := uuid.New()
+	wallet := "0xd8bf50c157a79260c77b25f89ef713e6c3feda6f"
+
+	prompt := "Aku mau jual BRPT 20 token, scalping, sekarang, gak usah panggil Nova"
+	t.Logf("Testing prompt: %q", prompt)
+
+	card, err := registry.AgentChat.HandleChatMessage(
+		ctx,
+		chatID,
+		wallet,
+		prompt,
+		agent.AgentEventCallbacks{},
+	)
+	if err != nil {
+		t.Fatalf("HandleChatMessage failed: %v", err)
+	}
+
+	t.Logf("Result: TaskID=%d, Reply=%q", card.TaskID, card.Reply)
+
+	if card.TaskID == 0 {
+		t.Fatalf("FAILED: TaskID is 0! Confirmation UI Arm Card was NOT generated. Reply: %s", card.Reply)
+	}
+
+	// Verify Task in database
+	task, found, err := repos.AgentTask.FindByID(ctx, card.TaskID)
+	if err != nil || !found {
+		t.Fatalf("Task %d not found in database: %v", card.TaskID, err)
+	}
+	if !task.IsActionable {
+		t.Errorf("expected task to be actionable, got %v", task.IsActionable)
+	}
+
+	// Verify trigger description has shape=scalp and NOT swing
+	if task.TriggerDescription == nil {
+		t.Fatalf("expected trigger description, got nil")
+	}
+	var td map[string]any
+	if err := json.Unmarshal([]byte(*task.TriggerDescription), &td); err != nil {
+		t.Fatalf("failed to parse trigger description: %v", err)
+	}
+	if shape, _ := td["shape"].(string); shape != "scalp" {
+		t.Fatalf("expected shape to be scalp, got %q (hallucinated swing?)", shape)
+	}
+	if isSwing, _ := td["is_swing"].(bool); isSwing {
+		t.Fatalf("expected is_swing to be false/unset, got true!")
+	}
+	if side, _ := td["side"].(string); side != "sell" {
+		t.Errorf("expected side to be sell, got %q", side)
+	}
+	if sellAmount, _ := td["sell_amount"].(string); sellAmount != "20" {
+		t.Errorf("expected sell_amount to be 20, got %q", sellAmount)
+	}
+	if ticker, _ := td["resolved_ticker"].(string); ticker != "BRPTP" {
+		t.Errorf("expected resolved_ticker to be BRPTP, got %q", ticker)
+	}
+
+	// Verify chat message has ui_ref_task_id
+	msgs, err := repos.AgentChatMessage.FindByChatID(ctx, chatID)
+	if err != nil || len(msgs) == 0 {
+		t.Fatalf("no chat messages found for chat %s", chatID)
+	}
+	lastMsg := msgs[len(msgs)-1]
+	if lastMsg.UIRefTaskID == nil || *lastMsg.UIRefTaskID != card.TaskID {
+		t.Fatalf("expected last message to have ui_ref_task_id=%d, got %v", card.TaskID, lastMsg.UIRefTaskID)
+	}
+
+	t.Logf("SUCCESS: Task T-%d created with shape=scalp, side=sell, amount=20, ticker=BRPTP, and bound to chat message with Confirmation Arm Card UI!", card.TaskID)
+}
+
+func TestDirectBuyPromptProducesConfirmationCard(t *testing.T) {
+	if err := godotenv.Load("../../../.env"); err != nil {
+		t.Logf("no .env loaded (%v), relying on already-exported environment", err)
+	}
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL not set, skipping live test")
+	}
+
+	db, err := config.NewDatabase(databaseURL)
+	if err != nil {
+		t.Fatalf("connect db: %v", err)
+	}
+	repos := repository.NewRegistry(db)
+	registry := service.NewRegistry(service.Config{Repos: repos})
+	if registry.AgentChat == nil {
+		t.Fatal("agent chat service disabled")
+	}
+
+	ctx := context.Background()
+	chatID := uuid.New()
+	wallet := "0xd8bf50c157a79260c77b25f89ef713e6c3feda6f"
+
+	prompt := "Aku mau beli BRPT 10 juta, scalping, sekarang, gak usah panggil Nova"
+	t.Logf("Testing prompt: %q", prompt)
+
+	card, err := registry.AgentChat.HandleChatMessage(
+		ctx,
+		chatID,
+		wallet,
+		prompt,
+		agent.AgentEventCallbacks{},
+	)
+	if err != nil {
+		t.Fatalf("HandleChatMessage failed: %v", err)
+	}
+
+	t.Logf("Result: TaskID=%d, Reply=%q", card.TaskID, card.Reply)
+
+	if card.TaskID == 0 {
+		t.Fatalf("FAILED: TaskID is 0! Confirmation UI Arm Card was NOT generated. Reply: %s", card.Reply)
+	}
+
+	// Verify Task in database
+	task, found, err := repos.AgentTask.FindByID(ctx, card.TaskID)
+	if err != nil || !found {
+		t.Fatalf("Task %d not found in database: %v", card.TaskID, err)
+	}
+	if !task.IsActionable {
+		t.Errorf("expected task to be actionable, got %v", task.IsActionable)
+	}
+
+	// Verify trigger description has shape=scalp, side=buy, token_symbol=IDRX
+	if task.TriggerDescription == nil {
+		t.Fatalf("expected trigger description, got nil")
+	}
+	var td map[string]any
+	if err := json.Unmarshal([]byte(*task.TriggerDescription), &td); err != nil {
+		t.Fatalf("failed to parse trigger description: %v", err)
+	}
+	if shape, _ := td["shape"].(string); shape != "scalp" {
+		t.Fatalf("expected shape to be scalp, got %q", shape)
+	}
+	if isSwing, _ := td["is_swing"].(bool); isSwing {
+		t.Fatalf("expected is_swing to be false/unset, got true!")
+	}
+	if side, _ := td["side"].(string); side != "buy" {
+		t.Errorf("expected side to be buy, got %q", side)
+	}
+	if symbol, _ := td["token_symbol"].(string); symbol != "IDRX" {
+		t.Errorf("expected token_symbol to be IDRX for Buy side, got %q", symbol)
+	}
+	if ticker, _ := td["resolved_ticker"].(string); ticker != "BRPTP" {
+		t.Errorf("expected resolved_ticker to be BRPTP, got %q", ticker)
+	}
+
+	// Verify chat message has ui_ref_task_id
+	msgs, err := repos.AgentChatMessage.FindByChatID(ctx, chatID)
+	if err != nil || len(msgs) == 0 {
+		t.Fatalf("no chat messages found for chat %s", chatID)
+	}
+	lastMsg := msgs[len(msgs)-1]
+	if lastMsg.UIRefTaskID == nil || *lastMsg.UIRefTaskID != card.TaskID {
+		t.Fatalf("expected last message to have ui_ref_task_id=%d, got %v", card.TaskID, lastMsg.UIRefTaskID)
+	}
+
+	t.Logf("SUCCESS: Task T-%d created with shape=scalp, side=buy, token_symbol=IDRX, ticker=BRPTP, and bound to chat message with Confirmation Arm Card UI!", card.TaskID)
+}
+

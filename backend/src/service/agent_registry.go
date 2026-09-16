@@ -70,7 +70,7 @@ func (a balanceAdapter) IDRXBalance(ctx context.Context, wallet string) (*big.In
 // specifically because adk.ChatModelAgent can never stream. Quick/deep
 // Analyzer model tiering is also not carried over yet (single Analyzer
 // instance) — tracked as an open item in that same plan, not lost.
-func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.PortfolioChartReader) (*agentsvc.ChatService, *agentsvc.TaskService) {
+func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.PortfolioChartReader) (*agentsvc.ChatService, *agentsvc.TaskService, *agentsvc.TaskScheduler) {
 	ctx := context.Background()
 
 	// One model for every role now — deepseek-v4-pro is discontinued
@@ -92,25 +92,25 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 	contractClient, chainErr := agentsvc.NewClient(ctx)
 	if chainErr != nil {
 		log.Printf("agent task service disabled: on-chain client: %v", chainErr)
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	switch {
 	case supervisorErr != nil:
 		log.Printf("agent task service disabled: %v", supervisorErr)
-		return nil, nil
+		return nil, nil, nil
 	case analyzerErr != nil:
 		log.Printf("agent task service disabled: %v", analyzerErr)
-		return nil, nil
+		return nil, nil, nil
 	case executorErr != nil:
 		log.Printf("agent task service disabled: %v", executorErr)
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	analyzerAgent, err := analyzer.New(ctx, analyzerModel, chartReader, chartReader.Price)
 	if err != nil {
 		log.Printf("agent task service disabled: build analyzer agent: %v", err)
-		return nil, nil
+		return nil, nil, nil
 	}
 	// contractClient itself implements executor.TaskExecutor for real now
 	// (docs/plans/agent-trade-execution.md) — UnimplementedTaskExecutor is
@@ -123,7 +123,7 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 
 	if err != nil {
 		log.Printf("agent task service disabled: build executor agent: %v", err)
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// supervisorModel is used for both Quasar calls (route, reply) — a plain
@@ -134,6 +134,7 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 	orchestrator, err := agentsvc.NewOrchestrator(ctx, &agentsvc.Orchestrator{
 		Tasks:             repos.AgentTask,
 		SubTasks:          repos.AgentSubTask,
+		ChatMessages:      repos.AgentChatMessage,
 		Chain:             contractClient,
 		CheckPointStore:   checkpointStore,
 		RouteModel:        supervisorModel,
@@ -144,13 +145,11 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		ReplyModelName:    external.ModelFlash,
 		AnalyzerModelName: external.ModelFlash,
 		ExecutorModelName: external.ModelFlash,
-		AnalyzerIntake:    analyzer.RequiredIntake,
-		ExecutorIntake:    executor.RequiredIntake,
 		Stocks:            repos.Stock,
 	})
 	if err != nil {
 		log.Printf("agent task service disabled: build orchestrator: %v", err)
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	chatSvc := &agentsvc.ChatService{
@@ -167,6 +166,8 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		Chats:        repos.AgentChat,
 		Chain:        contractClient,
 		Executor:     executorAgent,
+		Orchestrator: orchestrator,
 	}
-	return chatSvc, taskSvc
+	taskScheduler := agentsvc.NewTaskScheduler(repos.AgentTask, repos.AgentChatMessage, repos.AgentChat, taskSvc, supervisorModel)
+	return chatSvc, taskSvc, taskScheduler
 }
