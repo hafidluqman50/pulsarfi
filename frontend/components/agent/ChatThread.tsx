@@ -16,6 +16,12 @@ import { useChatMessages } from '@/http/agent/hooks';
 
 type ChatThreadProps = {
   chatId: string;
+  // Set only when ChatThread is mounted for the very first message of a
+  // brand-new chat (QuasarPanel's lazy-mount flow) — the chat row and its
+  // first message do not exist in the DB yet, so this is dispatched via the
+  // normal handleSend path on mount, rather than requiring the user to
+  // retype what they already typed into the pending-chat textarea.
+  initialMessage?: string;
 };
 
 // Tool names that produce chart-shaped output (matches classifyReply's own
@@ -308,7 +314,7 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
             {message.ui_ref_task_id != null && message.ui_component !== 'HorizonNoticeCard' && message.content_type !== 'horizon_notice' && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
             {message.content_type === 'chart' && <ChartCard uiProps={message.ui_props} />}
             {message.content_type === 'news' && <NewsBrief uiProps={message.ui_props} />}
-            {message.ui_component === 'clarifying_questions' && <ClarifyingQuestions uiProps={message.ui_props} chatId={chatId} />}
+            {message.ui_component === 'clarifying_questions' && <ClarifyingQuestions uiProps={message.ui_props} chatId={chatId} onSendPrompt={onSendPrompt} />}
             {(message.ui_component === 'HorizonNoticeCard' || message.content_type === 'horizon_notice') && (
               <HorizonNoticeCard
                 uiProps={message.ui_props}
@@ -347,7 +353,7 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
   );
 });
 
-export function ChatThread({ chatId }: ChatThreadProps) {
+export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
   const { data: messages = [], isLoading } = useChatMessages(chatId);
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState('');
@@ -450,6 +456,18 @@ export function ChatThread({ chatId }: ChatThreadProps) {
       setIsStreaming(false);
     }
   }
+
+  // Fires exactly once, on mount, only for a freshly-promoted new chat that
+  // was typed into QuasarPanel's pending-chat textarea before ChatThread
+  // (and its WebSocket subscription) existed to send it directly.
+  const hasSentInitialMessageRef = useRef(false);
+  useEffect(() => {
+    if (initialMessage && !hasSentInitialMessageRef.current) {
+      hasSentInitialMessageRef.current = true;
+      handleSend(initialMessage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleRetry = useCallback(async () => {
     if (isSendingRef.current) return;
