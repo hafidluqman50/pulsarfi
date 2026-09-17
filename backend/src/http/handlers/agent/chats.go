@@ -124,7 +124,7 @@ func PostChatMessageHandler(c *gin.Context) {
 	}
 
 	runAgentOverSocket(c, chatID, func(events agentsvc.AgentEventCallbacks) (agentsvc.WorkflowCard, error) {
-		return chatSvc.HandleChatMessage(c.Request.Context(), chatID, claims.WalletAddress, messageRequest.Message, events)
+		return chatSvc.HandleChatMessage(c.Request.Context(), chatID, claims.WalletAddress, messageRequest.Message, messageRequest.Hidden, events)
 	})
 }
 

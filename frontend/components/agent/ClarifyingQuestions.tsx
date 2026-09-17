@@ -19,7 +19,12 @@ type ClarifyingQuestionsProps = {
   // pendingText are set correctly (streaming indicator + no false retry).
   // Async since handleSend is; awaited so isSending reflects when it
   // actually settles, not just when it was called.
-  onSendPrompt?: (text: string) => void | Promise<void>;
+  onSendPrompt?: (text: string, hidden?: boolean) => void | Promise<void>;
+  // Parsed from this card's own hidden intake_answer message, if one
+  // already exists (ChatThread.tsx) — present after a page reload once this
+  // card has already been answered, so the form restores instead of
+  // resetting to blank.
+  initialAnswers?: Record<string, string>;
 };
 
 function formatNumberWithDots(val: string | number): string {
@@ -55,11 +60,12 @@ const STOCK_PERCENTAGE_PRESETS = [
   { label: '100%', value: '100%' },
 ];
 
-export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt }: ClarifyingQuestionsProps) {
+export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt, initialAnswers }: ClarifyingQuestionsProps) {
   const parsed = uiProps as { questions?: IntakeField[]; card?: CardContract } | undefined;
   const questions = parsed?.questions ?? [];
   const contract = parsed?.card ?? parseCardContract(null);
-  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState<Record<string, string>>(() => initialAnswers ?? {});
+  const alreadyAnswered = Boolean(initialAnswers);
   const sendMessage = useSendChatMessage(chatId);
   const isSendingRef = useRef(false);
   // sendMessage.isPending only reflects the fallback path (no
@@ -129,7 +135,8 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt }: Clarifyin
       if (onSendPrompt) {
         // Route through ChatThread.handleSend — sets isStreaming + pendingText,
         // activating streaming indicator and preventing the false retry state.
-        await onSendPrompt(body);
+        // hidden: true — this is a compiled answer, never a bubble.
+        await onSendPrompt(body, true);
       } else {
         await sendMessage.mutateAsync(body);
       }
@@ -354,6 +361,7 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt }: Clarifyin
         );
       })}
 
+      {!alreadyAnswered && (
       <div style={{ padding: '11px 13px' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button
@@ -395,6 +403,7 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt }: Clarifyin
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 }

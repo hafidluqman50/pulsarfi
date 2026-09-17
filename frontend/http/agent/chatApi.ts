@@ -15,6 +15,11 @@ export interface AgentChatMessage {
   content_type: 'text' | 'workflow_card' | 'chart' | 'news' | 'horizon_notice' | string;
   content: string;
   ui_component: string | null;
+  // { hidden: true } marks a real, persisted chat message (full history,
+  // fed to the LLM as context) that must never render as a bubble — the
+  // compiled answer a clarifying-questions card sends, not something the
+  // user typed. content_type is a strict DB enum with no room for a
+  // "hidden" variant, so this lives in the one unconstrained JSON column.
   ui_props: unknown;
   ui_ref_task_id: number | null;
   created_at: string;
@@ -94,8 +99,8 @@ export function chatStreamTopic(chatId: string): string {
 // error), matching every other endpoint in this API. A caller that never
 // subscribed to chatStreamTopic(chatId) still gets a correct, complete
 // result, it just misses the live play-by-play.
-export async function sendChatMessage(chatId: string, message: string): Promise<WorkflowCard> {
-  const res = await client.post(`/agent/chats/${chatId}/messages`, { message });
+export async function sendChatMessage(chatId: string, message: string, hidden?: boolean): Promise<WorkflowCard> {
+  const res = await client.post(`/agent/chats/${chatId}/messages`, { message, hidden: hidden ?? false });
   return res.data.data as WorkflowCard;
 }
 

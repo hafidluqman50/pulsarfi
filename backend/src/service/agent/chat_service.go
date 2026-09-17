@@ -60,8 +60,11 @@ func (s *ChatService) GetChatMessages(ctx context.Context, chatID uuid.UUID, wal
 
 // HandleChatMessage persists the user's message and either resumes a paused
 // graph run or starts a fresh one, depending on whether an active checkpoint
-// exists for this chat.
-func (s *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, events AgentEventCallbacks) (WorkflowCard, error) {
+// exists for this chat. hidden marks a message as real chat history (still
+// persisted, still fed to the LLM as context, still returned by every read)
+// that must never render as a bubble in the UI — the compiled answer a
+// clarifying-questions card sends, not something the user typed by hand.
+func (s *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, hidden bool, events AgentEventCallbacks) (WorkflowCard, error) {
 	chat, err := s.Chats.FindOrCreate(ctx, chatID, strings.ToLower(wallet), truncateRunes(message, 50))
 	if err != nil {
 		return WorkflowCard{}, err
@@ -81,8 +84,16 @@ func (s *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, w
 		return WorkflowCard{}, err
 	}
 
+	// content_type is a strict DB enum (agent_chat_messages_content_type_check)
+	// that does not include a "hidden" variant, and extending it needs a
+	// migration — ui_props is a plain, unconstrained JSON column already used
+	// for arbitrary per-card data, so the hidden marker lives there instead.
+	var uiProps datatypes.JSON
+	if hidden {
+		uiProps = datatypes.JSON(`{"hidden":true}`)
+	}
 	userMessage, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
-		ChatID: chatID, Sender: "user", ContentType: "text", Content: message,
+		ChatID: chatID, Sender: "user", ContentType: "text", Content: message, UIProps: uiProps,
 	})
 	if err != nil {
 		return WorkflowCard{}, fmt.Errorf("agent: persist user message: %w", err)

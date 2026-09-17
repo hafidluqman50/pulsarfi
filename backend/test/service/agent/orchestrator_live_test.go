@@ -54,6 +54,7 @@ func TestOrchestratorLiveConversation(t *testing.T) {
 		chatID,
 		wallet,
 		"Eh lu kabarnya gimana, hari ini hari apa?",
+		false,
 		agent.AgentEventCallbacks{
 			OnSubTask: func(row model.AgentSubTask) {
 				fmt.Printf("\n[sub_task] %s / %s: %s\n", row.Agent, row.StepName, row.Reasoning)
@@ -122,6 +123,7 @@ func TestDirectSellPromptWithNovaOptOutProducesConfirmationCard(t *testing.T) {
 		chatID,
 		wallet,
 		prompt,
+		false,
 		agent.AgentEventCallbacks{},
 	)
 	if err != nil {
@@ -211,6 +213,7 @@ func TestDirectBuyPromptProducesConfirmationCard(t *testing.T) {
 		chatID,
 		wallet,
 		prompt,
+		false,
 		agent.AgentEventCallbacks{},
 	)
 	if err != nil {
@@ -268,4 +271,3 @@ func TestDirectBuyPromptProducesConfirmationCard(t *testing.T) {
 
 	t.Logf("SUCCESS: Task T-%d created with shape=scalp, side=buy, token_symbol=IDRX, ticker=BRPTP, and bound to chat message with Confirmation Arm Card UI!", card.TaskID)
 }
-

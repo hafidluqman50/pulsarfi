@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { sendChatMessage, retryLastMessage, chatStreamTopic, type AgentChatMessage, type ChatStreamEvent, type LiveSubTask } from '@/http/agent/chatApi';
@@ -201,8 +201,28 @@ type MessageListProps = {
   chartPending: boolean;
   streamingReplyText: string;
   onRetry: () => void;
-  onSendPrompt?: (text: string) => void;
+  onSendPrompt?: (text: string, hidden?: boolean) => void | Promise<void>;
 };
+
+// A hidden intake-answer message carries { hidden: true } in ui_props
+// (content_type is a strict DB enum with no room for a "hidden" variant —
+// see docs/plans/fix-hide-intake-answer-message.md).
+function isHiddenMessage(message: AgentChatMessage): boolean {
+  return Boolean((message.ui_props as { hidden?: boolean } | null | undefined)?.hidden);
+}
+
+// Parses a compiled "key: value" answer message's own content back into the
+// same shape ClarifyingQuestions built it from — the format is fixed and
+// self-authored, so this is reading back known data, not inferring anything.
+function parseIntakeAnswer(content: string): Record<string, string> {
+  const answers: Record<string, string> = {};
+  for (const line of content.split('\n')) {
+    const separatorIndex = line.indexOf(': ');
+    if (separatorIndex === -1) continue;
+    answers[line.slice(0, separatorIndex)] = line.slice(separatorIndex + 2);
+  }
+  return answers;
+}
 
 // Memoized and pulled out of ChatThread on purpose: draft (the textarea's
 // own state) used to live in the same component that renders this whole
@@ -219,11 +239,36 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
     el.scrollTop = el.scrollHeight;
   }, [messages, pendingText, liveSubTasks, streamingReplyText, isStreaming, isFinalizing, chartPending]);
 
+  // A Task can be referenced by several messages across a conversation (an
+  // intake reply while still needs_input, then a later "ready to arm"
+  // reply once actionable, etc). PlanCard always reads the Task's own
+  // *current* live state, not this message's own snapshot — rendering it
+  // once per referencing message duplicated the same on-chain step list
+  // (or an ArmPanel the task has since moved past) once per message. Only
+  // the *last* message referencing a given task renders it
+  // (docs/plans/fix-plancard-clarifying-questions-duplication.md v1.2 —
+  // corrects the earlier per-ui_component exclusion, which was too broad
+  // and hid the legitimate Sub Task list during an active intake).
+  const lastPlanCardIndexByTaskId = useMemo(() => {
+    const map = new Map<number, number>();
+    messages.forEach((message, index) => {
+      if (message.ui_ref_task_id == null) return;
+      if (message.ui_component === 'HorizonNoticeCard' || message.content_type === 'horizon_notice') return;
+      map.set(message.ui_ref_task_id, index);
+    });
+    return map;
+  }, [messages]);
+
   return (
     <div ref={threadRef} className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
       {isLoading && <div className="skeleton" style={{ height: 80, width: '100%' }} />}
 
       {messages.map((message, index) => {
+        // Real chat history, fed to the LLM as context, but never rendered
+        // — the compiled answer a clarifying-questions card sent, not
+        // something the user typed by hand.
+        if (isHiddenMessage(message)) return null;
+
         const isLast = index === messages.length - 1;
         const needsRetry = isLast && message.sender === 'user' && !isStreaming && !pendingText;
         const retryDescription = needsRetry && failedMessage?.text === message.content ? failedMessage.description : 'No reply received for this message yet.';
@@ -250,10 +295,21 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
                 <MessageMarkdown content={message.content} />
               </div>
             )}
-            {message.ui_ref_task_id != null && message.ui_component !== 'HorizonNoticeCard' && message.content_type !== 'horizon_notice' && message.ui_component !== 'clarifying_questions' && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
+            {message.ui_ref_task_id != null && message.ui_component !== 'HorizonNoticeCard' && message.content_type !== 'horizon_notice' && lastPlanCardIndexByTaskId.get(message.ui_ref_task_id) === index && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
             {message.content_type === 'chart' && <ChartCard uiProps={message.ui_props} />}
             {message.content_type === 'news' && <NewsBrief uiProps={message.ui_props} />}
-            {message.ui_component === 'clarifying_questions' && <ClarifyingQuestions uiProps={message.ui_props} chatId={chatId} onSendPrompt={onSendPrompt} />}
+            {message.ui_component === 'clarifying_questions' && (
+              <ClarifyingQuestions
+                uiProps={message.ui_props}
+                chatId={chatId}
+                onSendPrompt={onSendPrompt}
+                initialAnswers={
+                  messages[index + 1] != null && isHiddenMessage(messages[index + 1])
+                    ? parseIntakeAnswer(messages[index + 1].content)
+                    : undefined
+                }
+              />
+            )}
             {(message.ui_component === 'HorizonNoticeCard' || message.content_type === 'horizon_notice') && (
               <HorizonNoticeCard
                 uiProps={message.ui_props}
@@ -346,12 +402,15 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
   // holding a stale copy, and no effect needed to reconcile the two.
   const pendingBubbleText = pendingText && !messages.some((m) => m.sender === 'user' && m.content === pendingText) ? pendingText : null;
 
-  async function handleSend(overrideText?: string) {
+  async function handleSend(overrideText?: string, hidden?: boolean) {
     const trimmed = (overrideText ?? draft).trim();
     if (!trimmed || isSendingRef.current) return;
     isSendingRef.current = true;
     setIsStreaming(true);
-    setPendingText(trimmed);
+    // A hidden send (a clarifying-questions card's compiled answer) never
+    // shows the optimistic bubble either — it must never appear in the UI
+    // at all, live or persisted.
+    if (!hidden) setPendingText(trimmed);
     setFailedMessage(null);
     setLiveSubTasks([]);
     setToolActivityByAgent({});
@@ -361,7 +420,7 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
     setStreamingReplyText('');
     if (!overrideText) setDraft('');
     try {
-      await sendChatMessage(chatId, trimmed);
+      await sendChatMessage(chatId, trimmed, hidden);
       // The chat row is guaranteed to exist now (FindOrCreate ran inside the
       // send above) — safe to enable the messages query from here on, a
       // no-op if it was already enabled.
