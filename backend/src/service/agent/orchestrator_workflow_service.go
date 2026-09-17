@@ -504,6 +504,7 @@ func (o *Orchestrator) attachRunContext(ctx context.Context, turn *orchestratorT
 		Wallet:           turn.Wallet,
 		Recorder:         recorder,
 		OnSubTaskStarted: turn.onSubTaskStarted,
+		OnSubTaskFailed:  turn.onSubTaskFailed,
 	}
 	return nil
 }
@@ -556,6 +557,8 @@ func (o *Orchestrator) runAnalyze(ctx context.Context, turn *orchestratorTurn) (
 	if turn.onSubTaskStarted != nil {
 		turn.onSubTaskStarted("analyzer", "gather_evidence", turn.Decision.Label)
 	}
+	turn.runCtx.CurrentAgent = "analyzer"
+	turn.runCtx.CurrentStepName = "gather_evidence"
 	slog.InfoContext(ctx, "orchestrator: llm call", "step", "gather_evidence", "agent", "analyzer", "model", o.AnalyzerModelName, "task_id", turn.TaskID)
 	reply, toolCalls, err := runRoleAgent(WithRunContext(ctx, turn.runCtx), o.Analyzer, request,
 		func(toolName, phase string) {
@@ -660,6 +663,8 @@ func (o *Orchestrator) runExecute(ctx context.Context, turn *orchestratorTurn) (
 	request := buildExecutorRequest(turn)
 
 	tipBefore := turn.runCtx.Recorder.TerminalHash()
+	turn.runCtx.CurrentAgent = "executor"
+	turn.runCtx.CurrentStepName = "decide"
 	slog.InfoContext(ctx, "orchestrator: llm call", "step", "decide", "agent", "executor", "model", o.ExecutorModelName, "task_id", turn.TaskID)
 	reply, _, err := runRoleAgent(WithRunContext(ctx, turn.runCtx), o.Executor, request,
 		func(toolName, phase string) {
@@ -714,6 +719,7 @@ func (o *Orchestrator) ensureRunContext(ctx context.Context, turn *orchestratorT
 		Wallet:           turn.Wallet,
 		Recorder:         recorder,
 		OnSubTaskStarted: turn.onSubTaskStarted,
+		OnSubTaskFailed:  turn.onSubTaskFailed,
 	}
 	return nil
 }

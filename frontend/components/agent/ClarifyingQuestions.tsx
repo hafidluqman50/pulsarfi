@@ -17,7 +17,9 @@ type ClarifyingQuestionsProps = {
   // When provided, send() and cancelPlan() call this instead of mutating
   // directly — routes through ChatThread.handleSend so isStreaming and
   // pendingText are set correctly (streaming indicator + no false retry).
-  onSendPrompt?: (text: string) => void;
+  // Async since handleSend is; awaited so isSending reflects when it
+  // actually settles, not just when it was called.
+  onSendPrompt?: (text: string) => void | Promise<void>;
 };
 
 function formatNumberWithDots(val: string | number): string {
@@ -60,13 +62,20 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt }: Clarifyin
   const [draft, setDraft] = useState<Record<string, string>>({});
   const sendMessage = useSendChatMessage(chatId);
   const isSendingRef = useRef(false);
+  // sendMessage.isPending only reflects the fallback path (no
+  // onSendPrompt) — the primary path routes through ChatThread.handleSend
+  // instead, which never touches this mutation, so it stayed permanently
+  // false and the button never visibly disabled
+  // (docs/plans/fix-clarifying-questions-pending-state.md).
+  const [isSending, setIsSending] = useState(false);
+  // Pre-existing rules-of-hooks violation (called after the early return
+  // below) — moved above it, unrelated to this session's other fixes.
+  const [isCancelled, setIsCancelled] = useState(false);
 
   if (questions.length === 0) return null;
 
   const answeredCount = questions.filter((q) => (draft[q.key] ?? '').trim() !== '').length;
   const allAnswered = answeredCount === questions.length;
-
-  const [isCancelled, setIsCancelled] = useState(false);
 
   if (isCancelled) {
     return (
@@ -92,37 +101,41 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt }: Clarifyin
     );
   }
 
-  function cancelPlan() {
-    if (isSendingRef.current || sendMessage.isPending) return;
+  async function cancelPlan() {
+    if (isSendingRef.current) return;
     const cancelText = contract.needs_input.cancel_button || contract.ledger.disarm_button;
     setIsCancelled(true);
-    if (onSendPrompt) {
-      onSendPrompt(cancelText);
-    } else {
-      isSendingRef.current = true;
-      sendMessage.mutate(cancelText, {
-        onSettled: () => {
-          isSendingRef.current = false;
-        },
-      });
+    isSendingRef.current = true;
+    setIsSending(true);
+    try {
+      if (onSendPrompt) {
+        await onSendPrompt(cancelText);
+      } else {
+        await sendMessage.mutateAsync(cancelText);
+      }
+    } finally {
+      isSendingRef.current = false;
+      setIsSending(false);
     }
   }
 
-  function send() {
+  async function send() {
     if (!allAnswered || isSendingRef.current) return;
     // key: value pairs — concise, not full question text repeated in bubble
     const body = questions.map((q) => `${q.key}: ${draft[q.key].trim()}`).join('\n');
-    if (onSendPrompt) {
-      // Route through ChatThread.handleSend — sets isStreaming + pendingText,
-      // activating streaming indicator and preventing the false retry state.
-      onSendPrompt(body);
-    } else {
-      isSendingRef.current = true;
-      sendMessage.mutate(body, {
-        onSettled: () => {
-          isSendingRef.current = false;
-        },
-      });
+    isSendingRef.current = true;
+    setIsSending(true);
+    try {
+      if (onSendPrompt) {
+        // Route through ChatThread.handleSend — sets isStreaming + pendingText,
+        // activating streaming indicator and preventing the false retry state.
+        await onSendPrompt(body);
+      } else {
+        await sendMessage.mutateAsync(body);
+      }
+    } finally {
+      isSendingRef.current = false;
+      setIsSending(false);
     }
   }
 
@@ -345,19 +358,19 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt }: Clarifyin
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button
             onClick={send}
-            disabled={!allAnswered || sendMessage.isPending}
+            disabled={!allAnswered || isSending}
             style={{
               appearance: 'none',
               border: 0,
-              cursor: !allAnswered || sendMessage.isPending ? 'not-allowed' : 'pointer',
+              cursor: !allAnswered || isSending ? 'not-allowed' : 'pointer',
               flex: 1,
-              background: !allAnswered || sendMessage.isPending ? 'var(--hairline-strong)' : 'var(--merah)',
+              background: !allAnswered || isSending ? 'var(--hairline-strong)' : 'var(--merah)',
               color: 'var(--putih)',
               font: '600 13px/1 var(--font-sans)',
               padding: 12,
             }}
           >
-            {sendMessage.isPending
+            {isSending
               ? (contract.needs_input.sending_button || contract.button_labels.executing)
               : allAnswered
               ? contract.needs_input.button
@@ -366,11 +379,11 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt }: Clarifyin
           <button
             type="button"
             onClick={cancelPlan}
-            disabled={sendMessage.isPending}
+            disabled={isSending}
             style={{
               appearance: 'none',
               border: '1px solid var(--hairline-strong)',
-              cursor: sendMessage.isPending ? 'not-allowed' : 'pointer',
+              cursor: isSending ? 'not-allowed' : 'pointer',
               background: 'transparent',
               color: 'var(--body)',
               font: '500 12.5px/1 var(--font-sans)',

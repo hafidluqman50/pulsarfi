@@ -26,6 +26,18 @@ type RunContext struct {
 	// ephemeral live signal so the UI can show "in progress" instead of a
 	// step only ever appearing already finished.
 	OnSubTaskStarted func(agentName, stepName, label string)
+	// OnSubTaskFailed fires when WrapToolGraceful catches a tool error —
+	// read by gracefulTool.InvokableRun via RunContextFrom(ctx), which has
+	// no other way to reach the turn's callbacks (a tool only ever receives
+	// ctx, never the orchestratorTurn itself). Never persisted, same as
+	// OnSubTaskStarted.
+	OnSubTaskFailed func(agentName, stepName, reason string)
+	// CurrentAgent/CurrentStepName identify which step is currently running
+	// its tool-calling loop, set right before runRoleAgent is invoked — the
+	// only way gracefulTool.InvokableRun (which only knows the failing
+	// tool's own name) can attribute a caught failure to the right step.
+	CurrentAgent    string
+	CurrentStepName string
 }
 
 type runContextKey struct{}

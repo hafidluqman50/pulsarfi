@@ -185,10 +185,16 @@ func NewOrchestrator(ctx context.Context, o *Orchestrator) (*Orchestrator, error
 type AgentEventCallbacks struct {
 	OnSubTask        func(dbmodel.AgentSubTask)
 	OnSubTaskStarted func(agentName, stepName, label string)
-	OnTextDelta      func(string)
-	OnToolCall       func(agentName, toolName, phase string)
-	OnThinking       func(agentName, delta string)
-	OnFinalizing     func()
+	// OnSubTaskFailed fires when a tool call inside a step is caught
+	// non-fatally by WrapToolGraceful — never persisted (same as
+	// OnSubTaskStarted), purely an ephemeral live signal so the UI can show
+	// a real failed state instead of guessing one from a second
+	// OnSubTaskStarted for the same step ever arriving.
+	OnSubTaskFailed func(agentName, stepName, reason string)
+	OnTextDelta     func(string)
+	OnToolCall      func(agentName, toolName, phase string)
+	OnThinking      func(agentName, delta string)
+	OnFinalizing    func()
 }
 
 type OrchestratorInput struct {
@@ -457,6 +463,7 @@ type orchestratorTurn struct {
 
 	onSubTask        func(dbmodel.AgentSubTask)
 	onSubTaskStarted func(agentName, stepName, label string)
+	onSubTaskFailed  func(agentName, stepName, reason string)
 	onTextDelta      func(string)
 	onToolCall       func(agentName, toolName, phase string)
 	onThinking       func(agentName, delta string)
@@ -478,6 +485,7 @@ type orchestratorTurn struct {
 func (t *orchestratorTurn) bindCallbacks(cb AgentEventCallbacks) {
 	t.onSubTask = cb.OnSubTask
 	t.onSubTaskStarted = cb.OnSubTaskStarted
+	t.onSubTaskFailed = cb.OnSubTaskFailed
 	t.onTextDelta = cb.OnTextDelta
 	t.onToolCall = cb.OnToolCall
 	t.onThinking = cb.OnThinking

@@ -43,10 +43,19 @@ export async function getChatMessages(chatId: string): Promise<AgentChatMessage[
   return Array.isArray(res.data?.data) ? res.data.data : [];
 }
 
-export interface SubTaskStarted {
+// LiveSubTask is one row of the turn's own sub-task list, exactly as the
+// backend decided it (backend/src/http/handlers/agent/chats.go's
+// liveSubTaskEntry) — the frontend never receives a fragment for a single
+// step, only this full list on every 'sub_tasks' push, so it never matches,
+// merges, or infers anything about what happened to a step; it only ever
+// replaces its whole local list with what it is given.
+export interface LiveSubTask {
   agent: string;
   step_name: string;
-  label: string;
+  label?: string;
+  status: 'in_progress' | 'done' | 'failed';
+  reason?: string;
+  row?: AgentSubTask;
 }
 
 export interface ToolCallEvent {
@@ -61,8 +70,7 @@ export interface ThinkingEvent {
 }
 
 export type ChatStreamEvent =
-  | { type: 'sub_task'; data: AgentSubTask }
-  | { type: 'sub_task_started'; data: SubTaskStarted }
+  | { type: 'sub_tasks'; data: LiveSubTask[] }
   | { type: 'tool_call'; data: ToolCallEvent }
   | { type: 'thinking'; data: ThinkingEvent }
   | { type: 'finalizing'; data: Record<string, never> }
@@ -73,8 +81,8 @@ export type ChatStreamEvent =
 // chatStreamTopic must match the backend's own chatStreamTopic()
 // (backend/src/http/handlers/agent/chats.go) exactly — subscribe to this
 // via useRealtimeTopic *before* calling sendChatMessage/retryLastMessage,
-// since live progress (sub_task/sub_task_started/reply_delta) now arrives
-// over the shared WebSocket, not in the HTTP response body.
+// since live progress (sub_tasks/reply_delta) now arrives over the shared
+// WebSocket, not in the HTTP response body.
 // docs/plans/agent-orchestration-graph-rebuild.md v2.6: "no SSE, disini
 // pake socket."
 export function chatStreamTopic(chatId: string): string {

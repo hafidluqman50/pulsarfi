@@ -25,11 +25,11 @@ export function useAgentChats() {
   return useQuery({ queryKey: ['agent-chats'], queryFn: chatApi.listChats });
 }
 
-export function useChatMessages(chatId?: string) {
+export function useChatMessages(chatId?: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['agent-chat-messages', chatId],
     queryFn: () => chatApi.getChatMessages(chatId!),
-    enabled: !!chatId,
+    enabled: !!chatId && (options?.enabled ?? true),
   });
 }
 
