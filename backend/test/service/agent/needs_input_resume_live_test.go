@@ -47,7 +47,7 @@ func TestNeedsInputThenResumeProducesArmCard(t *testing.T) {
 	firstPrompt := "Ayo beli BRPT scalping"
 	t.Logf("Turn 1 (should pause on needs_input, missing budget): %q", firstPrompt)
 
-	card1, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, firstPrompt, agent.AgentEventCallbacks{})
+	card1, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, firstPrompt, false, agent.AgentEventCallbacks{})
 	if err != nil {
 		t.Fatalf("turn 1 HandleChatMessage failed (this is the live panic if it reoccurs): %v", err)
 	}
@@ -63,7 +63,7 @@ func TestNeedsInputThenResumeProducesArmCard(t *testing.T) {
 	secondPrompt := "5000000"
 	t.Logf("Turn 2 (answers the budget question, same chat, should resume): %q", secondPrompt)
 
-	card2, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, secondPrompt, agent.AgentEventCallbacks{})
+	card2, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, secondPrompt, false, agent.AgentEventCallbacks{})
 	if err != nil {
 		t.Fatalf("turn 2 HandleChatMessage failed (THIS is the resume path that panicked live): %v", err)
 	}

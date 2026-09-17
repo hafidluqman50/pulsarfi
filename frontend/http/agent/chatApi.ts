@@ -15,6 +15,11 @@ export interface AgentChatMessage {
   content_type: 'text' | 'workflow_card' | 'chart' | 'news' | 'horizon_notice' | string;
   content: string;
   ui_component: string | null;
+  // { hidden: true } marks a real, persisted chat message (full history,
+  // fed to the LLM as context) that must never render as a bubble — the
+  // compiled answer a clarifying-questions card sends, not something the
+  // user typed. content_type is a strict DB enum with no room for a
+  // "hidden" variant, so this lives in the one unconstrained JSON column.
   ui_props: unknown;
   ui_ref_task_id: number | null;
   created_at: string;
@@ -43,10 +48,19 @@ export async function getChatMessages(chatId: string): Promise<AgentChatMessage[
   return Array.isArray(res.data?.data) ? res.data.data : [];
 }
 
-export interface SubTaskStarted {
+// LiveSubTask is one row of the turn's own sub-task list, exactly as the
+// backend decided it (backend/src/http/handlers/agent/chats.go's
+// liveSubTaskEntry) — the frontend never receives a fragment for a single
+// step, only this full list on every 'sub_tasks' push, so it never matches,
+// merges, or infers anything about what happened to a step; it only ever
+// replaces its whole local list with what it is given.
+export interface LiveSubTask {
   agent: string;
   step_name: string;
-  label: string;
+  label?: string;
+  status: 'in_progress' | 'done' | 'failed';
+  reason?: string;
+  row?: AgentSubTask;
 }
 
 export interface ToolCallEvent {
@@ -61,8 +75,7 @@ export interface ThinkingEvent {
 }
 
 export type ChatStreamEvent =
-  | { type: 'sub_task'; data: AgentSubTask }
-  | { type: 'sub_task_started'; data: SubTaskStarted }
+  | { type: 'sub_tasks'; data: LiveSubTask[] }
   | { type: 'tool_call'; data: ToolCallEvent }
   | { type: 'thinking'; data: ThinkingEvent }
   | { type: 'finalizing'; data: Record<string, never> }
@@ -73,8 +86,8 @@ export type ChatStreamEvent =
 // chatStreamTopic must match the backend's own chatStreamTopic()
 // (backend/src/http/handlers/agent/chats.go) exactly — subscribe to this
 // via useRealtimeTopic *before* calling sendChatMessage/retryLastMessage,
-// since live progress (sub_task/sub_task_started/reply_delta) now arrives
-// over the shared WebSocket, not in the HTTP response body.
+// since live progress (sub_tasks/reply_delta) now arrives over the shared
+// WebSocket, not in the HTTP response body.
 // docs/plans/agent-orchestration-graph-rebuild.md v2.6: "no SSE, disini
 // pake socket."
 export function chatStreamTopic(chatId: string): string {
@@ -86,8 +99,8 @@ export function chatStreamTopic(chatId: string): string {
 // error), matching every other endpoint in this API. A caller that never
 // subscribed to chatStreamTopic(chatId) still gets a correct, complete
 // result, it just misses the live play-by-play.
-export async function sendChatMessage(chatId: string, message: string): Promise<WorkflowCard> {
-  const res = await client.post(`/agent/chats/${chatId}/messages`, { message });
+export async function sendChatMessage(chatId: string, message: string, hidden?: boolean): Promise<WorkflowCard> {
+  const res = await client.post(`/agent/chats/${chatId}/messages`, { message, hidden: hidden ?? false });
   return res.data.data as WorkflowCard;
 }
 

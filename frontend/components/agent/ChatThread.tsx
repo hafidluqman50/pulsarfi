@@ -1,10 +1,9 @@
 'use client';
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { sendChatMessage, retryLastMessage, chatStreamTopic, type AgentChatMessage, type ChatStreamEvent, type SubTaskStarted } from '@/http/agent/chatApi';
-import type { AgentSubTask } from '@/http/agent/taskApi';
+import { sendChatMessage, retryLastMessage, chatStreamTopic, type AgentChatMessage, type ChatStreamEvent, type LiveSubTask } from '@/http/agent/chatApi';
 import { useRealtimeTopic } from '@/http/realtime/useRealtimeSocket';
 import { ClarifyingQuestions } from './ClarifyingQuestions';
 import { HorizonNoticeCard } from './HorizonNoticeCard';
@@ -39,67 +38,6 @@ function ChartSkeletonCard() {
   );
 }
 
-let placeholderIdCounter = 0;
-
-// A sub_task_started event has no persisted row yet — it becomes a
-// synthetic in_progress placeholder in the live list, occupying that
-// step's slot the instant it begins rather than only once it's done.
-function placeholderSubTask(started: SubTaskStarted, stepOrder: number): AgentSubTask {
-  placeholderIdCounter -= 1;
-  return {
-    id: placeholderIdCounter,
-    task_id: 0,
-    step_order: stepOrder,
-    agent: started.agent,
-    step_name: started.step_name,
-    label: started.label,
-    status: 'in_progress',
-    reasoning: '',
-    output: null,
-    prev_decision_hash: '',
-    decision_hash: '',
-    recorded_on_chain: false,
-    on_chain_tx_hash: null,
-    created_at: new Date().toISOString(),
-  };
-}
-
-// addStartedPlaceholder first marks any existing still-in_progress
-// placeholder for the same (agent, step_name) as "retried" instead of
-// leaving it stuck — Supervisor calling analyzer_agent/executor_agent a
-// second time for the same step (e.g. its first attempt failed silently
-// via WrapToolGraceful, no matching "done" ever arrived for it) used to
-// leave that first placeholder orphaned in_progress forever, and its own
-// client-assigned step_order could collide visually with the real
-// step_order of whatever got recorded next. Only ever one in_progress
-// placeholder per (agent, step_name) can exist after this, so
-// mergeSubTaskDone's "find the matching placeholder" below stays
-// unambiguous even across a retry.
-function addStartedPlaceholder(prev: AgentSubTask[], started: SubTaskStarted): AgentSubTask[] {
-  const superseded = prev.map((row) => {
-    if (row.status !== 'in_progress') return row;
-    if (row.agent === started.agent && row.step_name === started.step_name) {
-      return { ...row, status: 'retried' as const };
-    }
-    // Graph execution is strictly serial — when a new step starts, the prior in_progress step is completed
-    return { ...row, status: 'done' as const };
-  });
-  return [...superseded, placeholderSubTask(started, superseded.length + 1)];
-}
-
-// mergeSubTaskDone replaces the still-in_progress placeholder for the same
-// (agent, step_name) with the real persisted row — same slot, same
-// position, so a step never appears twice (once as "in progress", again as
-// "done"). Falls back to appending if no matching placeholder exists (e.g.
-// a step that never got a sub_task_started of its own).
-function mergeSubTaskDone(prev: AgentSubTask[], done: AgentSubTask): AgentSubTask[] {
-  const index = prev.findIndex((row) => row.status === 'in_progress' && row.agent === done.agent && row.step_name === done.step_name);
-  if (index === -1) return [...prev, done];
-  const next = [...prev];
-  next[index] = done;
-  return next;
-}
-
 // toolActivityByAgent maps agent ("analyzer"/"executor") to a human label for
 // the tool it is currently (or was last seen) calling, sourced from tool_call
 // events — this is per-agent, not per-(agent, step_name), because only one
@@ -115,7 +53,7 @@ function LiveSubTasks({
   thinkingByAgent,
   isFinalizing,
 }: {
-  subTasks: AgentSubTask[];
+  subTasks: LiveSubTask[];
   toolActivityByAgent: Record<string, string>;
   thinkingByAgent: Record<string, string>;
   isFinalizing: boolean;
@@ -138,18 +76,19 @@ function LiveSubTasks({
         <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>{label}</span>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--hairline-strong)' }}>{subTasks.length} sub tasks so far</span>
       </div>
-      {subTasks.map((subTask) => {
+      {subTasks.map((subTask, i) => {
         const color = statusColor(subTask.status);
-        const isOpen = openRow === subTask.id;
+        const isOpen = openRow === i;
+        const output = subTask.row?.output;
         return (
-          <div key={subTask.id} className="rise" style={{ borderBottom: '1px solid var(--hairline)' }}>
+          <div key={`${subTask.agent}-${subTask.step_name}-${i}`} className="rise" style={{ borderBottom: '1px solid var(--hairline)' }}>
             <button
-              onClick={() => setOpenRow(isOpen ? null : subTask.id)}
+              onClick={() => setOpenRow(isOpen ? null : i)}
               style={{ width: '100%', appearance: 'none', border: 0, cursor: 'pointer', background: 'transparent', padding: '11px 13px', textAlign: 'left', display: 'block' }}
             >
               <span style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ticker)', flex: 'none' }}>
-                  {String(subTask.step_order).padStart(2, '0')}
+                  {String(i + 1).padStart(2, '0')}
                 </span>
                 <span style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3, flex: '1 1 120px', minWidth: 0 }}>{stepDisplayName(subTask.label, subTask.step_name)}</span>
                 <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, flex: 'none' }}>
@@ -165,13 +104,13 @@ function LiveSubTasks({
                 <div style={{ font: '600 8.5px/1.2 var(--font-sans)', letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--ticker)', marginBottom: 6 }}>
                   Reasoning · {agentDisplayName(subTask.agent)}
                 </div>
-                <div style={{ marginBottom: subTask.output ? 14 : 0 }}>
-                  {subTask.status === 'retried' ? (
-                    // "retried" means Supervisor started this same step again
-                    // before this attempt ever finished — this one simply never
-                    // got a result, not a bug in this render.
-                    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ticker)', fontStyle: 'italic' }}>
-                      {`${agentDisplayName(subTask.agent)} mengulang langkah ini sebelum percobaan ini selesai.`}
+                <div style={{ marginBottom: output ? 14 : 0 }}>
+                  {subTask.status === 'failed' ? (
+                    // A real failure the backend caught and reported directly
+                    // (WrapToolGraceful, see OnSubTaskFailed) — shown as-is,
+                    // never relabeled or hidden.
+                    <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--negative)' }}>
+                      {subTask.reason || `${agentDisplayName(subTask.agent)} could not complete this step.`}
                     </div>
                   ) : subTask.status === 'in_progress' ? (
                     // Real, live content only — Nova's/Comet's own streamed
@@ -193,15 +132,15 @@ function LiveSubTasks({
                       )}
                     </div>
                   ) : (
-                    <StructuredOrProse raw={subTask.reasoning} />
+                    <StructuredOrProse raw={subTask.row?.reasoning ?? ''} />
                   )}
                 </div>
-                {subTask.output && (
+                {output && (
                   <>
                     <div style={{ font: '600 8.5px/1.2 var(--font-sans)', letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--ticker)', marginBottom: 8 }}>
                       Output
                     </div>
-                    <StructuredOrProse raw={subTask.output} />
+                    <StructuredOrProse raw={output} />
                   </>
                 )}
               </div>
@@ -255,15 +194,35 @@ type MessageListProps = {
   isStreaming: boolean;
   pendingText: string | null;
   failedMessage: { text: string; description: string } | null;
-  liveSubTasks: AgentSubTask[];
+  liveSubTasks: LiveSubTask[];
   toolActivityByAgent: Record<string, string>;
   thinkingByAgent: Record<string, string>;
   isFinalizing: boolean;
   chartPending: boolean;
   streamingReplyText: string;
   onRetry: () => void;
-  onSendPrompt?: (text: string) => void;
+  onSendPrompt?: (text: string, hidden?: boolean) => void | Promise<void>;
 };
+
+// A hidden intake-answer message carries { hidden: true } in ui_props
+// (content_type is a strict DB enum with no room for a "hidden" variant —
+// see docs/plans/fix-hide-intake-answer-message.md).
+function isHiddenMessage(message: AgentChatMessage): boolean {
+  return Boolean((message.ui_props as { hidden?: boolean } | null | undefined)?.hidden);
+}
+
+// Parses a compiled "key: value" answer message's own content back into the
+// same shape ClarifyingQuestions built it from — the format is fixed and
+// self-authored, so this is reading back known data, not inferring anything.
+function parseIntakeAnswer(content: string): Record<string, string> {
+  const answers: Record<string, string> = {};
+  for (const line of content.split('\n')) {
+    const separatorIndex = line.indexOf(': ');
+    if (separatorIndex === -1) continue;
+    answers[line.slice(0, separatorIndex)] = line.slice(separatorIndex + 2);
+  }
+  return answers;
+}
 
 // Memoized and pulled out of ChatThread on purpose: draft (the textarea's
 // own state) used to live in the same component that renders this whole
@@ -280,11 +239,36 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
     el.scrollTop = el.scrollHeight;
   }, [messages, pendingText, liveSubTasks, streamingReplyText, isStreaming, isFinalizing, chartPending]);
 
+  // A Task can be referenced by several messages across a conversation (an
+  // intake reply while still needs_input, then a later "ready to arm"
+  // reply once actionable, etc). PlanCard always reads the Task's own
+  // *current* live state, not this message's own snapshot — rendering it
+  // once per referencing message duplicated the same on-chain step list
+  // (or an ArmPanel the task has since moved past) once per message. Only
+  // the *last* message referencing a given task renders it
+  // (docs/plans/fix-plancard-clarifying-questions-duplication.md v1.2 —
+  // corrects the earlier per-ui_component exclusion, which was too broad
+  // and hid the legitimate Sub Task list during an active intake).
+  const lastPlanCardIndexByTaskId = useMemo(() => {
+    const map = new Map<number, number>();
+    messages.forEach((message, index) => {
+      if (message.ui_ref_task_id == null) return;
+      if (message.ui_component === 'HorizonNoticeCard' || message.content_type === 'horizon_notice') return;
+      map.set(message.ui_ref_task_id, index);
+    });
+    return map;
+  }, [messages]);
+
   return (
     <div ref={threadRef} className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
       {isLoading && <div className="skeleton" style={{ height: 80, width: '100%' }} />}
 
       {messages.map((message, index) => {
+        // Real chat history, fed to the LLM as context, but never rendered
+        // — the compiled answer a clarifying-questions card sent, not
+        // something the user typed by hand.
+        if (isHiddenMessage(message)) return null;
+
         const isLast = index === messages.length - 1;
         const needsRetry = isLast && message.sender === 'user' && !isStreaming && !pendingText;
         const retryDescription = needsRetry && failedMessage?.text === message.content ? failedMessage.description : 'No reply received for this message yet.';
@@ -311,10 +295,21 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
                 <MessageMarkdown content={message.content} />
               </div>
             )}
-            {message.ui_ref_task_id != null && message.ui_component !== 'HorizonNoticeCard' && message.content_type !== 'horizon_notice' && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
+            {message.ui_ref_task_id != null && message.ui_component !== 'HorizonNoticeCard' && message.content_type !== 'horizon_notice' && lastPlanCardIndexByTaskId.get(message.ui_ref_task_id) === index && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
             {message.content_type === 'chart' && <ChartCard uiProps={message.ui_props} />}
             {message.content_type === 'news' && <NewsBrief uiProps={message.ui_props} />}
-            {message.ui_component === 'clarifying_questions' && <ClarifyingQuestions uiProps={message.ui_props} chatId={chatId} onSendPrompt={onSendPrompt} />}
+            {message.ui_component === 'clarifying_questions' && (
+              <ClarifyingQuestions
+                uiProps={message.ui_props}
+                chatId={chatId}
+                onSendPrompt={onSendPrompt}
+                initialAnswers={
+                  messages[index + 1] != null && isHiddenMessage(messages[index + 1])
+                    ? parseIntakeAnswer(messages[index + 1].content)
+                    : undefined
+                }
+              />
+            )}
             {(message.ui_component === 'HorizonNoticeCard' || message.content_type === 'horizon_notice') && (
               <HorizonNoticeCard
                 uiProps={message.ui_props}
@@ -354,12 +349,18 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
 });
 
 export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
-  const { data: messages = [], isLoading } = useChatMessages(chatId);
+  // A freshly-promoted chat (initialMessage set) has no row in the database
+  // yet — GET /agent/chats/:id/messages would 404/return empty and briefly
+  // flash the loading skeleton for nothing. Disabled until the first send
+  // settles (docs/plans/fix-new-chat-first-message-loading-flash.md); an
+  // existing chat (no initialMessage) is unaffected, enabled from mount.
+  const [messagesQueryEnabled, setMessagesQueryEnabled] = useState(!initialMessage);
+  const { data: messages = [], isLoading } = useChatMessages(chatId, { enabled: messagesQueryEnabled });
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState('');
   const [pendingText, setPendingText] = useState<string | null>(null);
   const [failedMessage, setFailedMessage] = useState<{ text: string; description: string } | null>(null);
-  const [liveSubTasks, setLiveSubTasks] = useState<AgentSubTask[]>([]);
+  const [liveSubTasks, setLiveSubTasks] = useState<LiveSubTask[]>([]);
   const [toolActivityByAgent, setToolActivityByAgent] = useState<Record<string, string>>({});
   const [thinkingByAgent, setThinkingByAgent] = useState<Record<string, string>>({});
   const [isFinalizing, setIsFinalizing] = useState(false);
@@ -368,36 +369,17 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const isSendingRef = useRef(false);
 
-  // Live progress (sub_task/sub_task_started/reply_delta) arrives over the
-  // shared WebSocket now, not the HTTP response body — subscribed here,
-  // unconditionally, for as long as this chat is open, independent of
-  // whether *this* tab is the one that sent the message
-  // (docs/plans/agent-orchestration-graph-rebuild.md v2.6: "no SSE, disini
-  // pake socket").
+  // Live progress (sub_tasks/reply_delta) arrives over the shared WebSocket
+  // now, not the HTTP response body — subscribed here, unconditionally, for
+  // as long as this chat is open, independent of whether *this* tab is the
+  // one that sent the message (docs/plans/agent-orchestration-graph-rebuild.md
+  // v2.6: "no SSE, disini pake socket"). sub_tasks always carries the
+  // turn's full, current list (backend/src/http/handlers/agent/chats.go's
+  // liveSubTasks) — this is a plain state replace, no matching/merging of
+  // any kind (docs/plans/fix-sub-task-attempt-lifecycle-events.md).
   useRealtimeTopic<ChatStreamEvent>(chatStreamTopic(chatId), (event) => {
-    if (event.type === 'sub_task_started') {
-      setLiveSubTasks((prev) => addStartedPlaceholder(prev, event.data));
-      // A fresh step hasn't called any tool yet — drop the previous step's
-      // leftover label so it can't briefly show through this step's own
-      // placeholder before its first tool_call (if any) arrives.
-      setToolActivityByAgent((prev) => {
-        if (!(event.data.agent in prev)) return prev;
-        const next = { ...prev };
-        delete next[event.data.agent];
-        return next;
-      });
-      // Same reasoning as toolActivityByAgent above: a fresh step hasn't
-      // produced any thinking of its own yet, so the previous step's
-      // leftover text can't linger and get mistaken for this one's.
-      setThinkingByAgent((prev) => {
-        if (!(event.data.agent in prev)) return prev;
-        const next = { ...prev };
-        delete next[event.data.agent];
-        return next;
-      });
-    }
-    if (event.type === 'sub_task') {
-      setLiveSubTasks((prev) => mergeSubTaskDone(prev, event.data));
+    if (event.type === 'sub_tasks') {
+      setLiveSubTasks(event.data);
     }
     if (event.type === 'tool_call' && event.data.phase === 'start') {
       setToolActivityByAgent((prev) => ({ ...prev, [event.data.agent]: humanizeKey(event.data.tool) }));
@@ -420,12 +402,15 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
   // holding a stale copy, and no effect needed to reconcile the two.
   const pendingBubbleText = pendingText && !messages.some((m) => m.sender === 'user' && m.content === pendingText) ? pendingText : null;
 
-  async function handleSend(overrideText?: string) {
+  async function handleSend(overrideText?: string, hidden?: boolean) {
     const trimmed = (overrideText ?? draft).trim();
     if (!trimmed || isSendingRef.current) return;
     isSendingRef.current = true;
     setIsStreaming(true);
-    setPendingText(trimmed);
+    // A hidden send (a clarifying-questions card's compiled answer) never
+    // shows the optimistic bubble either — it must never appear in the UI
+    // at all, live or persisted.
+    if (!hidden) setPendingText(trimmed);
     setFailedMessage(null);
     setLiveSubTasks([]);
     setToolActivityByAgent({});
@@ -435,7 +420,11 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
     setStreamingReplyText('');
     if (!overrideText) setDraft('');
     try {
-      await sendChatMessage(chatId, trimmed);
+      await sendChatMessage(chatId, trimmed, hidden);
+      // The chat row is guaranteed to exist now (FindOrCreate ran inside the
+      // send above) — safe to enable the messages query from here on, a
+      // no-op if it was already enabled.
+      setMessagesQueryEnabled(true);
       // Awaited on purpose: the streaming bubble below is cleared in
       // `finally` right after this. If the persisted message list hasn't
       // actually refetched yet by then, there's a gap where neither the

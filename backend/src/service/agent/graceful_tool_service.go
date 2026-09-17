@@ -48,6 +48,14 @@ func (g *gracefulTool) InvokableRun(ctx context.Context, argumentsInJSON string,
 	}
 	slog.ErrorContext(ctx, "agent: tool call failed, degrading gracefully", "tool", toolName, "error", err, "arguments", argumentsInJSON)
 
+	// Attribute the failure to whichever step's tool-calling loop is
+	// currently running, so the frontend gets a real failed entry instead of
+	// silently losing this attempt — RunContext is the only thing a tool's
+	// own ctx carries back to the orchestrator turn.
+	if rc, ok := RunContextFrom(ctx); ok && rc.OnSubTaskFailed != nil {
+		rc.OnSubTaskFailed(rc.CurrentAgent, rc.CurrentStepName, err.Error())
+	}
+
 	payload, marshalErr := json.Marshal(map[string]string{
 		"tool_error": err.Error(),
 		"note":       "This specific action could not be completed. Explain this to the user briefly and professionally in your own voice, then continue with anything else you can still help with. This is not fatal.",

@@ -79,7 +79,7 @@ func TestChatService_CheckpointPauseResumeCancelAndKeepAlive(t *testing.T) {
 	// 2. Test Explicit Cancellation via HandleChatMessage:
 	// When user sends "cancel" (e.g. clicking Cancel/Disarm button), HandleChatMessage intercepts it,
 	// deletes the checkpoint from Postgres, and returns a cancellation confirmation.
-	card, err := registry.AgentChat.HandleChatMessage(ctx, chatID, testWallet, "cancel", agentsvc.AgentEventCallbacks{})
+	card, err := registry.AgentChat.HandleChatMessage(ctx, chatID, testWallet, "cancel", false, agentsvc.AgentEventCallbacks{})
 	if err != nil {
 		t.Fatalf("HandleChatMessage cancel error: %v", err)
 	}
