@@ -78,9 +78,12 @@ contract AgentTaskManager is AccessControl, ReentrancyGuard {
     // from Task, because the relationship is optional: an informational
     // Task never has one of these.
     struct TradePermission {
-        uint256 totalBudget; // IDRX-equivalent value ceiling
-        uint256 usedBudget; // IDRX-equivalent value consumed so far
+        uint256 totalBudget; // Budget ceiling (IDRX for Buy, Stock tokens for Sell)
+        uint256 usedBudget; // Consumed budget (IDRX for Buy, Stock tokens for Sell)
         uint64 expiresAt;
+        uint256 maxAmountPerTrade; // 0 = no limit, ceiling per single execution
+        uint256 cooldownInterval; // 0 = no cooldown, minimum seconds between executions
+        uint256 lastExecutedAt; // timestamp of latest execution
     }
 
     // Real storage, not events-only — retrievable by anyone, forever, with
@@ -149,6 +152,8 @@ contract AgentTaskManager is AccessControl, ReentrancyGuard {
     error NoTradePermission(uint256 taskId);
     error TradePermissionExpired(uint256 taskId, uint64 expiresAt);
     error BudgetExceeded(uint256 amount, uint256 remaining);
+    error MaxAmountPerTradeExceeded(uint256 amount, uint256 maxAmount);
+    error CooldownActive(uint256 currentTime, uint256 readyTime);
     error AllowanceExceeded(uint256 amount, uint256 allowance);
     error SubTaskNotFound(uint256 subTaskId);
     error SubTaskTaskMismatch(uint256 subTaskId, uint256 expectedTaskId);
@@ -183,14 +188,32 @@ contract AgentTaskManager is AccessControl, ReentrancyGuard {
         emit TaskCreated(taskId, owner, isActionable, summary);
     }
 
+    // A Task can open before its own trade parameters are fully known yet
+    // (Supervisor's intake may still be gathering answers), so isActionable
+    // at createTask time can genuinely still be false when the eventual
+    // request turns out actionable. This is the one-way upgrade path for
+    // that case — never the reverse, an already-actionable Task never goes
+    // back to purely informational.
+    function markActionable(uint256 taskId) external onlyRole(AGENT_ROLE) {
+        Task storage task = tasks[taskId];
+        if (task.owner == address(0)) revert TaskNotFound(taskId);
+        task.isActionable = true;
+    }
+
     // Called only once Executor concludes a trade is actually warranted for
     // this Task — not reserved speculatively at creation time. Still
     // bookkeeping only: this records what was agreed off-chain, it does
     // not move or reserve any funds itself. The real custody boundary is
     // the owner's own separate ERC20 approve() to this contract's address,
     // checked live in executeTrade below, independent of this record.
-    function grantTradePermission(uint256 taskId, uint256 totalBudget, uint256 duration)
-        external
+    function grantTradePermission(
+        uint256 taskId,
+        uint256 totalBudget,
+        uint256 duration,
+        uint256 maxAmountPerTrade,
+        uint256 cooldownInterval
+    )
+        public
         onlyRole(AGENT_ROLE)
     {
         Task storage task = tasks[taskId];
@@ -199,8 +222,22 @@ contract AgentTaskManager is AccessControl, ReentrancyGuard {
         if (tradePermissions[taskId].expiresAt != 0) revert TradePermissionAlreadyGranted(taskId);
 
         uint64 expiresAt = uint64(block.timestamp + duration);
-        tradePermissions[taskId] = TradePermission({totalBudget: totalBudget, usedBudget: 0, expiresAt: expiresAt});
+        tradePermissions[taskId] = TradePermission({
+            totalBudget: totalBudget,
+            usedBudget: 0,
+            expiresAt: expiresAt,
+            maxAmountPerTrade: maxAmountPerTrade,
+            cooldownInterval: cooldownInterval,
+            lastExecutedAt: 0
+        });
         emit TradePermissionGranted(taskId, totalBudget, expiresAt);
+    }
+
+    function grantTradePermission(uint256 taskId, uint256 totalBudget, uint256 duration)
+        external
+        onlyRole(AGENT_ROLE)
+    {
+        grantTradePermission(taskId, totalBudget, duration, 0, 0);
     }
 
     // Batched into one transaction so the chain's base fee is paid once per
@@ -267,11 +304,24 @@ contract AgentTaskManager is AccessControl, ReentrancyGuard {
             revert TradePermissionExpired(taskId, tradePermission.expiresAt);
         }
 
+        if (tradePermission.maxAmountPerTrade > 0 && amount > tradePermission.maxAmountPerTrade) {
+            revert MaxAmountPerTradeExceeded(amount, tradePermission.maxAmountPerTrade);
+        }
+
+        if (tradePermission.cooldownInterval > 0 && tradePermission.lastExecutedAt > 0) {
+            uint256 readyTime = tradePermission.lastExecutedAt + tradePermission.cooldownInterval;
+            if (block.timestamp < readyTime) {
+                revert CooldownActive(block.timestamp, readyTime);
+            }
+        }
+
         uint256 remainingRecordedBudget = tradePermission.totalBudget - tradePermission.usedBudget;
         if (amount == 0 || amount > remainingRecordedBudget) revert BudgetExceeded(amount, remainingRecordedBudget);
 
         uint256 currentLiveAllowance = IERC20(token).allowance(task.owner, address(this));
         if (amount > currentLiveAllowance) revert AllowanceExceeded(amount, currentLiveAllowance);
+
+        tradePermission.lastExecutedAt = block.timestamp;
 
         uint256 receivedAmount;
         if (side == TradeSide.Sell) {
@@ -282,10 +332,8 @@ contract AgentTaskManager is AccessControl, ReentrancyGuard {
             protocol.swapV4(ticker, amount, minimumOutputAmount, false);
             receivedAmount = idrx.balanceOf(address(this)) - idrxBefore;
 
-            // IDRX-denominated budget only known after the swap completes —
-            // this update happens after an external call, which is exactly
-            // the ordering nonReentrant exists to make safe.
-            tradePermission.usedBudget += receivedAmount;
+            // In Sell, the budget consumed is the stock amount pulled from owner
+            tradePermission.usedBudget += amount;
             idrx.safeTransfer(task.owner, receivedAmount);
         } else {
             idrx.safeTransferFrom(task.owner, address(this), amount);

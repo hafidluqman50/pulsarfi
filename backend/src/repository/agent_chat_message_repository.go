@@ -32,6 +32,15 @@ func (r *AgentChatMessageRepository) FindByChatID(ctx context.Context, chatID uu
 	return messages, err
 }
 
+func (r *AgentChatMessageRepository) FindByUIRefTaskID(ctx context.Context, taskID int64) (model.AgentChatMessage, bool, error) {
+	var message model.AgentChatMessage
+	err := r.DB.WithContext(ctx).First(&message, "ui_ref_task_id = ?", taskID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.AgentChatMessage{}, false, nil
+	}
+	return message, err == nil, err
+}
+
 type AgentChatMessageCreateInput struct {
 	ChatID      uuid.UUID
 	Sender      string

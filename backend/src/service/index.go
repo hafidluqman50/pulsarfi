@@ -32,6 +32,7 @@ type Registry struct {
 	TransferIndexer        *indexersvc.TransferIndexerService
 	AgentChat              *agentsvc.ChatService
 	AgentTask              *agentsvc.TaskService
+	AgentTaskScheduler     *agentsvc.TaskScheduler
 	PortfolioChart         *publicsvc.PortfolioChartReader
 }
 
@@ -55,7 +56,7 @@ func NewRegistry(cfg Config) *Registry {
 			Price:  price,
 		},
 	}
-	agentChatSvc, agentTaskSvc := newAgentTaskServices(cfg.Repos, chartReader)
+	agentChatSvc, agentTaskSvc, agentTaskScheduler := newAgentTaskServices(cfg.Repos, chartReader)
 
 	// Assign only on success: a failed *external.ChainVerifyService stored in
 	// a nil interface var would make publicsvc.RedeemVerifier(redeemVerifier)
@@ -138,8 +139,9 @@ func NewRegistry(cfg Config) *Registry {
 			Price:  price,
 			Config: cfg.TransferIndexerConfig,
 		},
-		AgentChat:      agentChatSvc,
-		AgentTask:      agentTaskSvc,
-		PortfolioChart: chartReader,
+		AgentChat:          agentChatSvc,
+		AgentTask:          agentTaskSvc,
+		AgentTaskScheduler: agentTaskScheduler,
+		PortfolioChart:     chartReader,
 	}
 }

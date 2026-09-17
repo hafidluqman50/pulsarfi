@@ -15,6 +15,13 @@ export function QuasarPanel() {
   const [expanded, setExpanded] = useState(false);
   const [destination, setDestination] = useState<QuasarDestination>('chat');
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  // A chat the user has asked to start but not sent a first message into
+  // yet — no chat row exists in the DB for this id, so ChatThread must not
+  // mount (and fire GET /agent/chats/<id>/messages against it) until the
+  // user actually submits something.
+  const [pendingNewChatId, setPendingNewChatId] = useState<string | null>(null);
+  const [pendingDraft, setPendingDraft] = useState('');
+  const [initialMessageForActiveChat, setInitialMessageForActiveChat] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
   const [isSheet, setIsSheet] = useState(false);
   const [activityKind, setActivityKind] = useState<ActivityKind>('all');
@@ -31,14 +38,33 @@ export function QuasarPanel() {
   const { data: activity = [] } = useAgentActivity();
 
   useEffect(() => {
-    if (activeChatId || chats.length === 0) return;
+    if (activeChatId || pendingNewChatId || chats.length === 0) return;
     setActiveChatId(chats[0].id);
-  }, [chats, activeChatId]);
+  }, [chats, activeChatId, pendingNewChatId]);
 
   function handleNewChat() {
-    setActiveChatId(crypto.randomUUID());
+    setActiveChatId(null);
+    setPendingNewChatId(crypto.randomUUID());
+    setPendingDraft('');
     setActiveTaskId(null);
     setDestination('chat');
+  }
+
+  function handleSelectChat(chatId: string) {
+    setPendingNewChatId(null);
+    setPendingDraft('');
+    setActiveChatId(chatId);
+    setDestination('chat');
+  }
+
+  function handleSendPending() {
+    const trimmed = pendingDraft.trim();
+    if (!trimmed) return;
+    const targetChatId = pendingNewChatId ?? crypto.randomUUID();
+    setInitialMessageForActiveChat(trimmed);
+    setActiveChatId(targetChatId);
+    setPendingNewChatId(null);
+    setPendingDraft('');
   }
 
   if (!expanded) {
@@ -154,10 +180,7 @@ export function QuasarPanel() {
           {chats.map((chat) => (
             <button
               key={chat.id}
-              onClick={() => {
-                setActiveChatId(chat.id);
-                setDestination('chat');
-              }}
+              onClick={() => handleSelectChat(chat.id)}
               style={{ width: '100%', appearance: 'none', border: 0, borderBottom: '1px solid var(--hairline)', cursor: 'pointer', background: 'var(--canvas)', padding: 13, textAlign: 'left' }}
             >
               <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{chat.description ?? `Chat #${chat.id}`}</div>
@@ -218,9 +241,9 @@ export function QuasarPanel() {
         </div>
       )}
 
-      {destination === 'chat' && (
-        <>
-          {!activeChatId && (
+      <div style={{ display: destination === 'chat' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
+        {!activeChatId && (
+          <>
             <div className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
                 <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>
@@ -229,18 +252,38 @@ export function QuasarPanel() {
                 </div>
               </div>
               <RosterCard />
-              <button
-                onClick={handleNewChat}
-                style={{ appearance: 'none', cursor: 'pointer', border: '1px solid var(--hairline-strong)', background: 'transparent', color: 'var(--ink)', font: '400 13.5px/1.45 var(--font-sans)', padding: '10px 12px', textAlign: 'left', display: 'flex', gap: 9 }}
-              >
-                <span style={{ color: 'var(--merah)', fontFamily: 'var(--font-mono)', fontSize: 12, flex: 'none' }}>&rarr;</span>
-                <span>Start a new chat to talk to Quasar</span>
-              </button>
             </div>
-          )}
-          {activeChatId && <ChatThread chatId={activeChatId} />}
-        </>
-      )}
+            <div style={{ flex: 'none', borderTop: '1px solid var(--hairline)', background: 'var(--canvas)', padding: '10px 12px 12px' }}>
+              <div style={{ border: '1px solid var(--ink)', background: 'var(--putih)', display: 'flex', alignItems: 'flex-end', gap: 0 }}>
+                <textarea
+                  value={pendingDraft}
+                  onChange={(e) => setPendingDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendPending();
+                    }
+                  }}
+                  rows={2}
+                  placeholder="Ask or instruct Quasar…"
+                  style={{ flex: 1, border: 0, background: 'transparent', padding: '11px 12px', font: '400 14px/1.5 var(--font-sans)', color: 'var(--ink)', outline: 'none', resize: 'none' }}
+                />
+                <button
+                  onClick={handleSendPending}
+                  disabled={!pendingDraft.trim()}
+                  style={{ appearance: 'none', border: 0, cursor: 'pointer', background: 'var(--merah)', color: 'var(--putih)', font: '600 12px/1 var(--font-sans)', padding: '14px 13px', flex: 'none', alignSelf: 'stretch' }}
+                >
+                  Send
+                </button>
+              </div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ticker)', marginTop: 7 }}>only this box is treated as a command</div>
+            </div>
+          </>
+        )}
+        {activeChatId && (
+          <ChatThread key={activeChatId} chatId={activeChatId} initialMessage={initialMessageForActiveChat ?? undefined} />
+        )}
+      </div>
     </div>
   );
 }

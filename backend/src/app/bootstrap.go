@@ -114,6 +114,9 @@ func buildHandler() (*gin.Engine, func(), error) {
 	if svcs.AgentTask != nil {
 		go svcs.AgentTask.RunSubTaskRetry(indexerCtx)
 	}
+	if svcs.AgentTaskScheduler != nil {
+		svcs.AgentTaskScheduler.Start(indexerCtx)
+	}
 	svcs.StartRealtimePublishers(indexerCtx)
 
 	return routes.SetupRouter(db, jwtConfig), cleanup, nil

@@ -14,6 +14,10 @@ type IntakeField = {
 type ClarifyingQuestionsProps = {
   uiProps: unknown;
   chatId: string;
+  // When provided, send() and cancelPlan() call this instead of mutating
+  // directly — routes through ChatThread.handleSend so isStreaming and
+  // pendingText are set correctly (streaming indicator + no false retry).
+  onSendPrompt?: (text: string) => void;
 };
 
 function formatNumberWithDots(val: string | number): string {
@@ -29,13 +33,27 @@ function formatBudgetHumanReadable(val: string | number): string {
   return `${num.toLocaleString()} IDRX`;
 }
 
-function isAmountQuestion(q: IntakeField): boolean {
+function isStockSellAmountQuestion(q: IntakeField): boolean {
   const key = q.key.toLowerCase();
-  if (key === 'idrx_cap' || key === 'budget' || key === 'budget_idrx') return true;
-  return /idrx|budget|anggaran|modal|dana|nominal|how much/i.test(q.question);
+  if (key === 'portfolio_share' || key === 'sell_amount' || key === 'token_amount' || key === 'share_amount') return true;
+  return /jual|sell|lembar|share|token|persen|percent/i.test(q.question);
 }
 
-export function ClarifyingQuestions({ uiProps, chatId }: ClarifyingQuestionsProps) {
+function isCashBudgetQuestion(q: IntakeField): boolean {
+  if (isStockSellAmountQuestion(q)) return false;
+  const key = q.key.toLowerCase();
+  if (key === 'idrx_cap' || key === 'budget' || key === 'budget_idrx') return true;
+  return /idrx|budget|anggaran|modal|dana|nominal/i.test(q.question);
+}
+
+const STOCK_PERCENTAGE_PRESETS = [
+  { label: '25%', value: '25%' },
+  { label: '50%', value: '50%' },
+  { label: '75%', value: '75%' },
+  { label: '100%', value: '100%' },
+];
+
+export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt }: ClarifyingQuestionsProps) {
   const parsed = uiProps as { questions?: IntakeField[]; card?: CardContract } | undefined;
   const questions = parsed?.questions ?? [];
   const contract = parsed?.card ?? parseCardContract(null);
@@ -64,11 +82,11 @@ export function ClarifyingQuestions({ uiProps, chatId }: ClarifyingQuestionsProp
           }}
         >
           <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>
-            {contract.ledger.disarmed_title.replace('· Task T-{id}', '').trim()}
+            {contract.needs_input.cancelled_title || contract.ledger.disarmed_title.replace('· Task T-{id}', '').trim()}
           </span>
         </div>
         <div style={{ padding: '11px 13px', fontSize: 12.5, color: 'var(--body)' }}>
-          {contract.ledger.disarmed_desc}
+          {contract.needs_input.cancelled_desc || contract.ledger.disarmed_desc}
         </div>
       </div>
     );
@@ -76,24 +94,36 @@ export function ClarifyingQuestions({ uiProps, chatId }: ClarifyingQuestionsProp
 
   function cancelPlan() {
     if (isSendingRef.current || sendMessage.isPending) return;
-    isSendingRef.current = true;
+    const cancelText = contract.needs_input.cancel_button || contract.ledger.disarm_button;
     setIsCancelled(true);
-    sendMessage.mutate(contract.ledger.disarm_button, {
-      onSettled: () => {
-        isSendingRef.current = false;
-      },
-    });
+    if (onSendPrompt) {
+      onSendPrompt(cancelText);
+    } else {
+      isSendingRef.current = true;
+      sendMessage.mutate(cancelText, {
+        onSettled: () => {
+          isSendingRef.current = false;
+        },
+      });
+    }
   }
 
   function send() {
     if (!allAnswered || isSendingRef.current) return;
-    isSendingRef.current = true;
-    const body = questions.map((q) => `${q.question}: ${draft[q.key].trim()}`).join('\n');
-    sendMessage.mutate(body, {
-      onSettled: () => {
-        isSendingRef.current = false;
-      },
-    });
+    // key: value pairs — concise, not full question text repeated in bubble
+    const body = questions.map((q) => `${q.key}: ${draft[q.key].trim()}`).join('\n');
+    if (onSendPrompt) {
+      // Route through ChatThread.handleSend — sets isStreaming + pendingText,
+      // activating streaming indicator and preventing the false retry state.
+      onSendPrompt(body);
+    } else {
+      isSendingRef.current = true;
+      sendMessage.mutate(body, {
+        onSettled: () => {
+          isSendingRef.current = false;
+        },
+      });
+    }
   }
 
   return (
@@ -109,7 +139,7 @@ export function ClarifyingQuestions({ uiProps, chatId }: ClarifyingQuestionsProp
         }}
       >
         <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>
-          {contract.arm_title_ready}
+          {contract.needs_input.title || contract.arm_title_ready}
         </span>
         <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
           {answeredCount} / {questions.length}
@@ -165,7 +195,76 @@ export function ClarifyingQuestions({ uiProps, chatId }: ClarifyingQuestionsProp
                 </button>
               ))}
               {(q.options ?? []).length === 0 && (
-                isAmountQuestion(q) ? (
+                isStockSellAmountQuestion(q) ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7, flex: 1, minWidth: 200 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input
+                        value={value}
+                        onChange={(e) => setDraft((prev) => ({ ...prev, [q.key]: e.target.value }))}
+                        placeholder={contract.sell_budget_placeholder || 'e.g. 20, 50%, all'}
+                        style={{
+                          flex: 1,
+                          minWidth: 160,
+                          appearance: 'none',
+                          border: '1px solid var(--hairline-strong)',
+                          background: 'var(--putih)',
+                          color: 'var(--ink)',
+                          font: '600 13px/1.35 var(--font-mono)',
+                          padding: '8px 10px',
+                        }}
+                      />
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--body)', flex: 'none' }}>Token / %</span>
+                    </div>
+
+                    {value && (
+                      <div style={{ fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--positive)', background: 'var(--canvas-soft)', border: '1px solid var(--hairline)', padding: '4px 8px', alignSelf: 'flex-start' }}>
+                        ✓ {value.includes('%') ? value : /^\d+(\.\d+)?$/.test(value) ? `${value} Tokens` : value}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
+                      <span style={{ fontSize: 9.5, color: 'var(--ticker)', alignSelf: 'center', marginRight: 2, fontFamily: 'var(--font-sans)', textTransform: 'uppercase', letterSpacing: '.08em' }}>
+                        {contract.preset_label}
+                      </span>
+                      {STOCK_PERCENTAGE_PRESETS.map((p) => (
+                        <button
+                          key={p.value}
+                          type="button"
+                          onClick={() => setDraft((prev) => ({ ...prev, [q.key]: p.value }))}
+                          style={{
+                            appearance: 'none',
+                            cursor: 'pointer',
+                            border: `1px solid ${value === p.value ? 'var(--ink)' : 'var(--hairline-strong)'}`,
+                            background: value === p.value ? 'var(--ink)' : 'transparent',
+                            color: value === p.value ? 'var(--canvas)' : 'var(--body)',
+                            font: '500 10.5px/1 var(--font-mono)',
+                            padding: '4px 7px',
+                          }}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                      {(contract.sell_presets ?? []).map((p) => (
+                        <button
+                          key={`sell-${p.value}`}
+                          type="button"
+                          onClick={() => setDraft((prev) => ({ ...prev, [q.key]: p.value }))}
+                          style={{
+                            appearance: 'none',
+                            cursor: 'pointer',
+                            border: `1px solid ${value === p.value ? 'var(--ink)' : 'var(--hairline-strong)'}`,
+                            background: value === p.value ? 'var(--ink)' : 'transparent',
+                            color: value === p.value ? 'var(--canvas)' : 'var(--body)',
+                            font: '500 10.5px/1 var(--font-mono)',
+                            padding: '4px 7px',
+                          }}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : isCashBudgetQuestion(q) ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 7, flex: 1, minWidth: 200 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <input
@@ -243,9 +342,6 @@ export function ClarifyingQuestions({ uiProps, chatId }: ClarifyingQuestionsProp
       })}
 
       <div style={{ padding: '11px 13px' }}>
-        <div style={{ fontSize: 11.5, color: 'var(--body)', lineHeight: 1.5, marginBottom: 10 }}>
-          {contract.no_trade_description}
-        </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button
             onClick={send}
@@ -262,7 +358,7 @@ export function ClarifyingQuestions({ uiProps, chatId }: ClarifyingQuestionsProp
             }}
           >
             {sendMessage.isPending
-              ? contract.button_labels.executing
+              ? (contract.needs_input.sending_button || contract.button_labels.executing)
               : allAnswered
               ? contract.needs_input.button
               : `${questions.length - answeredCount} ${contract.subtask_unit}`}
@@ -282,7 +378,7 @@ export function ClarifyingQuestions({ uiProps, chatId }: ClarifyingQuestionsProp
               whiteSpace: 'nowrap',
             }}
           >
-            {contract.ledger.disarm_button}
+            {contract.needs_input.cancel_button || contract.ledger.disarm_button}
           </button>
         </div>
       </div>

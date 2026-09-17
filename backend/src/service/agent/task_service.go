@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"strings"
 	"time"
 
@@ -21,16 +22,23 @@ var (
 	ErrTaskNotFound      = errors.New("agent: task not found")
 	ErrTaskNotActionable = errors.New("agent: task is not actionable")
 	ErrTaskNotArmed      = errors.New("agent: task has not been armed yet")
+	ErrNothingToRetry    = errors.New("agent: no failed message to retry")
 )
 
 type AgentContractClient interface {
 	CreateTask(ctx context.Context, owner string, isActionable bool, summary string, promptHash [32]byte) (onChainTaskID uint64, err error)
-	GrantTradePermission(ctx context.Context, onChainTaskID uint64, totalBudget string, duration time.Duration) error
+	GrantTradePermission(ctx context.Context, onChainTaskID uint64, totalBudget string, duration time.Duration, maxAmountPerTrade string, cooldownInterval uint32) error
 	RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows []model.AgentSubTask) (onChainSubTaskIDs []uint64, txHash string, err error)
 	CancelTask(ctx context.Context, onChainTaskID uint64) error
 	TradePermissionRemaining(ctx context.Context, onChainTaskID uint) (string, error)
 }
 
+// TaskService is the Task-layer surface HTTP handlers call. It is a thin
+// signal/authorization layer only — it never builds an LLM prompt or
+// invokes an agent directly. Actually executing a trade (ExecuteTask) does
+// nothing but verify authorization/arm state and trigger
+// Orchestrator.ResumeExecute, which owns all of that
+// (docs/plans/quasar-clean-routing-scalp-refactor.md §2/§3.1).
 type TaskService struct {
 	Tasks        *repository.AgentTaskRepository
 	SubTasks     *repository.AgentSubTaskRepository
@@ -39,6 +47,7 @@ type TaskService struct {
 	Chats        *repository.AgentChatRepository
 	Chain        AgentContractClient
 	Executor     adk.Agent
+	Orchestrator *Orchestrator
 }
 
 type WorkflowCard struct {
@@ -88,8 +97,6 @@ func (s *TaskService) GetTrades(ctx context.Context, taskID int64, walletAddress
 	return s.Trades.FindByTaskID(ctx, taskID)
 }
 
-var ErrNothingToRetry = errors.New("agent: no failed message to retry")
-
 func (s *TaskService) recordSubTasksBatch(ctx context.Context, onChainTaskID int64, rows []model.AgentSubTask) error {
 	if len(rows) == 0 {
 		return nil
@@ -106,9 +113,12 @@ func (s *TaskService) recordSubTasksBatch(ctx context.Context, onChainTaskID int
 }
 
 type ArmTaskInput struct {
-	TotalBudget  string
-	DurationSec  int64
-	TokenAddress string
+	TotalBudget       string `json:"total_budget"`
+	DurationSec       int64  `json:"duration_sec"`
+	TokenAddress      string `json:"token_address"`
+	MaxAmountPerTrade string `json:"max_amount_per_trade,omitempty"`
+	CooldownInterval  uint32 `json:"cooldown_interval,omitempty"`
+	IsRecurring       bool   `json:"is_recurring,omitempty"`
 }
 
 type ArmTaskResult struct {
@@ -117,6 +127,11 @@ type ArmTaskResult struct {
 	TotalBudget   string `json:"total_budget,omitempty"`
 }
 
+// ArmTask is the one call that moves a Task on-chain into an executable
+// state: grantTradePermission only (createTask already happened the instant
+// Quasar committed the Task — see commitTask in
+// orchestrator_workflow_service.go). Calling CreateTask again here would
+// open a second, orphaned on-chain Task and silently rebind Postgres to it.
 func (s *TaskService) ArmTask(ctx context.Context, taskID int64, wallet string, input ArmTaskInput) (ArmTaskResult, error) {
 	task, found, err := s.Tasks.FindByID(ctx, taskID)
 	if err != nil {
@@ -128,36 +143,79 @@ func (s *TaskService) ArmTask(ctx context.Context, taskID int64, wallet string, 
 	if !strings.EqualFold(task.WalletAddress, wallet) {
 		return ArmTaskResult{}, ErrWalletMismatch
 	}
-
-	// createTask already happened the instant this Task was recognized
-	// (orchestrator_service.go's runRoute, docs/plans/agent-orchestration-graph-rebuild.md
-	// v2.1) — every Task reaching Arm already has an on-chain id. Calling
-	// CreateTask again here (found while implementing agent-trade-execution.md,
-	// a leftover from before that rule existed, when this endpoint was the
-	// only place createTask ever ran) would open a second, orphaned on-chain
-	// Task and silently rebind Postgres to it, disconnecting any Sub Task
-	// already recorded against the real one.
 	if task.OnChainTaskID == nil {
 		return ArmTaskResult{}, fmt.Errorf("agent: task %d has no on-chain id — every Task must already be created on-chain by the time it reaches Arm, this should never happen", taskID)
 	}
 	onChainTaskID := uint64(*task.OnChainTaskID)
 
 	if task.IsActionable {
-		duration := time.Duration(input.DurationSec) * time.Second
-		if err := s.Chain.GrantTradePermission(ctx, onChainTaskID, input.TotalBudget, duration); err != nil {
-			return ArmTaskResult{}, fmt.Errorf("agent: on-chain grantTradePermission: %w", err)
+		if err := s.grantAndPersistArm(ctx, taskID, onChainTaskID, input); err != nil {
+			return ArmTaskResult{}, err
 		}
-		// Only here, only after the chain call actually succeeded — a failed
-		// arm must leave armed_at null, since "armed" means exactly "the
-		// on-chain permission exists" (Defect B, docs/plans/fix-comet-trade-execution-blockers.md).
-		if err := s.Tasks.SetArmedAt(ctx, taskID, time.Now()); err != nil {
-			return ArmTaskResult{}, fmt.Errorf("agent: permission granted on-chain for task %d but persisting armed_at failed: %w", taskID, err)
+		if err := s.recordArmed(ctx, task, taskID, onChainTaskID, input.TotalBudget); err != nil {
+			slog.ErrorContext(ctx, "agent: record armed sub task failed", "task_id", taskID, "error", err)
 		}
 	}
 
+	if err := s.recordPendingSubTasks(ctx, taskID, onChainTaskID); err != nil {
+		slog.ErrorContext(ctx, "agent: catch-up recordSubTasks failed, leaving for retry", "task_id", taskID, "error", err)
+	}
+
+	return ArmTaskResult{OnChainTaskID: int64(onChainTaskID), TokenAddress: input.TokenAddress, TotalBudget: input.TotalBudget}, nil
+}
+
+func (s *TaskService) grantAndPersistArm(ctx context.Context, taskID int64, onChainTaskID uint64, input ArmTaskInput) error {
+	duration := time.Duration(input.DurationSec) * time.Second
+	if err := s.Chain.GrantTradePermission(ctx, onChainTaskID, input.TotalBudget, duration, input.MaxAmountPerTrade, input.CooldownInterval); err != nil {
+		return fmt.Errorf("agent: on-chain grantTradePermission: %w", err)
+	}
+
+	// Only here, only after the chain call actually succeeded — "armed"
+	// means exactly "the on-chain permission exists".
+	now := time.Now()
+	var nextRunAt *time.Time
+	if input.IsRecurring && input.CooldownInterval > 0 {
+		t := now.Add(time.Duration(input.CooldownInterval) * time.Second)
+		nextRunAt = &t
+	}
+	var horizonExpiresAt *time.Time
+	if input.DurationSec > 0 {
+		t := now.Add(duration)
+		horizonExpiresAt = &t
+	}
+	var maxPerTrade int64
+	if input.MaxAmountPerTrade != "" {
+		if m, ok := new(big.Int).SetString(input.MaxAmountPerTrade, 10); ok {
+			maxPerTrade = m.Int64()
+		}
+	}
+
+	if err := s.Tasks.SetArmedWithGuardrails(ctx, taskID, now, input.IsRecurring, int32(input.CooldownInterval), maxPerTrade, nextRunAt, horizonExpiresAt); err != nil {
+		return fmt.Errorf("agent: permission granted on-chain for task %d but persisting armed guardrails failed: %w", taskID, err)
+	}
+	return nil
+}
+
+// recordArmed writes the "armed" Sub Task — the last link in the
+// understand -> route -> analyze -> await_confirmation -> armed -> execute
+// chain — once GrantTradePermission has actually succeeded on-chain.
+func (s *TaskService) recordArmed(ctx context.Context, task model.AgentTask, taskID int64, onChainTaskID uint64, totalBudget string) error {
+	summary := ""
+	if task.Summary != nil {
+		summary = *task.Summary
+	}
+	recorder, err := NewSubTaskRecorder(ctx, s.SubTasks, s.Chain, onChainTaskID, taskID, summary, task.WalletAddress)
+	if err != nil {
+		return fmt.Errorf("agent: build subtask recorder for armed step: %w", err)
+	}
+	_, err = recorder.Record(ctx, "supervisor", "armed", "done", fmt.Sprintf("Armed on-chain with budget %s.", totalBudget), "", nil)
+	return err
+}
+
+func (s *TaskService) recordPendingSubTasks(ctx context.Context, taskID int64, onChainTaskID uint64) error {
 	allRows, err := s.SubTasks.FindByTaskID(ctx, taskID)
 	if err != nil {
-		return ArmTaskResult{}, err
+		return err
 	}
 	pending := make([]model.AgentSubTask, 0, len(allRows))
 	for _, row := range allRows {
@@ -165,11 +223,7 @@ func (s *TaskService) ArmTask(ctx context.Context, taskID int64, wallet string, 
 			pending = append(pending, row)
 		}
 	}
-	if err := s.recordSubTasksBatch(ctx, int64(onChainTaskID), pending); err != nil {
-		slog.ErrorContext(ctx, "agent: catch-up recordSubTasks failed, leaving for retry", "task_id", taskID, "error", err)
-	}
-
-	return ArmTaskResult{OnChainTaskID: int64(onChainTaskID), TokenAddress: input.TokenAddress, TotalBudget: input.TotalBudget}, nil
+	return s.recordSubTasksBatch(ctx, int64(onChainTaskID), pending)
 }
 
 func (s *TaskService) DisarmTask(ctx context.Context, taskID int64, wallet string) error {
@@ -227,6 +281,11 @@ type ExecuteTaskResult struct {
 	Trades []model.AgentTrade `json:"trades,omitempty"`
 }
 
+// ExecuteTask authorizes and triggers execution — nothing else. All LLM
+// orchestration (reading Nova's verdict, deciding whether Comet fires,
+// sizing, submit_trade) happens inside the graph via
+// Orchestrator.ResumeExecute; this function never builds a prompt or calls
+// an agent itself (docs/plans/quasar-clean-routing-scalp-refactor.md §2).
 func (s *TaskService) ExecuteTask(ctx context.Context, taskID int64, wallet string) (ExecuteTaskResult, error) {
 	task, found, err := s.Tasks.FindByID(ctx, taskID)
 	if err != nil {
@@ -244,177 +303,109 @@ func (s *TaskService) ExecuteTask(ctx context.Context, taskID int64, wallet stri
 	if task.ArmedAt == nil || task.OnChainTaskID == nil {
 		return ExecuteTaskResult{}, ErrTaskNotArmed
 	}
-	summary := ""
-	if task.Summary != nil {
-		summary = *task.Summary
-	}
-	prompt := ""
-	if task.RawPrompt != nil {
-		prompt = *task.RawPrompt
-	}
-
-	var card *contracts.CardContract
-	if task.TriggerDescription != nil && *task.TriggerDescription != "" {
-		var triggerData struct {
-			Card *contracts.CardContract `json:"card"`
-		}
-		if err := json.Unmarshal([]byte(*task.TriggerDescription), &triggerData); err == nil && triggerData.Card != nil {
-			card = triggerData.Card
-		}
-	}
 
 	if task.Status == "executed" {
-		trades, _ := s.Trades.FindByTaskID(ctx, taskID)
-		reply := "This task was already executed."
-		if card != nil && card.Ledger.ExecutedDesc != "" {
-			reply = card.Ledger.ExecutedDesc
-		}
-		return ExecuteTaskResult{
-			TaskID: taskID,
-			Status: task.Status,
-			Reply:  reply,
-			Trades: trades,
-		}, nil
+		return s.alreadyExecutedResult(ctx, task)
 	}
-	if s.Executor == nil {
-		return ExecuteTaskResult{}, errors.New("agent: executor agent not initialized")
-	}
-
-	onChainTaskID := uint64(*task.OnChainTaskID)
-
-	// Check if on-chain budget permission is already exhausted before firing a doomed transaction
-	if remaining, err := s.Chain.TradePermissionRemaining(ctx, uint(onChainTaskID)); err == nil && remaining == "0" {
-		trades, _ := s.Trades.FindByTaskID(ctx, taskID)
-		if len(trades) > 0 {
-			_ = s.Tasks.SetStatus(ctx, taskID, "executed")
-			reply := "Task trade order was executed on-chain."
-			if card != nil && card.Footnotes.ExecutedSuccess != "" {
-				reply = card.Footnotes.ExecutedSuccess
-			}
-			return ExecuteTaskResult{
-				TaskID: taskID,
-				Status: "executed",
-				Reply:  reply,
-				Trades: trades,
-			}, nil
-		}
-	}
-
-	recorder, err := NewSubTaskRecorder(ctx, s.SubTasks, s.Chain, onChainTaskID, task.ID, summary, task.WalletAddress)
-	if err != nil {
-		return ExecuteTaskResult{}, fmt.Errorf("agent: build recorder: %w", err)
-	}
-
-	runCtx := &RunContext{
-		OnChainTaskID: task.OnChainTaskID,
-		Wallet:        task.WalletAddress,
-		Recorder:      recorder,
-	}
-
-	subtasks, _ := s.SubTasks.FindByTaskID(ctx, taskID)
-	var novaFindings strings.Builder
-	for _, st := range subtasks {
-		if strings.EqualFold(st.Agent, "analyzer") {
-			if st.Reasoning != "" {
-				novaFindings.WriteString(st.Reasoning)
-				novaFindings.WriteString("\n")
-			}
-			if st.Output != nil && *st.Output != "" {
-				novaFindings.WriteString(*st.Output)
-				novaFindings.WriteString("\n")
-			}
-		}
-	}
-
-	var request string
-	if novaFindings.Len() > 0 {
-		request = fmt.Sprintf("User instruction:\n%s\n\nNova's market findings:\n%s\n\nTask summary: %s\nThe task has been armed and approved on-chain. Based on Nova's findings above, check spot price and IDRX balance, and execute the trade on-chain using submit_trade.\n\n[CRITICAL LANGUAGE MANDATE]: Your entire final reply, explanation, and reasoning MUST 100%% match the language of the User instruction above (e.g. Indonesian if the user writes in Indonesian, English if in English, Turkish if in Turkish, Javanese if in Javanese, Banjar if in Banjar, etc.). Never use any other language!", prompt, novaFindings.String(), summary)
-	} else {
-		request = fmt.Sprintf("User instruction:\n%s\n\nTask summary: %s\nThe task has been armed and approved on-chain. Check spot price and IDRX balance, and execute the trade on-chain using submit_trade.\n\n[CRITICAL LANGUAGE MANDATE]: Your entire final reply, explanation, and reasoning MUST 100%% match the language of the User instruction above (e.g. Indonesian if the user writes in Indonesian, English if in English, Turkish if in Turkish, Javanese if in Javanese, Banjar if in Banjar, etc.). Never use any other language!", prompt, summary)
+	if s.Orchestrator == nil {
+		return ExecuteTaskResult{}, errors.New("agent: orchestrator not initialized")
 	}
 
 	tradesBefore, _ := s.Trades.FindByTaskID(ctx, taskID)
 	countBefore := len(tradesBefore)
 
-	tipBefore := recorder.TerminalHash()
-	slog.InfoContext(ctx, "agent: executing task with comet", "task_id", taskID, "on_chain_id", onChainTaskID)
+	slog.InfoContext(ctx, "agent: resuming task execution via orchestrator graph", "task_id", taskID, "on_chain_id", *task.OnChainTaskID)
 
-	reply, _, err := runRoleAgent(WithRunContext(ctx, runCtx), s.Executor, request, nil, nil)
+	res, err := s.Orchestrator.ResumeExecute(ctx, taskID, wallet)
 	if err != nil {
-		_, _ = recorder.Record(ctx, "executor", "decide", "failed", err.Error(), summary, nil)
-		s.persistExecutionMessage(ctx, &task, fmt.Sprintf("Gagal menjalankan eksekusi on-chain: %s", err.Error()))
-		return ExecuteTaskResult{}, fmt.Errorf("agent: executor agent run: %w", err)
+		s.persistExecutionMessage(ctx, &task, fmt.Sprintf("On-chain execution failed: %s", err.Error()))
+		return ExecuteTaskResult{}, fmt.Errorf("agent: orchestrator resume execute: %w", err)
 	}
 
-	cleanReply := cleanExecutionReply(reply)
-	if recorder.TerminalHash() == tipBefore {
-		if _, err := recorder.Record(ctx, "executor", "decide", "done", cleanReply, summary, map[string]any{"action": "hold"}); err != nil {
-			slog.ErrorContext(ctx, "agent: record hold decision", "error", err)
-		}
-	}
+	status, executedTrades := s.reconcileTradeStatus(ctx, taskID, task.Status, countBefore)
 
-	tradesAfter, err := s.Trades.FindByTaskID(ctx, taskID)
-	status := task.Status
-	var executedTrades []model.AgentTrade
-	if err == nil && len(tradesAfter) > countBefore {
-		status = "executed"
-		_ = s.Tasks.SetStatus(ctx, taskID, "executed")
-		_ = s.Tasks.SetExecutedAt(ctx, taskID, time.Now())
-		executedTrades = tradesAfter[countBefore:]
-	}
-
-	// Persist Comet's conversational response into agent_chat_messages
+	cleanReply := cleanExecutionReply(res.Reply)
 	if strings.TrimSpace(cleanReply) != "" {
 		s.persistExecutionMessage(ctx, &task, cleanReply)
 	}
 
-	return ExecuteTaskResult{
-		TaskID: taskID,
-		Status: status,
-		Reply:  cleanReply,
-		Trades: executedTrades,
-	}, nil
+	return ExecuteTaskResult{TaskID: taskID, Status: status, Reply: cleanReply, Trades: executedTrades}, nil
+}
+
+func (s *TaskService) alreadyExecutedResult(ctx context.Context, task model.AgentTask) (ExecuteTaskResult, error) {
+	var card *contracts.CardContract
+	if task.TriggerDescription != nil && *task.TriggerDescription != "" {
+		var triggerData struct {
+			Card *contracts.CardContract `json:"card"`
+		}
+		if err := json.Unmarshal([]byte(*task.TriggerDescription), &triggerData); err == nil {
+			card = triggerData.Card
+		}
+	}
+
+	trades, _ := s.Trades.FindByTaskID(ctx, task.ID)
+	reply := "This task was already executed."
+	if card != nil && card.Ledger.ExecutedDesc != "" {
+		reply = card.Ledger.ExecutedDesc
+	}
+	return ExecuteTaskResult{TaskID: task.ID, Status: task.Status, Reply: reply, Trades: trades}, nil
+}
+
+func (s *TaskService) reconcileTradeStatus(ctx context.Context, taskID int64, currentStatus string, countBefore int) (string, []model.AgentTrade) {
+	tradesAfter, err := s.Trades.FindByTaskID(ctx, taskID)
+	if err != nil {
+		return currentStatus, nil
+	}
+	if len(tradesAfter) > countBefore {
+		_ = s.Tasks.SetStatus(ctx, taskID, "executed")
+		_ = s.Tasks.SetExecutedAt(ctx, taskID, time.Now())
+		return "executed", tradesAfter[countBefore:]
+	}
+	if len(tradesAfter) > 0 {
+		return "executed", tradesAfter
+	}
+	return currentStatus, nil
 }
 
 func (s *TaskService) persistExecutionMessage(ctx context.Context, task *model.AgentTask, content string) {
 	if s.ChatMessages == nil || strings.TrimSpace(content) == "" {
 		return
 	}
-	var chatID *uuid.UUID
-	if task.SourceMessageID != nil {
-		if sourceMsg, found, err := s.ChatMessages.FindByID(ctx, *task.SourceMessageID); err == nil && found {
-			cid := sourceMsg.ChatID
-			chatID = &cid
-		}
+	chatID := s.resolveExecutionChatID(ctx, task)
+	if chatID == nil {
+		return
 	}
-	if chatID == nil && s.Chats != nil {
-		if chats, err := s.Chats.FindByOwnerWallet(ctx, task.WalletAddress); err == nil && len(chats) > 0 {
-			cid := chats[0].ID
-			chatID = &cid
-		}
-	}
-	if chatID != nil {
-		_, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
-			ChatID:      *chatID,
-			Sender:      "supervisor",
-			ContentType: "text",
-			Content:     content,
-			UIRefTaskID: nil, // Do not duplicate PlanCard in chat thread
-		})
-		if err != nil {
-			slog.ErrorContext(ctx, "agent: persist execution reply to chat", "error", err)
-		}
+	if _, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+		ChatID:      *chatID,
+		Sender:      "supervisor",
+		ContentType: "text",
+		Content:     content,
+		UIRefTaskID: nil, // Do not duplicate PlanCard in chat thread
+	}); err != nil {
+		slog.ErrorContext(ctx, "agent: persist execution reply to chat", "error", err)
 	}
 }
 
+func (s *TaskService) resolveExecutionChatID(ctx context.Context, task *model.AgentTask) *uuid.UUID {
+	if task.SourceMessageID != nil {
+		if sourceMsg, found, err := s.ChatMessages.FindByID(ctx, *task.SourceMessageID); err == nil && found {
+			cid := sourceMsg.ChatID
+			return &cid
+		}
+	}
+	if s.Chats != nil {
+		if chats, err := s.Chats.FindByOwnerWallet(ctx, task.WalletAddress); err == nil && len(chats) > 0 {
+			cid := chats[0].ID
+			return &cid
+		}
+	}
+	return nil
+}
+
 // Evaluate (the scheduler-driven re-check tick for an armed, actionable
-// Task) is removed as of docs/plans/agent-orchestration-graph-rebuild.md
-// v2.2 — it had zero callers anywhere (no scheduler was ever wired to it),
-// and its own approach (re-running Quasar's full route decision from
-// scratch on every tick) was already agreed to be the wrong shape for
-// standing-instruction monitoring, which per that same plan (§12) should
-// start at Comet calling Nova directly, not restart at Quasar. Tracked
-// there as still-undesigned work, not lost.
+// Task) is intentionally not implemented — standing-instruction monitoring
+// is still undesigned work, tracked separately, not part of this refactor's
+// scalp-only scope.
 
 func truncateRunes(s string, max int) string {
 	runes := []rune(s)
@@ -426,46 +417,57 @@ func truncateRunes(s string, max int) string {
 
 func cleanExecutionReply(raw string) string {
 	trimmed := strings.TrimSpace(raw)
-	// Remove markdown code fences if wrapped in ```json ... ``` or ``` ... ```
-	if strings.HasPrefix(trimmed, "```") {
-		lines := strings.Split(trimmed, "\n")
-		if len(lines) >= 2 {
-			if strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
-				lines = lines[1 : len(lines)-1]
-			} else {
-				lines = lines[1:]
-			}
-			trimmed = strings.TrimSpace(strings.Join(lines, "\n"))
-		}
-	}
+	trimmed = stripCodeFence(trimmed)
 
 	if strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}") {
-		var parsed struct {
-			Reasoning   string `json:"reasoning"`
-			Reply       string `json:"reply"`
-			Message     string `json:"message"`
-			Explanation string `json:"explanation"`
-			Status      string `json:"status"`
-		}
-		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
-			if parsed.Reasoning != "" {
-				return parsed.Reasoning
-			}
-			if parsed.Reply != "" {
-				return parsed.Reply
-			}
-			if parsed.Message != "" {
-				return parsed.Message
-			}
-			if parsed.Explanation != "" {
-				return parsed.Explanation
-			}
-			if parsed.Status != "" {
-				return fmt.Sprintf("Status eksekusi: %s", parsed.Status)
-			}
+		if reply, ok := extractReplyField(trimmed); ok {
+			return reply
 		}
 	}
 	return trimmed
+}
+
+func stripCodeFence(trimmed string) string {
+	if !strings.HasPrefix(trimmed, "```") {
+		return trimmed
+	}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) < 2 {
+		return trimmed
+	}
+	if strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+		lines = lines[1 : len(lines)-1]
+	} else {
+		lines = lines[1:]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func extractReplyField(trimmed string) (string, bool) {
+	var parsed struct {
+		Reasoning   string `json:"reasoning"`
+		Reply       string `json:"reply"`
+		Message     string `json:"message"`
+		Explanation string `json:"explanation"`
+		Status      string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		return "", false
+	}
+	switch {
+	case parsed.Reasoning != "":
+		return parsed.Reasoning, true
+	case parsed.Reply != "":
+		return parsed.Reply, true
+	case parsed.Message != "":
+		return parsed.Message, true
+	case parsed.Explanation != "":
+		return parsed.Explanation, true
+	case parsed.Status != "":
+		return fmt.Sprintf("Status eksekusi: %s", parsed.Status), true
+	default:
+		return "", false
+	}
 }
 
 const (
@@ -527,3 +529,20 @@ func (s *TaskService) runSubTaskRetryOnce(ctx context.Context) {
 	}
 }
 
+func (s *TaskService) SettleHorizonTask(ctx context.Context, taskID int64, wallet string, policy string) error {
+	task, found, err := s.Tasks.FindByID(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrTaskNotFound
+	}
+	if !strings.EqualFold(task.WalletAddress, wallet) {
+		return ErrWalletMismatch
+	}
+	status := "completed"
+	if policy == "leave_open" {
+		status = "settled_held"
+	}
+	return s.Tasks.SetExitPolicy(ctx, taskID, policy, status)
+}

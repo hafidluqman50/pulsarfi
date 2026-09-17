@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 )
 
 func ContainsWord(text, word string) bool {
@@ -69,6 +70,12 @@ func ExtractBudgetFromText(candidates ...string) string {
 				return norm
 			}
 		}
+		reColon := regexp.MustCompile(`:\s*(?:rp\.?\s*)?(\d+\s*(?:jt|juta|k|m)|[0-9.,]+)\s*$`)
+		if m := reColon.FindStringSubmatch(text); len(m) > 1 {
+			if norm := NormalizeBudgetNumber(m[1]); norm != "" {
+				return norm
+			}
+		}
 		rePhrase := regexp.MustCompile(`(?i)(?:budget|anggaran|senilai|sebesar|modal)\s*(?:sebesar|sebanyak|:|=)?\s*(?:rp\.?\s*)?(\d+\s*(?:jt|juta|k|m)|[0-9.,]+)`)
 		if m := rePhrase.FindStringSubmatch(text); len(m) > 1 {
 			if norm := NormalizeBudgetNumber(m[1]); norm != "" {
@@ -106,4 +113,28 @@ func DecisionHash(agentName, stepName, reasoning string, output []byte, prevDeci
 		common.HexToHash(prevDecisionHash).Bytes(),
 	)
 	return hash.Hex()
+}
+
+func ParseTradeShape(s string) contracts.TradeShape {
+	switch contracts.TradeShape(strings.ToLower(strings.TrimSpace(s))) {
+	case contracts.ShapeScalp:
+		return contracts.ShapeScalp
+	case contracts.ShapeSwing:
+		return contracts.ShapeSwing
+	case contracts.ShapeInvestment:
+		return contracts.ShapeInvestment
+	default:
+		return contracts.ShapeUnknown
+	}
+}
+
+func ParseTradeSide(s string) contracts.TradeSide {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "beli", "buy":
+		return contracts.TradeSideBuy
+	case "jual", "sell":
+		return contracts.TradeSideSell
+	default:
+		return ""
+	}
 }

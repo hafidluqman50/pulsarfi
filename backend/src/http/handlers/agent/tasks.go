@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"log/slog"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -82,9 +83,12 @@ func ArmTaskHandler(c *gin.Context) {
 	}
 
 	armResult, err := taskSvc.ArmTask(c.Request.Context(), taskID, claims.WalletAddress, agentsvc.ArmTaskInput{
-		TotalBudget:  armRequest.TotalBudget,
-		DurationSec:  armRequest.DurationSec,
-		TokenAddress: armRequest.TokenAddress,
+		TotalBudget:       armRequest.TotalBudget,
+		DurationSec:       armRequest.DurationSec,
+		TokenAddress:      armRequest.TokenAddress,
+		MaxAmountPerTrade: armRequest.MaxAmountPerTrade,
+		CooldownInterval:  armRequest.CooldownInterval,
+		IsRecurring:       armRequest.IsRecurring,
 	})
 	if errors.Is(err, agentsvc.ErrTaskNotFound) {
 		response.NotFound(c, "task not found")
@@ -95,6 +99,7 @@ func ArmTaskHandler(c *gin.Context) {
 		return
 	}
 	if err != nil {
+		slog.ErrorContext(c.Request.Context(), "agent: arm task failed", "task_id", taskID, "error", err)
 		response.InternalError(c, "failed to arm task")
 		return
 	}
@@ -310,4 +315,46 @@ func ExecuteTaskHandler(c *gin.Context) {
 
 	response.OK(c, "task executed", result)
 }
+
+type HorizonRequest struct {
+	Policy string `json:"policy" binding:"required"` // "leave_open" or "close_position"
+}
+
+func SettleHorizonTaskHandler(c *gin.Context) {
+	if !ensureService(c) {
+		return
+	}
+	claims, ok := usermw.Get(c)
+	if !ok {
+		response.Unauthorized(c, "authentication required")
+		return
+	}
+	taskID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "invalid task id")
+		return
+	}
+	var req HorizonRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	err = taskSvc.SettleHorizonTask(c.Request.Context(), taskID, claims.WalletAddress, req.Policy)
+	if errors.Is(err, agentsvc.ErrTaskNotFound) {
+		response.NotFound(c, "task not found")
+		return
+	}
+	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+		response.Forbidden(c, "task does not belong to the authenticated wallet")
+		return
+	}
+	if err != nil {
+		response.InternalError(c, "failed to settle horizon task: "+err.Error())
+		return
+	}
+
+	response.OK(c, "horizon task settled", gin.H{"task_id": taskID, "policy": req.Policy})
+}
+
 

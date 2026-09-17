@@ -112,10 +112,20 @@ export function useTaskTrades(taskId?: number) {
 export function useArmTask(taskId: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { totalBudget: string; durationSec: number }) =>
-      taskApi.armTask(taskId, input.totalBudget, input.durationSec),
+    mutationFn: (input: taskApi.ArmTaskParams) =>
+      taskApi.armTask(taskId, input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agent-tasks'] }),
     onError: toastAgentError('Could not arm the task'),
+  });
+}
+
+export function useSettleHorizonTask(taskId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (policy: 'leave_open' | 'close_position') =>
+      taskApi.settleHorizonTask(taskId, policy),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agent-tasks'] }),
+    onError: toastAgentError('Could not update horizon task'),
   });
 }
 

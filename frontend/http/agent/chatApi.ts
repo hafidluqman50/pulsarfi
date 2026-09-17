@@ -11,8 +11,8 @@ export interface AgentChat {
 export interface AgentChatMessage {
   id: number;
   chat_id: string;
-  sender: 'user' | 'supervisor';
-  content_type: 'text' | 'workflow_card' | 'chart' | 'news';
+  sender: 'user' | 'supervisor' | 'assistant';
+  content_type: 'text' | 'workflow_card' | 'chart' | 'news' | 'horizon_notice' | string;
   content: string;
   ui_component: string | null;
   ui_props: unknown;

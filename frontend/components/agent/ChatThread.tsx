@@ -7,6 +7,7 @@ import { sendChatMessage, retryLastMessage, chatStreamTopic, type AgentChatMessa
 import type { AgentSubTask } from '@/http/agent/taskApi';
 import { useRealtimeTopic } from '@/http/realtime/useRealtimeSocket';
 import { ClarifyingQuestions } from './ClarifyingQuestions';
+import { HorizonNoticeCard } from './HorizonNoticeCard';
 import { NewsBrief } from './NewsBrief';
 import { PlanCard } from './PlanCard';
 import { PortfolioChart } from './PortfolioChart';
@@ -15,6 +16,12 @@ import { useChatMessages } from '@/http/agent/hooks';
 
 type ChatThreadProps = {
   chatId: string;
+  // Set only when ChatThread is mounted for the very first message of a
+  // brand-new chat (QuasarPanel's lazy-mount flow) — the chat row and its
+  // first message do not exist in the DB yet, so this is dispatched via the
+  // normal handleSend path on mount, rather than requiring the user to
+  // retype what they already typed into the pending-chat textarea.
+  initialMessage?: string;
 };
 
 // Tool names that produce chart-shaped output (matches classifyReply's own
@@ -255,6 +262,7 @@ type MessageListProps = {
   chartPending: boolean;
   streamingReplyText: string;
   onRetry: () => void;
+  onSendPrompt?: (text: string) => void;
 };
 
 // Memoized and pulled out of ChatThread on purpose: draft (the textarea's
@@ -263,7 +271,7 @@ type MessageListProps = {
 // supervisor reply doing its own data fetching, on every single keystroke,
 // as a chat's history grows. Now this only re-renders when its own props
 // (real content) actually change, not when the user is just typing.
-const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, toolActivityByAgent, thinkingByAgent, isFinalizing, chartPending, streamingReplyText, onRetry }: MessageListProps) {
+const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, toolActivityByAgent, thinkingByAgent, isFinalizing, chartPending, streamingReplyText, onRetry, onSendPrompt }: MessageListProps) {
   const threadRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -303,10 +311,18 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
                 <MessageMarkdown content={message.content} />
               </div>
             )}
-            {message.ui_ref_task_id != null && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
+            {message.ui_ref_task_id != null && message.ui_component !== 'HorizonNoticeCard' && message.content_type !== 'horizon_notice' && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
             {message.content_type === 'chart' && <ChartCard uiProps={message.ui_props} />}
             {message.content_type === 'news' && <NewsBrief uiProps={message.ui_props} />}
-            {message.ui_component === 'clarifying_questions' && <ClarifyingQuestions uiProps={message.ui_props} chatId={chatId} />}
+            {message.ui_component === 'clarifying_questions' && <ClarifyingQuestions uiProps={message.ui_props} chatId={chatId} onSendPrompt={onSendPrompt} />}
+            {(message.ui_component === 'HorizonNoticeCard' || message.content_type === 'horizon_notice') && (
+              <HorizonNoticeCard
+                uiProps={message.ui_props}
+                taskId={message.ui_ref_task_id ?? undefined}
+                chatId={chatId}
+                onSendPrompt={onSendPrompt}
+              />
+            )}
           </div>
         );
       })}
@@ -337,7 +353,7 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
   );
 });
 
-export function ChatThread({ chatId }: ChatThreadProps) {
+export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
   const { data: messages = [], isLoading } = useChatMessages(chatId);
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState('');
@@ -441,6 +457,18 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     }
   }
 
+  // Fires exactly once, on mount, only for a freshly-promoted new chat that
+  // was typed into QuasarPanel's pending-chat textarea before ChatThread
+  // (and its WebSocket subscription) existed to send it directly.
+  const hasSentInitialMessageRef = useRef(false);
+  useEffect(() => {
+    if (initialMessage && !hasSentInitialMessageRef.current) {
+      hasSentInitialMessageRef.current = true;
+      handleSend(initialMessage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleRetry = useCallback(async () => {
     if (isSendingRef.current) return;
     isSendingRef.current = true;
@@ -486,6 +514,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
         chartPending={chartPending}
         streamingReplyText={streamingReplyText}
         onRetry={handleRetry}
+        onSendPrompt={handleSend}
       />
 
       <div style={{ flex: 'none', borderTop: '1px solid var(--hairline)', background: 'var(--canvas)', padding: '10px 12px 12px' }}>
