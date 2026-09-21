@@ -56,6 +56,10 @@ type stockChartRequest struct {
 	LensNote  string `json:"lens_note" jsonschema_description:"One short sentence explaining what this chart shows."`
 }
 
+func NewStockChartTool(priceSvc *publicsvc.PriceService) (tool.InvokableTool, error) {
+	return newStockChartTool(priceSvc)
+}
+
 func newStockChartTool(priceSvc *publicsvc.PriceService) (tool.InvokableTool, error) {
 	return utils.InferTool(
 		"get_stock_chart",

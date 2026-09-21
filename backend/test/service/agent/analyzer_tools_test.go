@@ -8,6 +8,8 @@ import (
 
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/analyzer"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
+	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 	"github.com/joho/godotenv"
 )
 
@@ -102,5 +104,57 @@ func TestReadArticleTool_FallbackNoKey(t *testing.T) {
 		}
 	}
 }
+
+func TestStockChartTool_IndexAndTokenizedTickers(t *testing.T) {
+	priceSvc := &publicsvc.PriceService{Price: external.NewPriceService()}
+	tool, err := analyzer.NewStockChartTool(priceSvc)
+	if err != nil {
+		t.Fatalf("failed to create stock_chart tool: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Test ^JKSE: must return valid ChartPayload without 404
+	outStr, err := tool.InvokableRun(ctx, `{"ticker":"^JKSE","range":"1M","chart_q":"chart IHSG"}`)
+	if err != nil {
+		t.Fatalf("get_stock_chart failed for ^JKSE: %v", err)
+	}
+	var res1 publicsvc.ChartPayload
+	if err := json.Unmarshal([]byte(outStr), &res1); err != nil {
+		t.Fatalf("unmarshal chart payload: %v", err)
+	}
+	points1, ok := res1.Data.([]any)
+	if !ok || len(points1) == 0 {
+		t.Fatalf("expected non-empty chart data points for ^JKSE, got %v", res1.Data)
+	}
+
+	// 2. Test SINIP: must resolve to SINI.JK and return valid ChartPayload without 404
+	outStr, err = tool.InvokableRun(ctx, `{"ticker":"SINIP","range":"1M","chart_q":"chart SINIP"}`)
+	if err != nil {
+		t.Fatalf("get_stock_chart failed for SINIP: %v", err)
+	}
+	var res2 publicsvc.ChartPayload
+	if err := json.Unmarshal([]byte(outStr), &res2); err != nil {
+		t.Fatalf("unmarshal chart payload: %v", err)
+	}
+	points2, ok := res2.Data.([]any)
+	if !ok || len(points2) == 0 {
+		t.Fatalf("expected non-empty chart data points for SINIP (SINI.JK), got %v", res2.Data)
+	}
+
+	// 3. Test non-existent ticker: must degrade gracefully with LensNote and not error out
+	outStr, err = tool.InvokableRun(ctx, `{"ticker":"NONEXISTENTXYZ","range":"1M","chart_q":"chart unknown"}`)
+	if err != nil {
+		t.Fatalf("get_stock_chart must not fail on not-found ticker: %v", err)
+	}
+	var res3 publicsvc.ChartPayload
+	if err := json.Unmarshal([]byte(outStr), &res3); err != nil {
+		t.Fatalf("unmarshal chart payload: %v", err)
+	}
+	if !strings.Contains(res3.LensNote, "No chart data is available") {
+		t.Fatalf("expected LensNote to explain not found, got %q", res3.LensNote)
+	}
+}
+
 
 

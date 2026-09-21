@@ -62,3 +62,44 @@ func TestPriceLineHistoryWorksForAnyRealIDXTicker(t *testing.T) {
 	}
 	t.Logf("VKTR: %d points, first=%+v last=%+v", len(points), points[0], points[len(points)-1])
 }
+
+func TestPriceLineHistory_IndexAndTokenizedTickers(t *testing.T) {
+	priceSvc := &publicsvc.PriceService{Price: external.NewPriceService()}
+
+	// 1. Test ^JKSE (Jakarta Composite Index)
+	points, err := priceSvc.PriceLineHistory(context.Background(), "^JKSE", "1M")
+	if err != nil {
+		t.Fatalf("expected ^JKSE to resolve to IHSG history, got err: %v", err)
+	}
+	if len(points) == 0 {
+		t.Fatal("expected real ^JKSE points, got 0")
+	}
+	t.Logf("^JKSE: %d points, latest=%.2f", len(points), points[len(points)-1].Price)
+
+	// 2. Test IHSG
+	points, err = priceSvc.PriceLineHistory(context.Background(), "IHSG", "1M")
+	if err != nil {
+		t.Fatalf("expected IHSG to resolve to IHSG history, got err: %v", err)
+	}
+	if len(points) == 0 {
+		t.Fatal("expected real IHSG points, got 0")
+	}
+	t.Logf("IHSG: %d points, latest=%.2f", len(points), points[len(points)-1].Price)
+
+	// 3. Test SINIP (strips P -> SINI.JK on Yahoo)
+	points, err = priceSvc.PriceLineHistory(context.Background(), "SINIP", "1M")
+	if err != nil {
+		t.Fatalf("expected SINIP to strip P and fetch SINI.JK, got err: %v", err)
+	}
+	if len(points) == 0 {
+		t.Fatal("expected real SINIP/SINI points, got 0")
+	}
+	t.Logf("SINIP (SINI): %d points, latest=%.2f", len(points), points[len(points)-1].Price)
+
+	// 4. Test non-existent ticker returns ErrStockNotFound
+	_, err = priceSvc.PriceLineHistory(context.Background(), "NONEXISTENTXYZ123", "1M")
+	if err != publicsvc.ErrStockNotFound {
+		t.Fatalf("expected ErrStockNotFound for non-existent ticker, got: %v", err)
+	}
+}
+

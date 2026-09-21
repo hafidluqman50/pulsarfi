@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.4 |
+| **Version** | 1.5 |
 | **Status** | Implemented |
 | **Date Created** | 2026-09-07 |
 | **Last Updated** | 2026-09-21 |
@@ -14,6 +14,7 @@
 | 1.2 | 2026-09-21 | In §3, §4, §5: Cap maximum tool errors to strictly 3 per turn with short-circuit circuit breaker in RunContext and WrapToolGraceful, and replace MaxIterations: 20 in analyzer/index.go with a lean limit of 6 to prevent on-chain ETH gas waste. |
 | 1.3 | 2026-09-21 | In §3, §4: Simplify iteration and retry bounding — eliminate custom circuit-breaker complexity in RunContext/graceful_tool_service; directly set MaxIterations: 3 in analyzer/index.go to cap iterations/retries naturally and conserve on-chain ETH gas. |
 | 1.4 | 2026-09-21 | In §3, §4: Fix HTTP 500 ErrExceedMaxIterations regression on live news endpoint by adjusting analyzer MaxIterations from 3 to 6 (allowing web_search + up to 2 read_article calls + final synthesis turn without hitting premature exhaustion, strictly well below 20), updating instructions.go to bound article reads to at most 2 items per turn, and verifying by hitting the live endpoint. |
+| 1.5 | 2026-09-21 | In §3, §4: Fix Yahoo 404 tool errors in get_stock_chart when Analyzer queries market indices (^JKSE/IHSG) or tokenized stock tickers (e.g. SINIP). In price_service.go and stock_chart_service.go, map ^JKSE/IHSG to GetIHSGHistory, resolve tokenized P suffix to underlying IDX tickers (SINIP -> SINI), map Yahoo 404 errors to ErrStockNotFound for graceful handling, and instruct Nova in instructions.go to only call get_stock_chart when explicitly requested. |
 
 **Note on scope.** A scoped-down version of a richer "News Brief" design reference the user shared (composite sentiment score, multi-asset comparison tabs, a quarantine view for rejected sources) — this covers only what was explicitly asked for in words: a dated, sourced, linked citation card per evidence item, reusing `TrustedNewsDomains` for legitimacy. The composite score/tabs/quarantine UI are not built.
 
@@ -47,6 +48,12 @@ To resolve this reliably in production:
 - `NewsBrief.tsx` renders each item: source badge, formatted date (if present), excerpt, 64×64 lead image (if present), and link to the original article.
 - **MaxIterations Bounded at 6**: In `analyzer/index.go`, `MaxIterations` is set to **`6`** (strictly well below 20). This accommodates a realistic news pipeline (1 `web_search` + up to 2 `read_article` calls + synthesis cycle, with headroom for retry) without hitting premature `exceeds max iterations` failures or causing HTTP 500 errors.
 - **Strict Read Bound in Instructions**: In `analyzer/instructions.go`, Nova is instructed to fetch at most 1 to 2 most relevant articles per turn and synthesize immediately without looping indefinitely.
+- **Robust Ticker & Index Chart Resolution**:
+  - `PriceLineHistory` in `stock_chart_service.go` routes through `PriceService.GetStockHistory`.
+  - When querying `^JKSE` or `IHSG`, the request maps directly to `GetIHSGHistory` (querying `^JKSE`), preventing the invalid `^JKSE.JK` query that returned HTTP 404 from Yahoo Finance.
+  - When querying a tokenized ticker ending with `P` (e.g., `SINIP`), it resolves to the underlying IDX ticker (`SINI`), querying `SINI.JK` instead of `SINIP.JK` (which returns HTTP 404).
+  - Any Yahoo HTTP 404 or empty data responses are cleanly mapped to `ErrStockNotFound`, which `get_stock_chart` handles gracefully without throwing an unhandled tool exception.
+  - In `analyzer/instructions.go`, Nova is instructed to only call `get_stock_chart` when the user explicitly requests price charts or historical market trends, never proactively on a pure news query.
 
 ---
 
@@ -54,11 +61,15 @@ To resolve this reliably in production:
 
 | Layer | File | Change |
 |---|---|---|
+| Backend | `backend/src/service/public/price_service.go` | `[MODIFY]` Support `^JKSE` in `GetStockHistory`, strip `P` suffix for underlying IDX ticker, map Yahoo 404 to `ErrStockNotFound` |
+| Backend | `backend/src/service/public/stock_chart_service.go` | `[MODIFY]` Delegate `PriceLineHistory` to `GetStockHistory` |
+| Backend | `backend/src/service/agent/analyzer/chart_service.go` | `[MODIFY]` Export `NewStockChartTool` for tool-level unit testing |
+| Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Restrict `get_stock_chart` to explicit user chart requests |
 | Backend | `backend/src/service/agent/analyzer/tools_service.go` | `[MODIFY]` Tavily Extract API integration in `fetchArticle`, `article.Node == nil` guard, `siteNameFromHost`, `bisnis.com` in `TrustedNewsDomains` |
 | Backend | `backend/src/service/agent/analyzer/index.go` | `[MODIFY]` Set `MaxIterations: 6` |
-| Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Bound article reads to at most 1-2 items per turn, avoid redundant retries |
 | Backend | `backend/src/service/agent/orchestrator_workflow_service.go` | `[MODIFY]` `classifyReply` news classification, `extractNewsEvidence` |
 | Backend | `backend/test/service/agent/analyzer_tools_test.go` | `[NEW]` Unit tests for `read_article` allowlist, Tavily Extract, and fallback safety |
+| Backend | `backend/test/service/agent/news_endpoint_live_test.go` | `[NEW]` End-to-end live test hitting HandleChatMessage and Gin POST /api/v1/agent/chats/:id/messages |
 | Backend | `backend/migrations/020_agent_chat_message_news_content_type.sql` | `[NEW]` |
 | Frontend | `frontend/components/agent/NewsBrief.tsx` | `[NEW]` |
 | Frontend | `frontend/components/agent/ChatThread.tsx` | `[MODIFY]` renders `NewsBrief` for `content_type === 'news'` |

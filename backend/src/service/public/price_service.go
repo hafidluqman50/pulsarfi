@@ -68,20 +68,34 @@ func (s *PriceService) GetStockPrice(ctx context.Context, ticker string, source 
 // idx_ticker ("BUMI") is what Yahoo actually needs. Any other ticker is
 // assumed to already be a real IDX ticker and queried directly.
 func (s *PriceService) GetStockHistory(ctx context.Context, ticker string, rangeName string) ([]external.PriceHistoryPoint, error) {
-	ticker = strings.ToUpper(ticker)
-	if ticker == "IHSG" {
+	ticker = strings.ToUpper(strings.TrimSpace(ticker))
+	if ticker == "IHSG" || ticker == "^JKSE" {
 		return s.Price.GetIHSGHistory(rangeName)
 	}
 
 	idxTicker := ticker
-	if stock, found, err := s.Stocks.FindByTickerOrIdxTicker(ctx, ticker); err != nil {
-		return nil, err
-	} else if found {
-		idxTicker = stock.IdxTicker
+	if s.Stocks != nil {
+		if stock, found, err := s.Stocks.FindByTickerOrIdxTicker(ctx, ticker); err != nil {
+			return nil, err
+		} else if found {
+			idxTicker = stock.IdxTicker
+		} else if strings.HasSuffix(ticker, "P") && len(ticker) > 1 {
+			baseTicker := strings.TrimSuffix(ticker, "P")
+			if baseStock, baseFound, _ := s.Stocks.FindByTickerOrIdxTicker(ctx, baseTicker); baseFound {
+				idxTicker = baseStock.IdxTicker
+			} else {
+				idxTicker = baseTicker
+			}
+		}
+	} else if strings.HasSuffix(ticker, "P") && len(ticker) > 1 {
+		idxTicker = strings.TrimSuffix(ticker, "P")
 	}
 
 	points, err := s.Price.GetYahooIDXHistory(idxTicker, rangeName)
 	if err != nil {
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "no data") {
+			return nil, ErrStockNotFound
+		}
 		return nil, err
 	}
 	if len(points) == 0 {
@@ -91,8 +105,8 @@ func (s *PriceService) GetStockHistory(ctx context.Context, ticker string, range
 }
 
 func (s *PriceService) GetIDXStockPrice(ctx context.Context, ticker string) (external.PriceEntry, error) {
-	ticker = strings.ToUpper(ticker)
-	if ticker == "IHSG" {
+	ticker = strings.ToUpper(strings.TrimSpace(ticker))
+	if ticker == "IHSG" || ticker == "^JKSE" {
 		return s.Price.GetIHSG()
 	}
 
