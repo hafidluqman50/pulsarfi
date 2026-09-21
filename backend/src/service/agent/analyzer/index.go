@@ -38,9 +38,11 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, chartReader 
 		Instruction: instructions,
 		Model:       chatModel,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agent.WrapToolsGraceful(tools)}},
-		// Capped at 3 iterations: limits retries/errors to at most 3 times,
-		// preventing looping and conserving on-chain ETH gas.
-		MaxIterations: 3,
+		// Bounded at 6 iterations: strictly well below 20 to conserve on-chain
+		// ETH gas, while giving enough headroom for a realistic news pipeline
+		// (1 web_search + up to 2 read_article calls + final synthesis turn)
+		// without hitting premature ErrExceedMaxIterations / HTTP 500 errors.
+		MaxIterations: 6,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("analyzer: build agent: %w", err)

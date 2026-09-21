@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.3 |
+| **Version** | 1.4 |
 | **Status** | Implemented |
 | **Date Created** | 2026-09-07 |
 | **Last Updated** | 2026-09-21 |
@@ -13,6 +13,7 @@
 | 1.1 | 2026-09-21 | In §2, §3, §4, §5: Resolve live verification blocker by replacing go-readability with Tavily Extract API as primary extraction engine in read_article, adding article.Node nil-check guard to readability fallback, expanding TrustedNewsDomains to include bisnis.com, and verifying with unit tests. |
 | 1.2 | 2026-09-21 | In §3, §4, §5: Cap maximum tool errors to strictly 3 per turn with short-circuit circuit breaker in RunContext and WrapToolGraceful, and replace MaxIterations: 20 in analyzer/index.go with a lean limit of 6 to prevent on-chain ETH gas waste. |
 | 1.3 | 2026-09-21 | In §3, §4: Simplify iteration and retry bounding — eliminate custom circuit-breaker complexity in RunContext/graceful_tool_service; directly set MaxIterations: 3 in analyzer/index.go to cap iterations/retries naturally and conserve on-chain ETH gas. |
+| 1.4 | 2026-09-21 | In §3, §4: Fix HTTP 500 ErrExceedMaxIterations regression on live news endpoint by adjusting analyzer MaxIterations from 3 to 6 (allowing web_search + up to 2 read_article calls + final synthesis turn without hitting premature exhaustion, strictly well below 20), updating instructions.go to bound article reads to at most 2 items per turn, and verifying by hitting the live endpoint. |
 
 **Note on scope.** A scoped-down version of a richer "News Brief" design reference the user shared (composite sentiment score, multi-asset comparison tabs, a quarantine view for rejected sources) — this covers only what was explicitly asked for in words: a dated, sourced, linked citation card per evidence item, reusing `TrustedNewsDomains` for legitimacy. The composite score/tabs/quarantine UI are not built.
 
@@ -44,7 +45,8 @@ To resolve this reliably in production:
 - `classifyReply` in `orchestrator_workflow_service.go` sets `content_type: "news"` when non-empty evidence items are present.
 - Migration `020` adds `'news'` to `agent_chat_messages_content_type_check`.
 - `NewsBrief.tsx` renders each item: source badge, formatted date (if present), excerpt, 64×64 lead image (if present), and link to the original article.
-- **MaxIterations Capped at 3**: In `analyzer/index.go`, `MaxIterations` is set to **`3`**, directly and naturally bounding the maximum tool executions and retries to 3 without unnecessary architectural overhead or on-chain ETH gas waste.
+- **MaxIterations Bounded at 6**: In `analyzer/index.go`, `MaxIterations` is set to **`6`** (strictly well below 20). This accommodates a realistic news pipeline (1 `web_search` + up to 2 `read_article` calls + synthesis cycle, with headroom for retry) without hitting premature `exceeds max iterations` failures or causing HTTP 500 errors.
+- **Strict Read Bound in Instructions**: In `analyzer/instructions.go`, Nova is instructed to fetch at most 1 to 2 most relevant articles per turn and synthesize immediately without looping indefinitely.
 
 ---
 
@@ -53,8 +55,8 @@ To resolve this reliably in production:
 | Layer | File | Change |
 |---|---|---|
 | Backend | `backend/src/service/agent/analyzer/tools_service.go` | `[MODIFY]` Tavily Extract API integration in `fetchArticle`, `article.Node == nil` guard, `siteNameFromHost`, `bisnis.com` in `TrustedNewsDomains` |
-| Backend | `backend/src/service/agent/analyzer/index.go` | `[MODIFY]` Set `MaxIterations: 3` |
-| Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` evidence contract wording |
+| Backend | `backend/src/service/agent/analyzer/index.go` | `[MODIFY]` Set `MaxIterations: 6` |
+| Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Bound article reads to at most 1-2 items per turn, avoid redundant retries |
 | Backend | `backend/src/service/agent/orchestrator_workflow_service.go` | `[MODIFY]` `classifyReply` news classification, `extractNewsEvidence` |
 | Backend | `backend/test/service/agent/analyzer_tools_test.go` | `[NEW]` Unit tests for `read_article` allowlist, Tavily Extract, and fallback safety |
 | Backend | `backend/migrations/020_agent_chat_message_news_content_type.sql` | `[NEW]` |
