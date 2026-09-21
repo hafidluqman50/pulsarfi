@@ -552,6 +552,22 @@ func (o *Orchestrator) runAnalyze(ctx context.Context, turn *orchestratorTurn) (
 	if request == "" {
 		request = turn.RawPrompt
 	}
+
+	// For multi-turn follow-ups (e.g. user asks "Btw itu SINI referensinya dari mana?"),
+	// Nova needs recent context from the conversation (especially the assistant's previous reply)
+	// so it doesn't search blindly in circles without knowing what was previously stated.
+	var lastAssistantText string
+	for i := len(turn.Messages) - 1; i >= 0; i-- {
+		m := turn.Messages[i]
+		if m.Role == schema.Assistant && strings.TrimSpace(m.Content) != "" {
+			lastAssistantText = truncateRunes(strings.TrimSpace(m.Content), 1500)
+			break
+		}
+	}
+	if lastAssistantText != "" && !turn.Decision.IsActionable {
+		request = fmt.Sprintf("Recent conversation context (prior assistant reply):\n\"\"\"\n%s\n\"\"\"\n\nUser follow-up instruction: %s", lastAssistantText, request)
+	}
+
 	request = buildAnalyzerRequest(request, turn.Decision.Shape, turn.ResolvedTicker, turn.Decision.Side, turn.Decision.IsActionable)
 
 	if turn.onSubTaskStarted != nil {
@@ -1001,6 +1017,10 @@ func runRoleAgent(ctx context.Context, a adk.Agent, prompt string, onToolCall fu
 			break
 		}
 		if event.Err != nil {
+			if strings.Contains(event.Err.Error(), "exceeds max iterations") {
+				slog.WarnContext(ctx, "orchestrator: role agent reached max iterations, attempting recovery from partial state", "error", event.Err)
+				break
+			}
 			return "", nil, event.Err
 		}
 		if event.Output == nil || event.Output.MessageOutput == nil {
@@ -1046,6 +1066,15 @@ func runRoleAgent(ctx context.Context, a adk.Agent, prompt string, onToolCall fu
 		final = lastAssistant
 	}
 	if final == nil {
+		if len(toolCalls) > 0 {
+			var gathered strings.Builder
+			for _, tc := range toolCalls {
+				if tc.Result != "" {
+					gathered.WriteString(tc.Result + "\n")
+				}
+			}
+			return truncateRunes(gathered.String(), 2000), toolCalls, nil
+		}
 		return "", nil, fmt.Errorf("orchestrator: no final response from agent")
 	}
 	return final.Content, toolCalls, nil

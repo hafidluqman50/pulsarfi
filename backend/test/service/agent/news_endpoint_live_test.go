@@ -120,6 +120,22 @@ func TestLiveNewsQueryHTTPEndpoint(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected HTTP 200, got HTTP %d: %s", w.Code, w.Body.String())
 	}
-	t.Logf("HTTP endpoint returned %d OK with response: %s", w.Code, w.Body.String())
+	t.Logf("Turn 1 HTTP endpoint returned %d OK with response: %s", w.Code, w.Body.String())
+
+	// Turn 2: Follow-up asking for reference / source link (exact user query that previously triggered HTTP 500)
+	reqBody2 := `{"message":"Btw itu SINI referensinya dari mana? Ada link legitnya?"}`
+	req2, err := http.NewRequest("POST", "/api/v1/agent/chats/"+chatID.String()+"/messages", strings.NewReader(reqBody2))
+	if err != nil {
+		t.Fatalf("new follow-up request: %v", err)
+	}
+	req2.Header.Set("Content-Type", "application/json")
+
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected follow-up HTTP 200, got HTTP %d: %s", w2.Code, w2.Body.String())
+	}
+	t.Logf("Turn 2 follow-up HTTP endpoint returned %d OK with response: %s", w2.Code, w2.Body.String())
 }
 

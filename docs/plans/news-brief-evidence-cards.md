@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.7 |
+| **Version** | 1.8 |
 | **Status** | Implemented |
 | **Date Created** | 2026-09-07 |
 | **Last Updated** | 2026-09-21 |
@@ -17,6 +17,7 @@
 | 1.5 | 2026-09-21 | In §3, §4: Fix Yahoo 404 tool errors in get_stock_chart when Analyzer queries market indices (^JKSE/IHSG) or tokenized stock tickers (e.g. SINIP). In price_service.go and stock_chart_service.go, map ^JKSE/IHSG to GetIHSGHistory, resolve tokenized P suffix to underlying IDX tickers (SINIP -> SINI), map Yahoo 404 errors to ErrStockNotFound for graceful handling, and instruct Nova in instructions.go to only call get_stock_chart when explicitly requested. |
 | 1.6 | 2026-09-21 | In §3, §4: Fortify external PriceService against invalid index and duplicate .JK suffixes by implementing cleanYahooIDXSymbol, routing ^JKSE/IHSG/JKSE calls in GetYahooIDX, GetYahooIDXMarket, and GetYahooIDXHistory to IHSG handlers, and deduplicating .JK on all ticker lookups. |
 | 1.7 | 2026-09-21 | In §3, §4: Revert manual string-cleaning Go code in external and public price services. Enforce LLM-side ticker cleanup and filtering directly in analyzer/instructions.go and stockChartRequest jsonschema description: Nova must filter when to invoke get_stock_chart (never on pure news) and clean up tickers to official 4-letter IDX symbols (stripping tokenized 'P' suffix) or 'IHSG' before calling tools. |
+| 1.8 | 2026-09-21 | In §3, §4: Fix HTTP 500 on follow-up reference queries (e.g. 'Btw itu SINI referensinya dari mana?') by passing recent assistant context to Nova in runAnalyze, bounding reference searches in analyzer/instructions.go to at most 1 targeted search/read without open-ended loops, recovering gracefully from ErrExceedMaxIterations in runRoleAgent without crashing the HTTP server, and setting analyzer MaxIterations to 8 for multi-turn research headroom. |
 
 **Note on scope.** A scoped-down version of a richer "News Brief" design reference the user shared (composite sentiment score, multi-asset comparison tabs, a quarantine view for rejected sources) — this covers only what was explicitly asked for in words: a dated, sourced, linked citation card per evidence item, reusing `TrustedNewsDomains` for legitimacy. The composite score/tabs/quarantine UI are not built.
 
@@ -48,8 +49,10 @@ To resolve this reliably in production:
 - `classifyReply` in `orchestrator_workflow_service.go` sets `content_type: "news"` when non-empty evidence items are present.
 - Migration `020` adds `'news'` to `agent_chat_messages_content_type_check`.
 - `NewsBrief.tsx` renders each item: source badge, formatted date (if present), excerpt, 64×64 lead image (if present), and link to the original article.
-- **MaxIterations Bounded at 6**: In `analyzer/index.go`, `MaxIterations` is set to **`6`** (strictly well below 20). This accommodates a realistic news pipeline (1 `web_search` + up to 2 `read_article` calls + synthesis cycle, with headroom for retry) without hitting premature `exceeds max iterations` failures or causing HTTP 500 errors.
-- **Strict Read Bound in Instructions**: In `analyzer/instructions.go`, Nova is instructed to fetch at most 1 to 2 most relevant articles per turn and synthesize immediately without looping indefinitely.
+- **MaxIterations Bounded at 8**: In `analyzer/index.go`, `MaxIterations` is set to **`8`** (strictly well below 20). This accommodates multi-step news research and follow-up reference queries without hitting premature `exceeds max iterations` failures or causing HTTP 500 errors.
+- **Strict Read Bound & Follow-up Rules in Instructions**: In `analyzer/instructions.go`, Nova is instructed to fetch at most 1 to 2 most relevant articles per turn and synthesize immediately. When asked for references, links, or sources for previously mentioned items, Nova must inspect the conversation context first and execute at most 1 targeted search and 1 read without entering an open-ended loop.
+- **Conversation Context Threading in `runAnalyze`**: Pass the last assistant message (if present) into the analyzer request prompt so Nova knows what was previously stated, avoiding blind repetitive searches when the user asks follow-up questions like "where did that reference come from?".
+- **Graceful Iteration Recovery**: In `runRoleAgent` (`orchestrator_workflow_service.go`), catch `exceeds max iterations` and recover gracefully using `lastNonEmptyAssistant` or tool results collected so far, never letting an iteration limit bubble up as an unhandled error causing an HTTP 500 response.
 - **LLM-Driven Ticker Cleanup & Chart Filtering**:
   - Filtering: In `analyzer/instructions.go`, Nova is explicitly instructed never to invoke `get_stock_chart` proactively on news or general inquiries.
   - Ticker Cleanup: In `analyzer/instructions.go` and `stockChartRequest` schema, Nova is instructed to clean up any ticker before passing it to `get_stock_chart`:
@@ -64,14 +67,14 @@ To resolve this reliably in production:
 
 | Layer | File | Change |
 |---|---|---|
-| Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Instruct Nova to clean up tickers (strip 'P' suffix, use IHSG) and filter chart calls to explicit user requests only |
+| Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Add bounded follow-up / reference rules, clean up tickers, filter chart calls |
+| Backend | `backend/src/service/agent/analyzer/index.go` | `[MODIFY]` Set `MaxIterations: 8` |
+| Backend | `backend/src/service/agent/orchestrator_workflow_service.go` | `[MODIFY]` Thread recent assistant context into `buildAnalyzerRequest`, gracefully recover from `exceeds max iterations` in `runRoleAgent` |
 | Backend | `backend/src/service/agent/analyzer/chart_service.go` | `[MODIFY]` Update `stockChartRequest.Ticker` jsonschema description with cleanup instructions, export `NewStockChartTool` |
 | Backend | `backend/src/service/public/stock_chart_service.go` | `[MODIFY]` Delegate `PriceLineHistory` to `GetStockHistory` |
 | Backend | `backend/src/service/public/price_service.go` | `[MODIFY]` Map Yahoo 404 to `ErrStockNotFound` in `GetStockHistory` |
 | Backend | `backend/src/service/agent/analyzer/tools_service.go` | `[MODIFY]` Tavily Extract API integration in `fetchArticle`, `article.Node == nil` guard, `siteNameFromHost`, `bisnis.com` in `TrustedNewsDomains` |
-| Backend | `backend/src/service/agent/analyzer/index.go` | `[MODIFY]` Set `MaxIterations: 6` |
-| Backend | `backend/src/service/agent/orchestrator_workflow_service.go` | `[MODIFY]` `classifyReply` news classification, `extractNewsEvidence` |
-| Backend | `backend/test/service/agent/analyzer_tools_test.go` | `[NEW]` Unit tests for `read_article` allowlist, Tavily Extract, and fallback safety |
+| Backend | `backend/test/service/agent/news_endpoint_live_test.go` | `[MODIFY]` Add multi-turn follow-up test verifying reference query does not hit HTTP 500 |
 | Backend | `backend/test/service/agent/news_endpoint_live_test.go` | `[NEW]` End-to-end live test hitting HandleChatMessage and Gin POST /api/v1/agent/chats/:id/messages |
 | Backend | `backend/migrations/020_agent_chat_message_news_content_type.sql` | `[NEW]` |
 | Frontend | `frontend/components/agent/NewsBrief.tsx` | `[NEW]` |
