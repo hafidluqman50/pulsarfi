@@ -296,8 +296,28 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
               </div>
             )}
             {message.ui_ref_task_id != null && message.ui_component !== 'HorizonNoticeCard' && message.content_type !== 'horizon_notice' && lastPlanCardIndexByTaskId.get(message.ui_ref_task_id) === index && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
-            {message.content_type === 'chart' && <ChartCard uiProps={message.ui_props} />}
-            {message.content_type === 'news' && <NewsBrief uiProps={message.ui_props} />}
+            {message.content_type === 'chart' && (
+              <>
+                <ChartCard uiProps={(message.ui_props as { charts?: unknown })?.charts ?? message.ui_props} />
+                {Array.isArray((message.ui_props as { news?: unknown })?.news) && (
+                  <NewsBrief uiProps={(message.ui_props as { news?: unknown })?.news} />
+                )}
+              </>
+            )}
+            {message.content_type === 'news' && (
+              <>
+                {(message.ui_props as { charts?: unknown })?.charts != null && (
+                  <ChartCard uiProps={(message.ui_props as { charts?: unknown })?.charts} />
+                )}
+                <NewsBrief uiProps={Array.isArray(message.ui_props) ? message.ui_props : (message.ui_props as { news?: unknown })?.news} />
+              </>
+            )}
+            {message.content_type === 'composite' && (
+              <>
+                <ChartCard uiProps={(message.ui_props as { charts?: unknown })?.charts ?? message.ui_props} />
+                <NewsBrief uiProps={(message.ui_props as { news?: unknown })?.news} />
+              </>
+            )}
             {message.ui_component === 'clarifying_questions' && (
               <ClarifyingQuestions
                 uiProps={message.ui_props}
