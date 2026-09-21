@@ -204,5 +204,44 @@ func TestStockChartTool_IndexAndTokenizedTickers(t *testing.T) {
 	}
 }
 
+func TestSearchTool_TrustedDomainsAndFallback(t *testing.T) {
+	_ = godotenv.Load("../../../.env")
 
+	apiKey := config.GetEnv("TAVILY_API_KEY")
+	if apiKey == "" {
+		t.Skip("skipping TestSearchTool_TrustedDomainsAndFallback because TAVILY_API_KEY is not set")
+	}
 
+	searchTool, err := analyzer.NewSearchTool(apiKey, 5, analyzer.TrustedNewsDomains)
+	if err != nil {
+		t.Fatalf("failed to create web_search tool: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Search for a major IDX stock — should hit trusted domains directly
+	outStr, err := searchTool.InvokableRun(ctx, `{"query":"IHSG hari ini"}`)
+	if err != nil {
+		t.Fatalf("web_search failed: %v", err)
+	}
+
+	var parsed struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(outStr), &parsed); err != nil {
+		t.Fatalf("failed to parse web_search output: %v", err)
+	}
+
+	if len(parsed.Results) == 0 {
+		t.Errorf("expected at least 1 search result, got 0")
+	}
+	for _, res := range parsed.Results {
+		if res.URL == "" {
+			t.Errorf("expected non-empty URL in search result")
+		}
+	}
+}

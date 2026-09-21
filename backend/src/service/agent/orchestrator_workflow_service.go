@@ -560,7 +560,7 @@ func (o *Orchestrator) runAnalyze(ctx context.Context, turn *orchestratorTurn) (
 	turn.runCtx.CurrentAgent = "analyzer"
 	turn.runCtx.CurrentStepName = "gather_evidence"
 	slog.InfoContext(ctx, "orchestrator: llm call", "step", "gather_evidence", "agent", "analyzer", "model", o.AnalyzerModelName, "task_id", turn.TaskID)
-	reply, toolCalls, err := runRoleAgent(WithRunContext(ctx, turn.runCtx), o.Analyzer, request,
+	reply, toolCalls, err := runRoleAgent(WithRunContext(ctx, turn.runCtx), o.Analyzer, request, true,
 		func(toolName, phase string) {
 			if turn.onToolCall != nil {
 				turn.onToolCall("analyzer", toolName, phase)
@@ -666,7 +666,7 @@ func (o *Orchestrator) runExecute(ctx context.Context, turn *orchestratorTurn) (
 	turn.runCtx.CurrentAgent = "executor"
 	turn.runCtx.CurrentStepName = "decide"
 	slog.InfoContext(ctx, "orchestrator: llm call", "step", "decide", "agent", "executor", "model", o.ExecutorModelName, "task_id", turn.TaskID)
-	reply, _, err := runRoleAgent(WithRunContext(ctx, turn.runCtx), o.Executor, request,
+	reply, _, err := runRoleAgent(WithRunContext(ctx, turn.runCtx), o.Executor, request, false,
 		func(toolName, phase string) {
 			if turn.onToolCall != nil {
 				turn.onToolCall("executor", toolName, phase)
@@ -971,7 +971,7 @@ func drainAssistantThinking(stream *schema.StreamReader[*schema.Message], onThin
 
 // runRoleAgent drives one full agent turn (Nova or Comet) to completion,
 // draining streamed output and surfacing tool-call events via callbacks.
-func runRoleAgent(ctx context.Context, a adk.Agent, prompt string, onToolCall func(toolName, phase string), onThinking func(delta string)) (string, []toolCallResult, error) {
+func runRoleAgent(ctx context.Context, a adk.Agent, prompt string, allowIterationRecovery bool, onToolCall func(toolName, phase string), onThinking func(delta string)) (string, []toolCallResult, error) {
 	var runOpts []adk.AgentRunOption
 	if onToolCall != nil {
 		handler := callbacks.NewHandlerBuilder().
@@ -1001,7 +1001,7 @@ func runRoleAgent(ctx context.Context, a adk.Agent, prompt string, onToolCall fu
 			break
 		}
 		if event.Err != nil {
-			if strings.Contains(event.Err.Error(), "exceeds max iterations") {
+			if allowIterationRecovery && strings.Contains(event.Err.Error(), "exceeds max iterations") {
 				slog.WarnContext(ctx, "orchestrator: role agent reached max iterations, attempting recovery from partial state", "error", event.Err)
 				break
 			}
@@ -1050,16 +1050,7 @@ func runRoleAgent(ctx context.Context, a adk.Agent, prompt string, onToolCall fu
 		final = lastAssistant
 	}
 	if final == nil {
-		if len(toolCalls) > 0 {
-			var gathered strings.Builder
-			for _, tc := range toolCalls {
-				if tc.Result != "" {
-					gathered.WriteString(tc.Result + "\n")
-				}
-			}
-			return truncateRunes(gathered.String(), 2000), toolCalls, nil
-		}
-		return "", nil, fmt.Errorf("orchestrator: no final response from agent")
+		return "", toolCalls, fmt.Errorf("orchestrator: agent produced tool calls but no final textual response")
 	}
 	return final.Content, toolCalls, nil
 }

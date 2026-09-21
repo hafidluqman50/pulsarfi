@@ -76,6 +76,31 @@ func NewSearchTool(apiKey string, maxResults int, trustedDomains []string) (tool
 }
 
 func tavilySearch(ctx context.Context, apiKey, query string, maxResults int, includeDomains []string) (searchResponse, error) {
+	resp, err := executeTavilySearch(ctx, apiKey, query, maxResults, includeDomains)
+	if err != nil {
+		return searchResponse{}, err
+	}
+	if len(resp.Results) > 0 {
+		return resp, nil
+	}
+
+	// Auto-fallback: if trusted search returned 0 results and includeDomains was specified,
+	// run 1 fallback search without include_domains so external reporting is discoverable.
+	if len(includeDomains) > 0 {
+		fallbackResp, err := executeTavilySearch(ctx, apiKey, query, maxResults, nil)
+		if err != nil {
+			return resp, nil
+		}
+		for i := range fallbackResp.Results {
+			fallbackResp.Results[i].Title = "[Sumber Eksternal] " + fallbackResp.Results[i].Title
+		}
+		return fallbackResp, nil
+	}
+
+	return resp, nil
+}
+
+func executeTavilySearch(ctx context.Context, apiKey, query string, maxResults int, includeDomains []string) (searchResponse, error) {
 	body, err := json.Marshal(tavilySearchRequestBody{
 		Query:          query,
 		MaxResults:     maxResults,
@@ -413,17 +438,13 @@ func fetchArticles(ctx context.Context, apiKey string, req readArticleRequest, a
 	return resp, nil
 }
 
-func fetchArticle(ctx context.Context, apiKey, rawURL string, allowedDomains []string) (readArticleResponse, error) {
-	return fetchArticles(ctx, apiKey, readArticleRequest{URL: rawURL}, allowedDomains)
-}
-
 func NewNewsTools() (readArticleTool, webSearchTool tool.BaseTool, err error) {
 	apiKey := config.GetEnv("TAVILY_API_KEY")
 	readArticleTool, err = NewReadArticleTool(apiKey, TrustedNewsDomains)
 	if err != nil {
 		return nil, nil, fmt.Errorf("analyzer: build read_article tool: %w", err)
 	}
-	webSearchTool, err = NewSearchTool(apiKey, 10, nil)
+	webSearchTool, err = NewSearchTool(apiKey, 10, TrustedNewsDomains)
 	if err != nil {
 		return nil, nil, fmt.Errorf("analyzer: build web_search tool: %w", err)
 	}

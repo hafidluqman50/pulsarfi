@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Version** | 1.10 |
-| **Status** | Implemented |
+| **Version** | 1.11 |
+| **Status** | In Review |
 | **Date Created** | 2026-09-07 |
 | **Last Updated** | 2026-09-21 |
 
@@ -20,6 +20,7 @@
 | 1.8 | 2026-09-21 | In §3, §4: Fix HTTP 500 on follow-up reference queries (e.g. 'Btw itu SINI referensinya dari mana?') by passing recent assistant context to Nova in runAnalyze, bounding reference searches in analyzer/instructions.go to at most 1 targeted search/read without open-ended loops, recovering gracefully from ErrExceedMaxIterations in runRoleAgent without crashing the HTTP server, and setting analyzer MaxIterations to 8 for multi-turn research headroom. |
 | 1.9 | 2026-09-21 | In §2, §3, §4, §5: Focus strictly on Nova's tools without modifying external workflow files. Upgrade read_article in analyzer/tools_service.go to support batch URL extraction via Tavily Extract API (urls: []string), remove restrictive include_domains hard-filter in web_search to allow discovering unverified news, instruct Nova in analyzer/instructions.go to extract all trusted domain URLs simultaneously in a single call, enforce transparent dynamic disclosure when news only exists outside trusted domains ('Ini tidak ada di trusted domain PulsarFi, tapi referensinya ada dan isinya begini'), mandate markdown links [Media](URL) for all cited facts to ensure accountability, and verify via analyzer_tools_test.go. |
 | 1.10 | 2026-09-21 | In §4, §5: Verify zero regression across the analyzer-to-executor pipeline in backend/test/service/agent/comet_regression_live_test.go with live trader wallet (0xd8bf50c157a79260c77b25f89ef713e6c3feda6f) on BRPT (BRPTP) and BMRI (BMRIP), confirming seamless routing to analyzer_then_executor, clean evidence gathering, Arm card creation, and Eino pause before execution. |
+| 1.11 | 2026-09-21 | In §3, §4: Re-anchor web_search to native Tavily include_domains with tool-level auto-fallback for unlisted news; strip bloated domain rules and hardcoded disclaimer templates from analyzer/instructions.go; delete dead code wrapper fetchArticle in analyzer/tools_service.go; isolate iteration exhaustion recovery strictly to Analyzer in orchestrator_workflow_service.go; eliminate raw JSON tool dump on missing assistant replies. |
 
 **Note on scope.** A scoped-down version of a richer "News Brief" design reference the user shared (composite sentiment score, multi-asset comparison tabs, a quarantine view for rejected sources) — this covers only what was explicitly asked for in words: a dated, sourced, linked citation card per evidence item, reusing `TrustedNewsDomains` for legitimacy. The composite score/tabs/quarantine UI are not built.
 
@@ -63,20 +64,23 @@ To resolve this reliably in production:
   - `PriceLineHistory` in `stock_chart_service.go` routes through `PriceService.GetStockHistory`, and Yahoo HTTP 404 / empty responses map to `ErrStockNotFound` for graceful handling.
   - Manual code hacks (`cleanYahooIDXSymbol` and manual Go `TrimSuffix` branches) are eliminated in favor of clean LLM-driven normalization.
 - **Batch Article Extraction in `read_article`**:
-  - `readArticleRequest` in `analyzer/tools_service.go` supports `urls: []string` (with `url: string` preserved for backwards compatibility).
+  - `readArticleRequest` in `analyzer/tools_service.go` supports `urls: []string` (with `url: string` preserved for single URL calls).
   - Gated to `TrustedNewsDomains` (`liputan6.com`, `kompas.com`, `bisnis.com`, `market.bisnis.com`, `cnbcindonesia.com`).
   - Calls Tavily Extract API once with all valid URLs (`POST /extract {"urls": [...]}`).
   - Returns `articles: []readArticleItem` for batch extraction and populates top-level fields for single-article calls.
   - Skips failed individual extractions gracefully without returning a fatal error.
-- **Open News Discovery in `web_search`**:
-  - In `analyzer/tools_service.go`, remove hard-filtered `include_domains` from Tavily Search request so Nova can see all market reporting across the web.
-  - Increase `max_results` to 10 so coverage across trusted and non-trusted domains is visible.
-- **Transparent Non-Trusted Domain Reporting & Citation Accountability**:
-  - In `analyzer/instructions.go`, instruct Nova:
-    - When news is found in trusted domains: fetch all of them in a single batch `read_article` call, cross-verify consensus vs bias, and cite them with direct markdown links `[Media](URL)`.
-    - When news does NOT exist in trusted domains, but is found in other domains: strictly avoid saying "no news" or "unknown". Explicitly inform the user: *"Ini tidak ada di trusted domain PulsarFi, tapi referensinya ada di [Nama Sumber](URL) dan isinya begini: [ringkasan]."* Note that because it is unverified by PulsarFi's trusted sources, it carries speculative risk (`condition_met: false`, `confidence: low`).
-- **Laser Focus on Nova Tools (No Overengineering)**:
-  - Changes are strictly isolated to `analyzer/tools_service.go`, `analyzer/instructions.go`, and test verification in `backend/test/service/agent/`.
+  - Removed dead code wrapper `fetchArticle` — single and batch extraction logic is unified directly inside `fetchArticles`.
+- **Native Trusted Domain Search with Tool-Level Auto-Fallback in `web_search`**:
+  - In `analyzer/tools_service.go`, `web_search` passes `include_domains: TrustedNewsDomains` natively to Tavily Search API.
+  - If trusted domain search returns 0 results, the Go tool automatically falls back to a general search without `include_domains`, marking the external results cleanly in Go (e.g. prefixing snippet/title with `[Sumber Publik / Di Luar Trusted Domain PulsarFi]`).
+  - Zero prompt bloat: LLM does not need to parse, filter, or triage domain URLs manually.
+- **Clean Nova Instructions (Zero Prompt Bloat & Zero Static Disclaimers)**:
+  - In `analyzer/instructions.go`, all verbose domain allowlist rules and static disclaimer string templates (`Ini tidak ada di trusted domain PulsarFi...`) are completely removed.
+  - Nova focuses strictly on analytical verification: querying tools, batch reading trusted articles, detecting consensus vs bias, providing direct markdown citations `[Media](URL)`, and determining whether the trigger condition is met.
+- **Scoped Iteration Recovery & No Raw JSON Leaks in `orchestrator_workflow_service.go`**:
+  - `runRoleAgent` guards iteration exhaustion recovery strictly to read-only analytical roles (`analyzer`).
+  - For the executor (`comet`), any `exceeds max iterations` error is returned immediately, preventing unfinished on-chain executions from falsely succeeding or clearing checkpoints.
+  - If an agent turn ends with `final == nil`, the orchestrator returns a clean error instead of dumping raw JSON tool results (`tc.Result`) into the user chat stream.
 
 ---
 
@@ -84,16 +88,15 @@ To resolve this reliably in production:
 
 | Layer | File | Change |
 |---|---|---|
-| Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Instruct Nova to batch extract all trusted URLs, report unverified sources transparently, and attach markdown links |
-| Backend | `backend/src/service/agent/analyzer/tools_service.go` | `[MODIFY]` Support `urls: []string` batch in `read_article`, remove restrictive `include_domains` in `web_search` |
-| Backend | `backend/test/service/agent/analyzer_tools_test.go` | `[MODIFY]` Add unit tests verifying batch `read_article` and open `web_search` |
+| Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Strip bloated domain allowlist rules and static disclaimer templates; maintain clean analytical instructions |
+| Backend | `backend/src/service/agent/analyzer/tools_service.go` | `[MODIFY]` Native Tavily `include_domains` with tool-level auto-fallback; remove dead wrapper `fetchArticle` |
+| Backend | `backend/src/service/agent/orchestrator_workflow_service.go` | `[MODIFY]` Scope max-iterations recovery to analyzer only; eliminate raw tool JSON payload leakage |
+| Backend | `backend/test/service/agent/analyzer_tools_test.go` | `[MODIFY]` Update unit tests for native trusted search and batch extraction |
 | Backend | `backend/src/service/agent/analyzer/index.go` | `[MODIFY]` Set `MaxIterations: 8` |
-| Backend | `backend/src/service/agent/orchestrator_workflow_service.go` | `[MODIFY]` Gracefully recover from `exceeds max iterations` in `runRoleAgent` |
 | Backend | `backend/src/service/agent/analyzer/chart_service.go` | `[MODIFY]` Update `stockChartRequest.Ticker` jsonschema description with cleanup instructions, export `NewStockChartTool` |
 | Backend | `backend/src/service/public/stock_chart_service.go` | `[MODIFY]` Delegate `PriceLineHistory` to `GetStockHistory` |
 | Backend | `backend/src/service/public/price_service.go` | `[MODIFY]` Map Yahoo 404 to `ErrStockNotFound` in `GetStockHistory` |
 | Backend | `backend/test/service/agent/news_endpoint_live_test.go` | `[MODIFY]` Add multi-turn follow-up test verifying reference query does not hit HTTP 500 |
-| Backend | `backend/test/service/agent/news_endpoint_live_test.go` | `[NEW]` End-to-end live test hitting HandleChatMessage and Gin POST /api/v1/agent/chats/:id/messages |
 | Backend | `backend/test/service/agent/comet_regression_live_test.go` | `[NEW]` Live pipeline test validating analyzer_then_executor for BRPT and BMRI with trader wallet |
 | Backend | `backend/migrations/020_agent_chat_message_news_content_type.sql` | `[NEW]` |
 | Frontend | `frontend/components/agent/NewsBrief.tsx` | `[NEW]` |
@@ -108,4 +111,5 @@ To resolve this reliably in production:
 - `TestReadArticleTool_ValidationAndDomainAllowlist` confirms live single and batch extraction against trusted articles using Tavily Extract.
 - `TestReadArticleTool_Batch` verifies multi-URL batch extraction in 1 tool call.
 - `TestReadArticleTool_FallbackNoKey` confirms that when Tavily API key is absent and `go-readability` is invoked, `article.Node == nil` is caught safely without `the Node field is nil`.
+- `TestSearchTool_TrustedDomainsAndFallback` verifies that `web_search` leverages native `include_domains` and executes graceful fallback if trusted results are empty.
 - `TestCometRegression_BRPT_And_BMRI` confirms zero regression on the complete Nova-to-Comet actionable pipeline for both BRPT (BRPTP) and BMRI (BMRIP) using the live trader wallet.
