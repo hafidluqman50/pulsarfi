@@ -38,18 +38,9 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, chartReader 
 		Instruction: instructions,
 		Model:       chatModel,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agent.WrapToolsGraceful(tools)}},
-		// Raised from 10, found live: a genuinely legitimate two-ticker
-		// request ("berita & sentimen BUMI dan ENRG sekaligus") needs
-		// web_search + read_article for each ticker separately, plus the
-		// final synthesis — comfortably more than 10 tool-call iterations
-		// for a real, non-looping request, and it failed with exactly
-		// ErrExceedMaxIterations (caught non-fatally by WrapToolGraceful,
-		// but the whole point of gathering evidence never completed, so no
-		// NewsBrief card had anything to render). 10 was itself already a
-		// deliberate reduction from eino's own default of 20, chosen only
-		// to fail a genuine infinite tool-call loop faster — this restores
-		// that original default rather than picking a new number blind.
-		MaxIterations: 20,
+		// Capped at 3 iterations: limits retries/errors to at most 3 times,
+		// preventing looping and conserving on-chain ETH gas.
+		MaxIterations: 3,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("analyzer: build agent: %w", err)
