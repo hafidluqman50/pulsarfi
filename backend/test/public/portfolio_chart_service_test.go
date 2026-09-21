@@ -62,3 +62,34 @@ func TestPriceLineHistoryWorksForAnyRealIDXTicker(t *testing.T) {
 	}
 	t.Logf("VKTR: %d points, first=%+v last=%+v", len(points), points[0], points[len(points)-1])
 }
+
+func TestPriceLineHistory_IndexAndTokenizedTickers(t *testing.T) {
+	priceSvc := &publicsvc.PriceService{Price: external.NewPriceService()}
+
+	// 1. Test IHSG (composite index)
+	points, err := priceSvc.PriceLineHistory(context.Background(), "IHSG", "1M")
+	if err != nil {
+		t.Fatalf("expected IHSG to resolve to IHSG history, got err: %v", err)
+	}
+	if len(points) == 0 {
+		t.Fatal("expected real IHSG points, got 0")
+	}
+	t.Logf("IHSG: %d points, latest=%.2f", len(points), points[len(points)-1].Price)
+
+	// 2. Test clean IDX equity ticker SINI
+	points, err = priceSvc.PriceLineHistory(context.Background(), "SINI", "1M")
+	if err != nil {
+		t.Fatalf("expected clean SINI to fetch SINI.JK history, got err: %v", err)
+	}
+	if len(points) == 0 {
+		t.Fatal("expected real SINI points, got 0")
+	}
+	t.Logf("SINI: %d points, latest=%.2f", len(points), points[len(points)-1].Price)
+
+	// 3. Test non-existent ticker returns ErrStockNotFound
+	_, err = priceSvc.PriceLineHistory(context.Background(), "NONEXISTENTXYZ123", "1M")
+	if err != publicsvc.ErrStockNotFound {
+		t.Fatalf("expected ErrStockNotFound for non-existent ticker, got: %v", err)
+	}
+}
+

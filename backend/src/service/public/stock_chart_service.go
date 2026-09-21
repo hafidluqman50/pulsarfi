@@ -2,7 +2,6 @@ package public
 
 import (
 	"context"
-	"strings"
 	"time"
 )
 
@@ -12,12 +11,9 @@ type PriceLinePoint struct {
 }
 
 func (s *PriceService) PriceLineHistory(ctx context.Context, ticker, rangeName string) ([]PriceLinePoint, error) {
-	history, err := s.Price.GetYahooIDXHistory(strings.ToUpper(ticker), rangeName)
+	history, err := s.GetStockHistory(ctx, ticker, rangeName)
 	if err != nil {
 		return nil, err
-	}
-	if len(history) == 0 {
-		return nil, ErrStockNotFound
 	}
 	points := make([]PriceLinePoint, 0, len(history))
 	for _, p := range history {
