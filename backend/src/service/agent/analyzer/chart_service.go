@@ -50,7 +50,7 @@ func newPortfolioSnapshotTool(portfolioReader publicsvc.ChartDataReader) (tool.I
 }
 
 type stockChartRequest struct {
-	Ticker    string `json:"ticker" jsonschema_description:"The exact ticker to chart. Must be a real, existing ticker — never invent or guess one."`
+	Ticker    string `json:"ticker" jsonschema_description:"The clean 4-letter IDX equity ticker (e.g. 'SINI', 'BUMI', 'BBCA' — clean up by stripping any tokenized 'P' suffix like SINIP or BUMIP) or 'IHSG' for the composite index. Never pass raw '^JKSE' or append '.JK'."`
 	RangeName string `json:"range,omitempty" jsonschema_description:"Time range, e.g. 1M/3M/1Y/ALL."`
 	ChartQ    string `json:"chart_q" jsonschema_description:"The user's question verbatim."`
 	LensNote  string `json:"lens_note" jsonschema_description:"One short sentence explaining what this chart shows."`

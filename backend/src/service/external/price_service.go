@@ -100,30 +100,13 @@ func (s *PriceService) GetIHSG() (PriceEntry, error) {
 	return s.fetchFromYahoo("^JKSE", "IDR")
 }
 
-func cleanYahooIDXSymbol(idxTicker string) string {
-	clean := strings.ToUpper(strings.TrimSpace(idxTicker))
-	if clean == "^JKSE" || clean == "IHSG" || clean == "JKSE" {
-		return "^JKSE"
-	}
-	return strings.TrimSuffix(clean, ".JK") + ".JK"
-}
-
 // GetYahooIDX fetches an IDX stock price using its idx_ticker (e.g. "BUMI" → "BUMI.JK").
 func (s *PriceService) GetYahooIDX(idxTicker string) (PriceEntry, error) {
-	sym := cleanYahooIDXSymbol(idxTicker)
-	if sym == "^JKSE" {
-		return s.GetIHSG()
-	}
-	return s.fetchFromYahoo(sym, "IDRX")
+	return s.fetchFromYahoo(idxTicker+".JK", "IDRX")
 }
 
 func (s *PriceService) GetYahooIDXMarket(idxTicker string) (PriceEntry, []float64, error) {
-	sym := cleanYahooIDXSymbol(idxTicker)
-	if sym == "^JKSE" {
-		entry, err := s.GetIHSG()
-		return entry, nil, err
-	}
-	return s.fetchYahooMarket(sym, "IDRX", "1d", "1m")
+	return s.fetchYahooMarket(idxTicker+".JK", "IDRX", "1d", "1m")
 }
 
 func (s *PriceService) GetIHSGHistory(rangeName string) ([]PriceHistoryPoint, error) {
@@ -132,12 +115,8 @@ func (s *PriceService) GetIHSGHistory(rangeName string) ([]PriceHistoryPoint, er
 }
 
 func (s *PriceService) GetYahooIDXHistory(idxTicker string, rangeName string) ([]PriceHistoryPoint, error) {
-	sym := cleanYahooIDXSymbol(idxTicker)
-	if sym == "^JKSE" {
-		return s.GetIHSGHistory(rangeName)
-	}
 	rangeParam, interval := yahooRangeParams(rangeName)
-	return s.fetchYahooHistory(sym, "IDRX", rangeParam, interval)
+	return s.fetchYahooHistory(idxTicker+".JK", "IDRX", rangeParam, interval)
 }
 
 // oneWholeStock is 1e18 raw units (PulsarStock has 18 decimals).

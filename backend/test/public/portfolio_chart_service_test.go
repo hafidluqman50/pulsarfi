@@ -66,18 +66,8 @@ func TestPriceLineHistoryWorksForAnyRealIDXTicker(t *testing.T) {
 func TestPriceLineHistory_IndexAndTokenizedTickers(t *testing.T) {
 	priceSvc := &publicsvc.PriceService{Price: external.NewPriceService()}
 
-	// 1. Test ^JKSE (Jakarta Composite Index)
-	points, err := priceSvc.PriceLineHistory(context.Background(), "^JKSE", "1M")
-	if err != nil {
-		t.Fatalf("expected ^JKSE to resolve to IHSG history, got err: %v", err)
-	}
-	if len(points) == 0 {
-		t.Fatal("expected real ^JKSE points, got 0")
-	}
-	t.Logf("^JKSE: %d points, latest=%.2f", len(points), points[len(points)-1].Price)
-
-	// 2. Test IHSG
-	points, err = priceSvc.PriceLineHistory(context.Background(), "IHSG", "1M")
+	// 1. Test IHSG (composite index)
+	points, err := priceSvc.PriceLineHistory(context.Background(), "IHSG", "1M")
 	if err != nil {
 		t.Fatalf("expected IHSG to resolve to IHSG history, got err: %v", err)
 	}
@@ -86,17 +76,17 @@ func TestPriceLineHistory_IndexAndTokenizedTickers(t *testing.T) {
 	}
 	t.Logf("IHSG: %d points, latest=%.2f", len(points), points[len(points)-1].Price)
 
-	// 3. Test SINIP (strips P -> SINI.JK on Yahoo)
-	points, err = priceSvc.PriceLineHistory(context.Background(), "SINIP", "1M")
+	// 2. Test clean IDX equity ticker SINI
+	points, err = priceSvc.PriceLineHistory(context.Background(), "SINI", "1M")
 	if err != nil {
-		t.Fatalf("expected SINIP to strip P and fetch SINI.JK, got err: %v", err)
+		t.Fatalf("expected clean SINI to fetch SINI.JK history, got err: %v", err)
 	}
 	if len(points) == 0 {
-		t.Fatal("expected real SINIP/SINI points, got 0")
+		t.Fatal("expected real SINI points, got 0")
 	}
-	t.Logf("SINIP (SINI): %d points, latest=%.2f", len(points), points[len(points)-1].Price)
+	t.Logf("SINI: %d points, latest=%.2f", len(points), points[len(points)-1].Price)
 
-	// 4. Test non-existent ticker returns ErrStockNotFound
+	// 3. Test non-existent ticker returns ErrStockNotFound
 	_, err = priceSvc.PriceLineHistory(context.Background(), "NONEXISTENTXYZ123", "1M")
 	if err != publicsvc.ErrStockNotFound {
 		t.Fatalf("expected ErrStockNotFound for non-existent ticker, got: %v", err)

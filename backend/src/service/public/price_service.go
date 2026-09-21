@@ -69,7 +69,7 @@ func (s *PriceService) GetStockPrice(ctx context.Context, ticker string, source 
 // assumed to already be a real IDX ticker and queried directly.
 func (s *PriceService) GetStockHistory(ctx context.Context, ticker string, rangeName string) ([]external.PriceHistoryPoint, error) {
 	ticker = strings.ToUpper(strings.TrimSpace(ticker))
-	if ticker == "IHSG" || ticker == "^JKSE" {
+	if ticker == "IHSG" {
 		return s.Price.GetIHSGHistory(rangeName)
 	}
 
@@ -79,16 +79,7 @@ func (s *PriceService) GetStockHistory(ctx context.Context, ticker string, range
 			return nil, err
 		} else if found {
 			idxTicker = stock.IdxTicker
-		} else if strings.HasSuffix(ticker, "P") && len(ticker) > 1 {
-			baseTicker := strings.TrimSuffix(ticker, "P")
-			if baseStock, baseFound, _ := s.Stocks.FindByTickerOrIdxTicker(ctx, baseTicker); baseFound {
-				idxTicker = baseStock.IdxTicker
-			} else {
-				idxTicker = baseTicker
-			}
 		}
-	} else if strings.HasSuffix(ticker, "P") && len(ticker) > 1 {
-		idxTicker = strings.TrimSuffix(ticker, "P")
 	}
 
 	points, err := s.Price.GetYahooIDXHistory(idxTicker, rangeName)
@@ -106,7 +97,7 @@ func (s *PriceService) GetStockHistory(ctx context.Context, ticker string, range
 
 func (s *PriceService) GetIDXStockPrice(ctx context.Context, ticker string) (external.PriceEntry, error) {
 	ticker = strings.ToUpper(strings.TrimSpace(ticker))
-	if ticker == "IHSG" || ticker == "^JKSE" {
+	if ticker == "IHSG" {
 		return s.Price.GetIHSG()
 	}
 

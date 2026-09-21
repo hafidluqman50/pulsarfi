@@ -114,10 +114,10 @@ func TestStockChartTool_IndexAndTokenizedTickers(t *testing.T) {
 
 	ctx := context.Background()
 
-	// 1. Test ^JKSE: must return valid ChartPayload without 404
-	outStr, err := tool.InvokableRun(ctx, `{"ticker":"^JKSE","range":"1M","chart_q":"chart IHSG"}`)
+	// 1. Test IHSG: must return valid ChartPayload without error
+	outStr, err := tool.InvokableRun(ctx, `{"ticker":"IHSG","range":"1M","chart_q":"chart IHSG"}`)
 	if err != nil {
-		t.Fatalf("get_stock_chart failed for ^JKSE: %v", err)
+		t.Fatalf("get_stock_chart failed for IHSG: %v", err)
 	}
 	var res1 publicsvc.ChartPayload
 	if err := json.Unmarshal([]byte(outStr), &res1); err != nil {
@@ -125,13 +125,13 @@ func TestStockChartTool_IndexAndTokenizedTickers(t *testing.T) {
 	}
 	points1, ok := res1.Data.([]any)
 	if !ok || len(points1) == 0 {
-		t.Fatalf("expected non-empty chart data points for ^JKSE, got %v", res1.Data)
+		t.Fatalf("expected non-empty chart data points for IHSG, got %v", res1.Data)
 	}
 
-	// 2. Test SINIP: must resolve to SINI.JK and return valid ChartPayload without 404
-	outStr, err = tool.InvokableRun(ctx, `{"ticker":"SINIP","range":"1M","chart_q":"chart SINIP"}`)
+	// 2. Test clean SINI: must fetch SINI.JK and return valid ChartPayload without error
+	outStr, err = tool.InvokableRun(ctx, `{"ticker":"SINI","range":"1M","chart_q":"chart SINI"}`)
 	if err != nil {
-		t.Fatalf("get_stock_chart failed for SINIP: %v", err)
+		t.Fatalf("get_stock_chart failed for SINI: %v", err)
 	}
 	var res2 publicsvc.ChartPayload
 	if err := json.Unmarshal([]byte(outStr), &res2); err != nil {
@@ -139,7 +139,7 @@ func TestStockChartTool_IndexAndTokenizedTickers(t *testing.T) {
 	}
 	points2, ok := res2.Data.([]any)
 	if !ok || len(points2) == 0 {
-		t.Fatalf("expected non-empty chart data points for SINIP (SINI.JK), got %v", res2.Data)
+		t.Fatalf("expected non-empty chart data points for SINI (SINI.JK), got %v", res2.Data)
 	}
 
 	// 3. Test non-existent ticker: must degrade gracefully with LensNote and not error out

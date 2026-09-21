@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.6 |
+| **Version** | 1.7 |
 | **Status** | Implemented |
 | **Date Created** | 2026-09-07 |
 | **Last Updated** | 2026-09-21 |
@@ -16,6 +16,7 @@
 | 1.4 | 2026-09-21 | In §3, §4: Fix HTTP 500 ErrExceedMaxIterations regression on live news endpoint by adjusting analyzer MaxIterations from 3 to 6 (allowing web_search + up to 2 read_article calls + final synthesis turn without hitting premature exhaustion, strictly well below 20), updating instructions.go to bound article reads to at most 2 items per turn, and verifying by hitting the live endpoint. |
 | 1.5 | 2026-09-21 | In §3, §4: Fix Yahoo 404 tool errors in get_stock_chart when Analyzer queries market indices (^JKSE/IHSG) or tokenized stock tickers (e.g. SINIP). In price_service.go and stock_chart_service.go, map ^JKSE/IHSG to GetIHSGHistory, resolve tokenized P suffix to underlying IDX tickers (SINIP -> SINI), map Yahoo 404 errors to ErrStockNotFound for graceful handling, and instruct Nova in instructions.go to only call get_stock_chart when explicitly requested. |
 | 1.6 | 2026-09-21 | In §3, §4: Fortify external PriceService against invalid index and duplicate .JK suffixes by implementing cleanYahooIDXSymbol, routing ^JKSE/IHSG/JKSE calls in GetYahooIDX, GetYahooIDXMarket, and GetYahooIDXHistory to IHSG handlers, and deduplicating .JK on all ticker lookups. |
+| 1.7 | 2026-09-21 | In §3, §4: Revert manual string-cleaning Go code in external and public price services. Enforce LLM-side ticker cleanup and filtering directly in analyzer/instructions.go and stockChartRequest jsonschema description: Nova must filter when to invoke get_stock_chart (never on pure news) and clean up tickers to official 4-letter IDX symbols (stripping tokenized 'P' suffix) or 'IHSG' before calling tools. |
 
 **Note on scope.** A scoped-down version of a richer "News Brief" design reference the user shared (composite sentiment score, multi-asset comparison tabs, a quarantine view for rejected sources) — this covers only what was explicitly asked for in words: a dated, sourced, linked citation card per evidence item, reusing `TrustedNewsDomains` for legitimacy. The composite score/tabs/quarantine UI are not built.
 
@@ -49,12 +50,13 @@ To resolve this reliably in production:
 - `NewsBrief.tsx` renders each item: source badge, formatted date (if present), excerpt, 64×64 lead image (if present), and link to the original article.
 - **MaxIterations Bounded at 6**: In `analyzer/index.go`, `MaxIterations` is set to **`6`** (strictly well below 20). This accommodates a realistic news pipeline (1 `web_search` + up to 2 `read_article` calls + synthesis cycle, with headroom for retry) without hitting premature `exceeds max iterations` failures or causing HTTP 500 errors.
 - **Strict Read Bound in Instructions**: In `analyzer/instructions.go`, Nova is instructed to fetch at most 1 to 2 most relevant articles per turn and synthesize immediately without looping indefinitely.
-- **Robust Ticker & Index Chart Resolution**:
-  - `PriceLineHistory` in `stock_chart_service.go` routes through `PriceService.GetStockHistory`.
-  - When querying `^JKSE` or `IHSG`, the request maps directly to `GetIHSGHistory` (querying `^JKSE`), preventing the invalid `^JKSE.JK` query that returned HTTP 404 from Yahoo Finance.
-  - When querying a tokenized ticker ending with `P` (e.g., `SINIP`), it resolves to the underlying IDX ticker (`SINI`), querying `SINI.JK` instead of `SINIP.JK` (which returns HTTP 404).
-  - Any Yahoo HTTP 404 or empty data responses are cleanly mapped to `ErrStockNotFound`, which `get_stock_chart` handles gracefully without throwing an unhandled tool exception.
-  - In `analyzer/instructions.go`, Nova is instructed to only call `get_stock_chart` when the user explicitly requests price charts or historical market trends, never proactively on a pure news query.
+- **LLM-Driven Ticker Cleanup & Chart Filtering**:
+  - Filtering: In `analyzer/instructions.go`, Nova is explicitly instructed never to invoke `get_stock_chart` proactively on news or general inquiries.
+  - Ticker Cleanup: In `analyzer/instructions.go` and `stockChartRequest` schema, Nova is instructed to clean up any ticker before passing it to `get_stock_chart`:
+    - Use the official 4-letter IDX equity ticker (e.g. `SINI`, `BUMI`, `BBCA`), stripping any tokenized `'P'` suffix (such as `SINIP` -> `SINI`).
+    - Use `'IHSG'` for the composite index (never pass raw index codes like `^JKSE` or append `.JK`).
+  - `PriceLineHistory` in `stock_chart_service.go` routes through `PriceService.GetStockHistory`, and Yahoo HTTP 404 / empty responses map to `ErrStockNotFound` for graceful handling.
+  - Manual code hacks (`cleanYahooIDXSymbol` and manual Go `TrimSuffix` branches) are eliminated in favor of clean LLM-driven normalization.
 
 ---
 
@@ -62,11 +64,10 @@ To resolve this reliably in production:
 
 | Layer | File | Change |
 |---|---|---|
-| Backend | `backend/src/service/external/price_service.go` | `[MODIFY]` Add `cleanYahooIDXSymbol` to guard against `^JKSE.JK` and deduplicate `.JK` suffix |
-| Backend | `backend/src/service/public/price_service.go` | `[MODIFY]` Support `^JKSE` in `GetStockHistory`, strip `P` suffix for underlying IDX ticker, map Yahoo 404 to `ErrStockNotFound` |
+| Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Instruct Nova to clean up tickers (strip 'P' suffix, use IHSG) and filter chart calls to explicit user requests only |
+| Backend | `backend/src/service/agent/analyzer/chart_service.go` | `[MODIFY]` Update `stockChartRequest.Ticker` jsonschema description with cleanup instructions, export `NewStockChartTool` |
 | Backend | `backend/src/service/public/stock_chart_service.go` | `[MODIFY]` Delegate `PriceLineHistory` to `GetStockHistory` |
-| Backend | `backend/src/service/agent/analyzer/chart_service.go` | `[MODIFY]` Export `NewStockChartTool` for tool-level unit testing |
-| Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Restrict `get_stock_chart` to explicit user chart requests |
+| Backend | `backend/src/service/public/price_service.go` | `[MODIFY]` Map Yahoo 404 to `ErrStockNotFound` in `GetStockHistory` |
 | Backend | `backend/src/service/agent/analyzer/tools_service.go` | `[MODIFY]` Tavily Extract API integration in `fetchArticle`, `article.Node == nil` guard, `siteNameFromHost`, `bisnis.com` in `TrustedNewsDomains` |
 | Backend | `backend/src/service/agent/analyzer/index.go` | `[MODIFY]` Set `MaxIterations: 6` |
 | Backend | `backend/src/service/agent/orchestrator_workflow_service.go` | `[MODIFY]` `classifyReply` news classification, `extractNewsEvidence` |
