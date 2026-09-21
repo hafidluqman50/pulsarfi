@@ -158,13 +158,7 @@ type readArticleItem struct {
 }
 
 type readArticleResponse struct {
-	Title       string            `json:"title,omitempty" jsonschema_description:"The article's headline."`
-	Content     string            `json:"content,omitempty" jsonschema_description:"The article's full readable body text, stripped of ads/navigation/scripts."`
-	Excerpt     string            `json:"excerpt,omitempty" jsonschema_description:"A short summary/dek pulled from the article's own metadata, when the page provides one."`
-	SiteName    string            `json:"site_name,omitempty" jsonschema_description:"The publication's own name, from the article's metadata (e.g. 'Kompas.com')."`
-	ImageURL    string            `json:"image_url,omitempty" jsonschema_description:"The article's lead image, when the page provides one."`
-	PublishedAt string            `json:"published_at,omitempty" jsonschema_description:"When the article was actually published, RFC3339, only present when the page's own metadata states it — never guessed or left as the fetch time."`
-	Articles    []readArticleItem `json:"articles,omitempty" jsonschema_description:"All extracted articles when fetched in batch."`
+	Articles []readArticleItem `json:"articles" jsonschema_description:"List of extracted articles with full readable content, title, excerpt, and source metadata."`
 }
 
 type tavilyExtractRequestBody struct {
@@ -294,41 +288,34 @@ func tavilyExtractBatch(ctx context.Context, apiKey string, targetURLs []string)
 		return readArticleResponse{}, fmt.Errorf("read_article: no content extracted")
 	}
 
-	response := readArticleResponse{
-		Articles:    articles,
-		Title:       articles[0].Title,
-		Content:     articles[0].Content,
-		Excerpt:     articles[0].Excerpt,
-		SiteName:    articles[0].SiteName,
-		ImageURL:    articles[0].ImageURL,
-		PublishedAt: articles[0].PublishedAt,
-	}
-	return response, nil
+	return readArticleResponse{
+		Articles: articles,
+	}, nil
 }
 
-func fetchSingleReadability(rawURL string, allowedDomains []string) (readArticleResponse, error) {
+func fetchSingleReadability(rawURL string, allowedDomains []string) (readArticleItem, error) {
 	parsed, err := url.ParseRequestURI(rawURL)
 	if err != nil {
-		return readArticleResponse{}, fmt.Errorf("read_article: invalid URL: %w", err)
+		return readArticleItem{}, fmt.Errorf("read_article: invalid URL: %w", err)
 	}
 	if !hostAllowed(parsed.Hostname(), allowedDomains) {
-		return readArticleResponse{}, fmt.Errorf("read_article: %q is not on the trusted domain allowlist, refusing to fetch", parsed.Hostname())
+		return readArticleItem{}, fmt.Errorf("read_article: %q is not on the trusted domain allowlist, refusing to fetch", parsed.Hostname())
 	}
 
 	article, err := readability.FromURL(rawURL, 15*time.Second, func(r *http.Request) {
 		r.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 	})
 	if err != nil {
-		return readArticleResponse{}, fmt.Errorf("read_article: fetch/parse failed: %w", err)
+		return readArticleItem{}, fmt.Errorf("read_article: fetch/parse failed: %w", err)
 	}
 
 	if article.Node == nil {
-		return readArticleResponse{}, fmt.Errorf("read_article: no readable article found on %s", parsed.Hostname())
+		return readArticleItem{}, fmt.Errorf("read_article: no readable article found on %s", parsed.Hostname())
 	}
 
 	var body strings.Builder
 	if err := article.RenderText(&body); err != nil {
-		return readArticleResponse{}, fmt.Errorf("read_article: render text failed: %w", err)
+		return readArticleItem{}, fmt.Errorf("read_article: render text failed: %w", err)
 	}
 
 	var publishedAt string
@@ -341,7 +328,8 @@ func fetchSingleReadability(rawURL string, allowedDomains []string) (readArticle
 		siteName = siteNameFromHost(parsed.Hostname())
 	}
 
-	return readArticleResponse{
+	return readArticleItem{
+		URL:         rawURL,
 		Title:       article.Title(),
 		Content:     body.String(),
 		Excerpt:     article.Excerpt(),
@@ -408,15 +396,7 @@ func fetchArticles(ctx context.Context, apiKey string, req readArticleRequest, a
 	for _, rawURL := range validURLs {
 		single, err := fetchSingleReadability(rawURL, allowedDomains)
 		if err == nil {
-			articles = append(articles, readArticleItem{
-				URL:         rawURL,
-				Title:       single.Title,
-				Content:     single.Content,
-				Excerpt:     single.Excerpt,
-				SiteName:    single.SiteName,
-				ImageURL:    single.ImageURL,
-				PublishedAt: single.PublishedAt,
-			})
+			articles = append(articles, single)
 		}
 	}
 
@@ -424,18 +404,9 @@ func fetchArticles(ctx context.Context, apiKey string, req readArticleRequest, a
 		return readArticleResponse{}, fmt.Errorf("read_article: failed to extract readable content from provided URLs")
 	}
 
-	resp := readArticleResponse{
+	return readArticleResponse{
 		Articles: articles,
-	}
-	if len(articles) > 0 {
-		resp.Title = articles[0].Title
-		resp.Content = articles[0].Content
-		resp.Excerpt = articles[0].Excerpt
-		resp.SiteName = articles[0].SiteName
-		resp.ImageURL = articles[0].ImageURL
-		resp.PublishedAt = articles[0].PublishedAt
-	}
-	return resp, nil
+	}, nil
 }
 
 func NewNewsTools() (readArticleTool, webSearchTool tool.BaseTool, err error) {

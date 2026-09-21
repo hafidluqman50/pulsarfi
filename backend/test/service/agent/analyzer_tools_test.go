@@ -48,22 +48,27 @@ func TestReadArticleTool_ValidationAndDomainAllowlist(t *testing.T) {
 		}
 
 		var parsed struct {
-			Title    string `json:"title"`
-			Content  string `json:"content"`
-			SiteName string `json:"site_name"`
+			Articles []struct {
+				Title    string `json:"title"`
+				Content  string `json:"content"`
+				SiteName string `json:"site_name"`
+			} `json:"articles"`
 		}
 		if err := json.Unmarshal([]byte(outStr), &parsed); err != nil {
 			t.Fatalf("failed to parse read_article output: %v", err)
 		}
 
-		if parsed.Title == "" {
+		if len(parsed.Articles) == 0 {
+			t.Fatalf("expected at least 1 extracted article, got 0")
+		}
+		if parsed.Articles[0].Title == "" {
 			t.Errorf("expected non-empty title, got empty")
 		}
-		if parsed.Content == "" {
+		if parsed.Articles[0].Content == "" {
 			t.Errorf("expected non-empty content, got empty")
 		}
-		if parsed.SiteName != "Kompas.com" {
-			t.Errorf("expected SiteName Kompas.com, got %q", parsed.SiteName)
+		if parsed.Articles[0].SiteName != "Kompas.com" {
+			t.Errorf("expected SiteName Kompas.com, got %q", parsed.Articles[0].SiteName)
 		}
 	}
 }

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.11 |
+| **Version** | 1.12 |
 | **Status** | In Review |
 | **Date Created** | 2026-09-07 |
 | **Last Updated** | 2026-09-21 |
@@ -21,6 +21,7 @@
 | 1.9 | 2026-09-21 | In §2, §3, §4, §5: Focus strictly on Nova's tools without modifying external workflow files. Upgrade read_article in analyzer/tools_service.go to support batch URL extraction via Tavily Extract API (urls: []string), remove restrictive include_domains hard-filter in web_search to allow discovering unverified news, instruct Nova in analyzer/instructions.go to extract all trusted domain URLs simultaneously in a single call, enforce transparent dynamic disclosure when news only exists outside trusted domains ('Ini tidak ada di trusted domain PulsarFi, tapi referensinya ada dan isinya begini'), mandate markdown links [Media](URL) for all cited facts to ensure accountability, and verify via analyzer_tools_test.go. |
 | 1.10 | 2026-09-21 | In §4, §5: Verify zero regression across the analyzer-to-executor pipeline in backend/test/service/agent/comet_regression_live_test.go with live trader wallet (0xd8bf50c157a79260c77b25f89ef713e6c3feda6f) on BRPT (BRPTP) and BMRI (BMRIP), confirming seamless routing to analyzer_then_executor, clean evidence gathering, Arm card creation, and Eino pause before execution. |
 | 1.11 | 2026-09-21 | In §3, §4: Re-anchor web_search to native Tavily include_domains with tool-level auto-fallback for unlisted news; strip bloated domain rules and hardcoded disclaimer templates from analyzer/instructions.go; delete dead code wrapper fetchArticle in analyzer/tools_service.go; isolate iteration exhaustion recovery strictly to Analyzer in orchestrator_workflow_service.go; eliminate raw JSON tool dump on missing assistant replies. |
+| 1.12 | 2026-09-21 | In §3, §4, §5: Eliminate redundant root-level fields (title, content, excerpt, etc.) from readArticleResponse in analyzer/tools_service.go to stop wasteful duplication of articles[0] data and prevent LLM context token inflation. readArticleResponse now cleanly and exclusively returns articles: []readArticleItem; refactor fetchSingleReadability to return readArticleItem directly; update unit tests in analyzer_tools_test.go. |
 
 **Note on scope.** A scoped-down version of a richer "News Brief" design reference the user shared (composite sentiment score, multi-asset comparison tabs, a quarantine view for rejected sources) — this covers only what was explicitly asked for in words: a dated, sourced, linked citation card per evidence item, reusing `TrustedNewsDomains` for legitimacy. The composite score/tabs/quarantine UI are not built.
 
@@ -67,7 +68,7 @@ To resolve this reliably in production:
   - `readArticleRequest` in `analyzer/tools_service.go` supports `urls: []string` (with `url: string` preserved for single URL calls).
   - Gated to `TrustedNewsDomains` (`liputan6.com`, `kompas.com`, `bisnis.com`, `market.bisnis.com`, `cnbcindonesia.com`).
   - Calls Tavily Extract API once with all valid URLs (`POST /extract {"urls": [...]}`).
-  - Returns `articles: []readArticleItem` for batch extraction and populates top-level fields for single-article calls.
+  - Returns `articles: []readArticleItem` exclusively — eliminating redundant root-level fields (`title`, `content`, etc.) and preventing wasteful double-serialization of `articles[0]` in LLM context.
   - Skips failed individual extractions gracefully without returning a fatal error.
   - Removed dead code wrapper `fetchArticle` — single and batch extraction logic is unified directly inside `fetchArticles`.
 - **Native Trusted Domain Search with Tool-Level Auto-Fallback in `web_search`**:
@@ -89,7 +90,7 @@ To resolve this reliably in production:
 | Layer | File | Change |
 |---|---|---|
 | Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Strip bloated domain allowlist rules and static disclaimer templates; maintain clean analytical instructions |
-| Backend | `backend/src/service/agent/analyzer/tools_service.go` | `[MODIFY]` Native Tavily `include_domains` with tool-level auto-fallback; remove dead wrapper `fetchArticle` |
+| Backend | `backend/src/service/agent/analyzer/tools_service.go` | `[MODIFY]` Native Tavily `include_domains` with tool-level auto-fallback; remove dead wrapper `fetchArticle`; eliminate root-level duplication in `readArticleResponse` |
 | Backend | `backend/src/service/agent/orchestrator_workflow_service.go` | `[MODIFY]` Scope max-iterations recovery to analyzer only; eliminate raw tool JSON payload leakage |
 | Backend | `backend/test/service/agent/analyzer_tools_test.go` | `[MODIFY]` Update unit tests for native trusted search and batch extraction |
 | Backend | `backend/src/service/agent/analyzer/index.go` | `[MODIFY]` Set `MaxIterations: 8` |
