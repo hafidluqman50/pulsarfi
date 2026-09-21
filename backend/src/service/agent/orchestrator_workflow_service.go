@@ -962,6 +962,23 @@ func classifyReply(turn *orchestratorTurn) (contentType string, uiProps json.Raw
 			chartPayloads = append(chartPayloads, json.RawMessage(tc.Result))
 		}
 	}
+	newsEvidence := extractNewsEvidenceFromToolCalls(turn.AnalyzerToolCalls)
+
+	// If both charts and news evidence are present, deliver both via a composite payload
+	// using "chart" as the database-safe content_type enum
+	if len(chartPayloads) > 0 && len(newsEvidence) > 0 {
+		var chartData any = chartPayloads
+		if len(chartPayloads) == 1 {
+			chartData = chartPayloads[0]
+		}
+		if payload, err := json.Marshal(map[string]any{
+			"charts": chartData,
+			"news":   newsEvidence,
+		}); err == nil {
+			return "chart", payload
+		}
+	}
+
 	if len(chartPayloads) == 1 {
 		return "chart", chartPayloads[0]
 	}
@@ -971,8 +988,8 @@ func classifyReply(turn *orchestratorTurn) (contentType string, uiProps json.Raw
 		}
 	}
 
-	if evidence := extractNewsEvidenceFromToolCalls(turn.AnalyzerToolCalls); len(evidence) > 0 {
-		if payload, err := json.Marshal(evidence); err == nil {
+	if len(newsEvidence) > 0 {
+		if payload, err := json.Marshal(newsEvidence); err == nil {
 			return "news", payload
 		}
 	}
