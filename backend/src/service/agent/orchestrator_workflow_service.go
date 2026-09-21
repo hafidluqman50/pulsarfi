@@ -552,22 +552,6 @@ func (o *Orchestrator) runAnalyze(ctx context.Context, turn *orchestratorTurn) (
 	if request == "" {
 		request = turn.RawPrompt
 	}
-
-	// For multi-turn follow-ups (e.g. user asks "Btw itu SINI referensinya dari mana?"),
-	// Nova needs recent context from the conversation (especially the assistant's previous reply)
-	// so it doesn't search blindly in circles without knowing what was previously stated.
-	var lastAssistantText string
-	for i := len(turn.Messages) - 1; i >= 0; i-- {
-		m := turn.Messages[i]
-		if m.Role == schema.Assistant && strings.TrimSpace(m.Content) != "" {
-			lastAssistantText = truncateRunes(strings.TrimSpace(m.Content), 1500)
-			break
-		}
-	}
-	if lastAssistantText != "" && !turn.Decision.IsActionable {
-		request = fmt.Sprintf("Recent conversation context (prior assistant reply):\n\"\"\"\n%s\n\"\"\"\n\nUser follow-up instruction: %s", lastAssistantText, request)
-	}
-
 	request = buildAnalyzerRequest(request, turn.Decision.Shape, turn.ResolvedTicker, turn.Decision.Side, turn.Decision.IsActionable)
 
 	if turn.onSubTaskStarted != nil {

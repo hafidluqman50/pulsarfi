@@ -68,6 +68,54 @@ func TestReadArticleTool_ValidationAndDomainAllowlist(t *testing.T) {
 	}
 }
 
+func TestReadArticleTool_Batch(t *testing.T) {
+	_ = godotenv.Load("../../../.env")
+
+	apiKey := config.GetEnv("TAVILY_API_KEY")
+	tool, err := analyzer.NewReadArticleTool(apiKey, analyzer.TrustedNewsDomains)
+	if err != nil {
+		t.Fatalf("failed to create read_article tool: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Batch with mixed URLs: 1 trusted, 1 untrusted
+	reqPayload, _ := json.Marshal(map[string]any{
+		"urls": []string{
+			"https://money.kompas.com/read/2026/09/21/095947226/ihsg-hari-ini-dibuka-naik-lalu-berbalik-melemah-ke-6417",
+			"https://untrusted-site.com/news/123",
+		},
+	})
+	if apiKey != "" {
+		outStr, err := tool.InvokableRun(ctx, string(reqPayload))
+		if err != nil {
+			t.Fatalf("read_article batch failed: %v", err)
+		}
+
+		var parsed struct {
+			Title    string `json:"title"`
+			Articles []struct {
+				URL      string `json:"url"`
+				Title    string `json:"title"`
+				Content  string `json:"content"`
+				SiteName string `json:"site_name"`
+			} `json:"articles"`
+		}
+		if err := json.Unmarshal([]byte(outStr), &parsed); err != nil {
+			t.Fatalf("failed to parse batch read_article output: %v", err)
+		}
+
+		if len(parsed.Articles) == 0 {
+			t.Errorf("expected at least 1 extracted article, got 0")
+		}
+		for _, a := range parsed.Articles {
+			if strings.Contains(a.URL, "untrusted-site.com") {
+				t.Errorf("untrusted site was extracted: %s", a.URL)
+			}
+		}
+	}
+}
+
 func TestNewNewsTools_Construction(t *testing.T) {
 	_ = godotenv.Load("../../../.env")
 

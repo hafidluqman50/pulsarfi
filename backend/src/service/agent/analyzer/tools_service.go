@@ -64,15 +64,11 @@ type tavilySearchRequestBody struct {
 // failure point: a local network TLS-intercepting filter broke it
 // entirely for this user, docs/plans/agent-task-manager-code-implementation.md
 // §7.AA) with Tavily, a search API purpose-built for LLM agents (results
-// come back pre-scored for relevance, not raw HTML to scrape). Restricted
-// to trustedDomains via Tavily's own include_domains parameter — the same
-// allowlist read_article already enforces (TrustedNewsDomains, this file),
-// so untrusted results are filtered out at search time too, not only when
-// an article is actually fetched.
+// come back pre-scored for relevance, not raw HTML to scrape).
 func NewSearchTool(apiKey string, maxResults int, trustedDomains []string) (tool.InvokableTool, error) {
 	return utils.InferTool(
 		"web_search",
-		"Searches the web for current news/information relevant to the trigger condition, restricted to a trusted domain allowlist. Returns a snippet per result — always call read_article on a promising result's url for the full body before treating it as evidence.",
+		"Searches the web for current news and articles relevant to the trigger condition. Returns search results with title, url, and snippet.",
 		func(ctx context.Context, req searchRequest) (searchResponse, error) {
 			return tavilySearch(ctx, apiKey, req.Query, maxResults, trustedDomains)
 		},
@@ -122,16 +118,28 @@ func tavilySearch(ctx context.Context, apiKey, query string, maxResults int, inc
 }
 
 type readArticleRequest struct {
-	URL string `json:"url" jsonschema_description:"The exact article URL from a search result to fetch and read in full — must be on the trusted domain allowlist, never a URL you invent or guess."`
+	URLs []string `json:"urls,omitempty" jsonschema_description:"A list of article URLs from search results to fetch and read in full in a single batch call. Only URLs matching the trusted domain allowlist will be fetched."`
+	URL  string   `json:"url,omitempty" jsonschema_description:"A single article URL to fetch and read in full — must be on the trusted domain allowlist. (Prefer 'urls' to read multiple trusted sources in one call)."`
+}
+
+type readArticleItem struct {
+	URL         string `json:"url"`
+	Title       string `json:"title"`
+	Content     string `json:"content"`
+	Excerpt     string `json:"excerpt,omitempty"`
+	SiteName    string `json:"site_name,omitempty"`
+	ImageURL    string `json:"image_url,omitempty"`
+	PublishedAt string `json:"published_at,omitempty"`
 }
 
 type readArticleResponse struct {
-	Title       string `json:"title" jsonschema_description:"The article's headline."`
-	Content     string `json:"content" jsonschema_description:"The article's full readable body text, stripped of ads/navigation/scripts."`
-	Excerpt     string `json:"excerpt,omitempty" jsonschema_description:"A short summary/dek pulled from the article's own metadata, when the page provides one."`
-	SiteName    string `json:"site_name,omitempty" jsonschema_description:"The publication's own name, from the article's metadata (e.g. 'Kompas.com')."`
-	ImageURL    string `json:"image_url,omitempty" jsonschema_description:"The article's lead image, when the page provides one."`
-	PublishedAt string `json:"published_at,omitempty" jsonschema_description:"When the article was actually published, RFC3339, only present when the page's own metadata states it — never guessed or left as the fetch time."`
+	Title       string            `json:"title,omitempty" jsonschema_description:"The article's headline."`
+	Content     string            `json:"content,omitempty" jsonschema_description:"The article's full readable body text, stripped of ads/navigation/scripts."`
+	Excerpt     string            `json:"excerpt,omitempty" jsonschema_description:"A short summary/dek pulled from the article's own metadata, when the page provides one."`
+	SiteName    string            `json:"site_name,omitempty" jsonschema_description:"The publication's own name, from the article's metadata (e.g. 'Kompas.com')."`
+	ImageURL    string            `json:"image_url,omitempty" jsonschema_description:"The article's lead image, when the page provides one."`
+	PublishedAt string            `json:"published_at,omitempty" jsonschema_description:"When the article was actually published, RFC3339, only present when the page's own metadata states it — never guessed or left as the fetch time."`
+	Articles    []readArticleItem `json:"articles,omitempty" jsonschema_description:"All extracted articles when fetched in batch."`
 }
 
 type tavilyExtractRequestBody struct {
@@ -156,16 +164,16 @@ type tavilyExtractResponseBody struct {
 	FailedResults []tavilyExtractFailedItem `json:"failed_results"`
 }
 
-// NewReadArticleTool builds a tool that fetches a URL and extracts its
+// NewReadArticleTool builds a tool that fetches one or more URLs and extracts
 // readable article text using Tavily Extract API (bypassing bot protections
 // and JS rendering) with a safe fallback to Mozilla's Readability algorithm,
 // refusing any URL whose host isn't in allowedDomains.
 func NewReadArticleTool(apiKey string, allowedDomains []string) (tool.InvokableTool, error) {
 	return utils.InferTool(
 		"read_article",
-		"Fetches a news article URL and returns its full readable text (title + body), stripped of ads/navigation/scripts. Only works for URLs on the trusted domain allowlist — refuses any other domain.",
+		"Fetches news articles and returns their full readable text (title + body), stripped of ads/navigation/scripts. Supports batch extraction of multiple URLs via 'urls' parameter. Only works for URLs on the trusted domain allowlist — refuses any other domain.",
 		func(ctx context.Context, req readArticleRequest) (readArticleResponse, error) {
-			return fetchArticle(ctx, apiKey, req.URL, allowedDomains)
+			return fetchArticles(ctx, apiKey, req, allowedDomains)
 		},
 	)
 }
@@ -186,9 +194,9 @@ func siteNameFromHost(host string) string {
 	}
 }
 
-func tavilyExtract(ctx context.Context, apiKey, targetURL string) (readArticleResponse, error) {
+func tavilyExtractBatch(ctx context.Context, apiKey string, targetURLs []string) (readArticleResponse, error) {
 	body, err := json.Marshal(tavilyExtractRequestBody{
-		URLs:         []string{targetURL},
+		URLs:         targetURLs,
 		ExtractDepth: "basic",
 	})
 	if err != nil {
@@ -222,44 +230,58 @@ func tavilyExtract(ctx context.Context, apiKey, targetURL string) (readArticleRe
 		return readArticleResponse{}, fmt.Errorf("read_article: parse extract response: %w", err)
 	}
 
-	if len(parsed.Results) == 0 || strings.TrimSpace(parsed.Results[0].RawContent) == "" {
-		if len(parsed.FailedResults) > 0 {
-			return readArticleResponse{}, fmt.Errorf("read_article: extract failed for %s: %s", targetURL, parsed.FailedResults[0].Error)
+	var articles []readArticleItem
+	for _, result := range parsed.Results {
+		content := strings.TrimSpace(result.RawContent)
+		if content == "" {
+			continue
 		}
-		return readArticleResponse{}, fmt.Errorf("read_article: no content extracted for %s", targetURL)
+		var imageURL string
+		if len(result.Images) > 0 {
+			imageURL = result.Images[0]
+		}
+		parsedURL, _ := url.Parse(result.URL)
+		hostname := ""
+		if parsedURL != nil {
+			hostname = parsedURL.Hostname()
+		}
+		excerpt := ""
+		runes := []rune(content)
+		if len(runes) > 300 {
+			excerpt = string(runes[:300]) + "..."
+		} else {
+			excerpt = content
+		}
+		articles = append(articles, readArticleItem{
+			URL:      result.URL,
+			Title:    result.Title,
+			Content:  content,
+			Excerpt:  excerpt,
+			SiteName: siteNameFromHost(hostname),
+			ImageURL: imageURL,
+		})
 	}
 
-	result := parsed.Results[0]
-	var imageURL string
-	if len(result.Images) > 0 {
-		imageURL = result.Images[0]
+	if len(articles) == 0 {
+		if len(parsed.FailedResults) > 0 {
+			return readArticleResponse{}, fmt.Errorf("read_article: extract failed: %s", parsed.FailedResults[0].Error)
+		}
+		return readArticleResponse{}, fmt.Errorf("read_article: no content extracted")
 	}
 
-	parsedURL, _ := url.Parse(targetURL)
-	hostname := ""
-	if parsedURL != nil {
-		hostname = parsedURL.Hostname()
+	response := readArticleResponse{
+		Articles:    articles,
+		Title:       articles[0].Title,
+		Content:     articles[0].Content,
+		Excerpt:     articles[0].Excerpt,
+		SiteName:    articles[0].SiteName,
+		ImageURL:    articles[0].ImageURL,
+		PublishedAt: articles[0].PublishedAt,
 	}
-
-	content := strings.TrimSpace(result.RawContent)
-	excerpt := ""
-	runes := []rune(content)
-	if len(runes) > 300 {
-		excerpt = string(runes[:300]) + "..."
-	} else {
-		excerpt = content
-	}
-
-	return readArticleResponse{
-		Title:    result.Title,
-		Content:  content,
-		Excerpt:  excerpt,
-		SiteName: siteNameFromHost(hostname),
-		ImageURL: imageURL,
-	}, nil
+	return response, nil
 }
 
-func fetchArticle(ctx context.Context, apiKey, rawURL string, allowedDomains []string) (readArticleResponse, error) {
+func fetchSingleReadability(rawURL string, allowedDomains []string) (readArticleResponse, error) {
 	parsed, err := url.ParseRequestURI(rawURL)
 	if err != nil {
 		return readArticleResponse{}, fmt.Errorf("read_article: invalid URL: %w", err)
@@ -268,16 +290,6 @@ func fetchArticle(ctx context.Context, apiKey, rawURL string, allowedDomains []s
 		return readArticleResponse{}, fmt.Errorf("read_article: %q is not on the trusted domain allowlist, refusing to fetch", parsed.Hostname())
 	}
 
-	if apiKey != "" {
-		res, extractErr := tavilyExtract(ctx, apiKey, rawURL)
-		if extractErr == nil {
-			return res, nil
-		}
-	}
-
-	// News sites commonly bot-block Go's default "Go-http-client" User-Agent
-	// (e.g. Cloudflare) — a real browser UA is needed just to get past that,
-	// not to disguise anything about what this tool does.
 	article, err := readability.FromURL(rawURL, 15*time.Second, func(r *http.Request) {
 		r.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 	})
@@ -314,13 +326,104 @@ func fetchArticle(ctx context.Context, apiKey, rawURL string, allowedDomains []s
 	}, nil
 }
 
+func fetchArticles(ctx context.Context, apiKey string, req readArticleRequest, allowedDomains []string) (readArticleResponse, error) {
+	var candidateURLs []string
+	if len(req.URLs) > 0 {
+		candidateURLs = append(candidateURLs, req.URLs...)
+	}
+	if req.URL != "" {
+		candidateURLs = append(candidateURLs, req.URL)
+	}
+
+	var uniqueURLs []string
+	seen := make(map[string]bool)
+	for _, u := range candidateURLs {
+		trimmed := strings.TrimSpace(u)
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			uniqueURLs = append(uniqueURLs, trimmed)
+		}
+	}
+
+	if len(uniqueURLs) == 0 {
+		return readArticleResponse{}, fmt.Errorf("read_article: no URL provided")
+	}
+
+	var validURLs []string
+	for _, rawURL := range uniqueURLs {
+		parsed, err := url.ParseRequestURI(rawURL)
+		if err != nil {
+			if len(uniqueURLs) == 1 {
+				return readArticleResponse{}, fmt.Errorf("read_article: invalid URL: %w", err)
+			}
+			continue
+		}
+		if !hostAllowed(parsed.Hostname(), allowedDomains) {
+			if len(uniqueURLs) == 1 {
+				return readArticleResponse{}, fmt.Errorf("read_article: %q is not on the trusted domain allowlist, refusing to fetch", parsed.Hostname())
+			}
+			continue
+		}
+		validURLs = append(validURLs, rawURL)
+	}
+
+	if len(validURLs) == 0 {
+		return readArticleResponse{}, fmt.Errorf("read_article: none of the provided URLs are on the trusted domain allowlist")
+	}
+
+	if apiKey != "" {
+		res, err := tavilyExtractBatch(ctx, apiKey, validURLs)
+		if err == nil && len(res.Articles) > 0 {
+			return res, nil
+		}
+	}
+
+	// Fallback to readability per URL
+	var articles []readArticleItem
+	for _, rawURL := range validURLs {
+		single, err := fetchSingleReadability(rawURL, allowedDomains)
+		if err == nil {
+			articles = append(articles, readArticleItem{
+				URL:         rawURL,
+				Title:       single.Title,
+				Content:     single.Content,
+				Excerpt:     single.Excerpt,
+				SiteName:    single.SiteName,
+				ImageURL:    single.ImageURL,
+				PublishedAt: single.PublishedAt,
+			})
+		}
+	}
+
+	if len(articles) == 0 {
+		return readArticleResponse{}, fmt.Errorf("read_article: failed to extract readable content from provided URLs")
+	}
+
+	resp := readArticleResponse{
+		Articles: articles,
+	}
+	if len(articles) > 0 {
+		resp.Title = articles[0].Title
+		resp.Content = articles[0].Content
+		resp.Excerpt = articles[0].Excerpt
+		resp.SiteName = articles[0].SiteName
+		resp.ImageURL = articles[0].ImageURL
+		resp.PublishedAt = articles[0].PublishedAt
+	}
+	return resp, nil
+}
+
+func fetchArticle(ctx context.Context, apiKey, rawURL string, allowedDomains []string) (readArticleResponse, error) {
+	return fetchArticles(ctx, apiKey, readArticleRequest{URL: rawURL}, allowedDomains)
+}
+
 func NewNewsTools() (readArticleTool, webSearchTool tool.BaseTool, err error) {
 	apiKey := config.GetEnv("TAVILY_API_KEY")
 	readArticleTool, err = NewReadArticleTool(apiKey, TrustedNewsDomains)
 	if err != nil {
 		return nil, nil, fmt.Errorf("analyzer: build read_article tool: %w", err)
 	}
-	webSearchTool, err = NewSearchTool(apiKey, 5, TrustedNewsDomains)
+	webSearchTool, err = NewSearchTool(apiKey, 10, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("analyzer: build web_search tool: %w", err)
 	}
