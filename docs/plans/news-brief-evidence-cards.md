@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.5 |
+| **Version** | 1.6 |
 | **Status** | Implemented |
 | **Date Created** | 2026-09-07 |
 | **Last Updated** | 2026-09-21 |
@@ -15,6 +15,7 @@
 | 1.3 | 2026-09-21 | In §3, §4: Simplify iteration and retry bounding — eliminate custom circuit-breaker complexity in RunContext/graceful_tool_service; directly set MaxIterations: 3 in analyzer/index.go to cap iterations/retries naturally and conserve on-chain ETH gas. |
 | 1.4 | 2026-09-21 | In §3, §4: Fix HTTP 500 ErrExceedMaxIterations regression on live news endpoint by adjusting analyzer MaxIterations from 3 to 6 (allowing web_search + up to 2 read_article calls + final synthesis turn without hitting premature exhaustion, strictly well below 20), updating instructions.go to bound article reads to at most 2 items per turn, and verifying by hitting the live endpoint. |
 | 1.5 | 2026-09-21 | In §3, §4: Fix Yahoo 404 tool errors in get_stock_chart when Analyzer queries market indices (^JKSE/IHSG) or tokenized stock tickers (e.g. SINIP). In price_service.go and stock_chart_service.go, map ^JKSE/IHSG to GetIHSGHistory, resolve tokenized P suffix to underlying IDX tickers (SINIP -> SINI), map Yahoo 404 errors to ErrStockNotFound for graceful handling, and instruct Nova in instructions.go to only call get_stock_chart when explicitly requested. |
+| 1.6 | 2026-09-21 | In §3, §4: Fortify external PriceService against invalid index and duplicate .JK suffixes by implementing cleanYahooIDXSymbol, routing ^JKSE/IHSG/JKSE calls in GetYahooIDX, GetYahooIDXMarket, and GetYahooIDXHistory to IHSG handlers, and deduplicating .JK on all ticker lookups. |
 
 **Note on scope.** A scoped-down version of a richer "News Brief" design reference the user shared (composite sentiment score, multi-asset comparison tabs, a quarantine view for rejected sources) — this covers only what was explicitly asked for in words: a dated, sourced, linked citation card per evidence item, reusing `TrustedNewsDomains` for legitimacy. The composite score/tabs/quarantine UI are not built.
 
@@ -61,6 +62,7 @@ To resolve this reliably in production:
 
 | Layer | File | Change |
 |---|---|---|
+| Backend | `backend/src/service/external/price_service.go` | `[MODIFY]` Add `cleanYahooIDXSymbol` to guard against `^JKSE.JK` and deduplicate `.JK` suffix |
 | Backend | `backend/src/service/public/price_service.go` | `[MODIFY]` Support `^JKSE` in `GetStockHistory`, strip `P` suffix for underlying IDX ticker, map Yahoo 404 to `ErrStockNotFound` |
 | Backend | `backend/src/service/public/stock_chart_service.go` | `[MODIFY]` Delegate `PriceLineHistory` to `GetStockHistory` |
 | Backend | `backend/src/service/agent/analyzer/chart_service.go` | `[MODIFY]` Export `NewStockChartTool` for tool-level unit testing |
