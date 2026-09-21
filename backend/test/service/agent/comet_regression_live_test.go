@@ -3,24 +3,28 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
-	"github.com/horizonlabs/pulsarfi-backend/src/model"
+	agentHandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/agent"
+	usermw "github.com/horizonlabs/pulsarfi-backend/src/http/middleware/user"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
 	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
-// TestCometRegression_BRPT_And_BMRI validates that the analyzer_then_executor
-// pipeline (Nova gathering evidence -> Comet primed for execution) experiences
-// zero regression for BRPT and BMRI using the live trader wallet.
-func TestCometRegression_BRPT_And_BMRI(t *testing.T) {
+// TestCometRegression_BRPT_And_BMRI_HttpEndpoint tests the full pipeline
+// through the real Gin HTTP router endpoint (POST /api/v1/agent/chats/:id/messages)
+// with the live trader wallet to guarantee zero regression on HTTP status codes,
+// serialization, Nova evidence gathering, and Arm confirmation card generation.
+func TestCometRegression_BRPT_And_BMRI_HttpEndpoint(t *testing.T) {
 	if err := godotenv.Load("../../../.env"); err != nil {
 		t.Logf("no .env loaded (%v), relying on already-exported environment", err)
 	}
@@ -40,7 +44,20 @@ func TestCometRegression_BRPT_And_BMRI(t *testing.T) {
 		t.Fatal("expected registry.AgentChat to be configured")
 	}
 
+	agentHandler.ConfigureServices(registry)
+
 	traderWallet := "0xd8bf50c157a79260c77b25f89ef713e6c3feda6f"
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("user", usermw.Claims{
+			WalletAddress: traderWallet,
+			Role:          "user",
+		})
+		c.Next()
+	})
+	r.POST("/api/v1/agent/chats/:id/messages", agentHandler.PostChatMessageHandler)
+
 	ctx := context.Background()
 
 	testCases := []struct {
@@ -66,42 +83,43 @@ func TestCometRegression_BRPT_And_BMRI(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			chatID := uuid.New()
-			t.Logf("[%s] Sending prompt: %q for trader wallet: %s", tc.name, tc.prompt, traderWallet)
+			t.Logf("[%s] Sending HTTP POST to /api/v1/agent/chats/%s/messages for trader wallet: %s", tc.name, chatID, traderWallet)
 
-			var subTasksRecorded []string
-			var novaEvidenceText string
-			card, err := registry.AgentChat.HandleChatMessage(
-				ctx,
-				chatID,
-				traderWallet,
-				tc.prompt,
-				false,
-				agentsvc.AgentEventCallbacks{
-					OnSubTask: func(st model.AgentSubTask) {
-						subTasksRecorded = append(subTasksRecorded, fmt.Sprintf("%s/%s", st.Agent, st.StepName))
-						if st.Agent == "analyzer" && st.StepName == "gather_evidence" {
-							novaEvidenceText = st.Reasoning
-						}
-						t.Logf("[%s subtask] %s/%s status=%s", tc.name, st.Agent, st.StepName, st.Status)
-					},
-					OnToolCall: func(agentName, toolName, phase string) {
-						t.Logf("[%s tool] %s called %s (%s)", tc.name, agentName, toolName, phase)
-					},
-				},
-			)
+			reqPayload, _ := json.Marshal(map[string]string{
+				"message": tc.prompt,
+			})
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/agent/chats/"+chatID.String()+"/messages", strings.NewReader(string(reqPayload)))
 			if err != nil {
-				t.Fatalf("[%s] HandleChatMessage failed: %v", tc.name, err)
+				t.Fatalf("[%s] Failed to build HTTP request: %v", tc.name, err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("[%s] Expected HTTP 200 OK from endpoint, got HTTP %d: %s", tc.name, w.Code, w.Body.String())
 			}
 
-			if card.TaskID == 0 {
-				t.Fatalf("[%s] Expected actionable task to produce confirmation card with TaskID > 0, got TaskID=0. Reply: %s", tc.name, card.Reply)
+			var resp struct {
+				Data struct {
+					TaskID int64  `json:"task_id"`
+					Reply  string `json:"reply"`
+				} `json:"data"`
 			}
-			t.Logf("[%s] Confirmation card produced: TaskID=%d, Reply=%s", tc.name, card.TaskID, card.Reply)
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("[%s] Failed to unmarshal endpoint response: %v, raw: %s", tc.name, err, w.Body.String())
+			}
+
+			if resp.Data.TaskID == 0 {
+				t.Fatalf("[%s] Expected actionable task to produce confirmation card with TaskID > 0, got TaskID=0. Reply: %s", tc.name, resp.Data.Reply)
+			}
+			t.Logf("[%s] HTTP 200 OK! TaskID=%d, Reply=%s", tc.name, resp.Data.TaskID, resp.Data.Reply)
 
 			// Verify Task row in database
-			task, found, err := repos.AgentTask.FindByID(ctx, card.TaskID)
+			task, found, err := repos.AgentTask.FindByID(ctx, resp.Data.TaskID)
 			if err != nil || !found {
-				t.Fatalf("[%s] Task %d not found in database: %v", tc.name, card.TaskID, err)
+				t.Fatalf("[%s] Task %d not found in database: %v", tc.name, resp.Data.TaskID, err)
 			}
 			if !task.IsActionable {
 				t.Errorf("[%s] Expected task to be actionable, got false", tc.name)
@@ -125,28 +143,28 @@ func TestCometRegression_BRPT_And_BMRI(t *testing.T) {
 				t.Errorf("[%s] Expected side=buy, got %s", tc.name, side)
 			}
 
-			// Verify Nova's gather_evidence step was recorded
-			hasNovaEvidence := false
-			for _, st := range subTasksRecorded {
-				if st == "analyzer/gather_evidence" {
-					hasNovaEvidence = true
-					break
+			// Verify subtasks recorded by Nova in database
+			subTasks, err := repos.AgentSubTask.FindByTaskID(ctx, resp.Data.TaskID)
+			if err != nil || len(subTasks) == 0 {
+				t.Fatalf("[%s] No subtasks found in database for task %d", tc.name, resp.Data.TaskID)
+			}
+			var foundNovaGather bool
+			for _, st := range subTasks {
+				t.Logf("[%s DB SubTask] %s/%s status=%s", tc.name, st.Agent, st.StepName, st.Status)
+				if st.Agent == "analyzer" && st.StepName == "gather_evidence" {
+					foundNovaGather = true
+					if strings.TrimSpace(st.Reasoning) == "" {
+						t.Errorf("[%s] Nova gather_evidence reasoning in DB is empty", tc.name)
+					} else {
+						t.Logf("[%s] Nova evidence reasoning: %s...", tc.name, st.Reasoning[:min(100, len(st.Reasoning))])
+					}
 				}
 			}
-			if !hasNovaEvidence {
-				t.Errorf("[%s] Expected analyzer/gather_evidence subtask to be executed before Comet", tc.name)
-			}
-			if strings.TrimSpace(novaEvidenceText) == "" {
-				t.Errorf("[%s] Nova evidence reasoning is empty", tc.name)
-			} else {
-				limit := 120
-				if len(novaEvidenceText) < limit {
-					limit = len(novaEvidenceText)
-				}
-				t.Logf("[%s] Nova gathered evidence cleanly: %s...", tc.name, novaEvidenceText[:limit])
+			if !foundNovaGather {
+				t.Errorf("[%s] Expected analyzer/gather_evidence subtask row in database", tc.name)
 			}
 
-			// Verify chat checkpoint was saved in Postgres for the pause before Comet execute
+			// Verify Eino checkpoint paused before Comet execute
 			cpStore, ok := registry.AgentChat.CheckPointStore.(agentsvc.ExtendedCheckPointStore)
 			if ok {
 				has, err := cpStore.Has(ctx, chatID.String())
@@ -158,4 +176,11 @@ func TestCometRegression_BRPT_And_BMRI(t *testing.T) {
 			}
 		})
 	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
