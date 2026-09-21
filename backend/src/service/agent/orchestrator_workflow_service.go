@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
@@ -848,14 +849,100 @@ type newsEvidenceItem struct {
 	ImageURL    string `json:"image_url,omitempty"`
 }
 
-func extractNewsEvidence(raw string) []newsEvidenceItem {
-	var parsed struct {
-		Evidence []newsEvidenceItem `json:"evidence"`
+func extractHostName(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "News"
 	}
-	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		return nil
+	host := strings.TrimPrefix(u.Hostname(), "www.")
+	lower := strings.ToLower(host)
+	switch {
+	case strings.Contains(lower, "kompas.com"):
+		return "Kompas.com"
+	case strings.Contains(lower, "liputan6.com"):
+		return "Liputan6.com"
+	case strings.Contains(lower, "bisnis.com"):
+		return "Bisnis.com"
+	case strings.Contains(lower, "cnbcindonesia.com"):
+		return "CNBC Indonesia"
+	default:
+		if host != "" {
+			return host
+		}
+		return "News"
 	}
-	return parsed.Evidence
+}
+
+func extractNewsEvidenceFromToolCalls(toolCalls []toolCallResult) []newsEvidenceItem {
+	var evidence []newsEvidenceItem
+	seenURLs := make(map[string]bool)
+
+	// 1. Prioritize read_article tool calls (carries full article metadata: source, date, image, excerpt)
+	for _, tc := range toolCalls {
+		if tc.ToolName != "read_article" {
+			continue
+		}
+		var resp struct {
+			Articles []struct {
+				URL         string `json:"url"`
+				Title       string `json:"title"`
+				Excerpt     string `json:"excerpt"`
+				SiteName    string `json:"site_name"`
+				ImageURL    string `json:"image_url"`
+				PublishedAt string `json:"published_at"`
+			} `json:"articles"`
+		}
+		if err := json.Unmarshal([]byte(tc.Result), &resp); err == nil {
+			for _, a := range resp.Articles {
+				if a.URL == "" || seenURLs[a.URL] {
+					continue
+				}
+				seenURLs[a.URL] = true
+				source := a.SiteName
+				if source == "" {
+					source = extractHostName(a.URL)
+				}
+				evidence = append(evidence, newsEvidenceItem{
+					Source:      source,
+					URL:         a.URL,
+					PublishedAt: a.PublishedAt,
+					Excerpt:     a.Excerpt,
+					ImageURL:    a.ImageURL,
+				})
+			}
+		}
+	}
+
+	// 2. Secondary fallback: if read_article wasn't called or yielded no articles, check web_search
+	if len(evidence) == 0 {
+		for _, tc := range toolCalls {
+			if tc.ToolName != "web_search" {
+				continue
+			}
+			var resp struct {
+				Results []struct {
+					Title   string `json:"title"`
+					URL     string `json:"url"`
+					Content string `json:"content"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal([]byte(tc.Result), &resp); err == nil {
+				for _, r := range resp.Results {
+					if r.URL == "" || seenURLs[r.URL] {
+						continue
+					}
+					seenURLs[r.URL] = true
+					evidence = append(evidence, newsEvidenceItem{
+						Source:  extractHostName(r.URL),
+						URL:     r.URL,
+						Excerpt: r.Content,
+					})
+				}
+			}
+		}
+	}
+
+	return evidence
 }
 
 func classifyReply(turn *orchestratorTurn) (contentType string, uiProps json.RawMessage) {
@@ -884,7 +971,7 @@ func classifyReply(turn *orchestratorTurn) (contentType string, uiProps json.Raw
 		}
 	}
 
-	if evidence := extractNewsEvidence(turn.AnalyzerReply); len(evidence) > 0 {
+	if evidence := extractNewsEvidenceFromToolCalls(turn.AnalyzerToolCalls); len(evidence) > 0 {
 		if payload, err := json.Marshal(evidence); err == nil {
 			return "news", payload
 		}

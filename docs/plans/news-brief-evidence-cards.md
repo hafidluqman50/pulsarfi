@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.12 |
+| **Version** | 1.13 |
 | **Status** | In Review |
 | **Date Created** | 2026-09-07 |
 | **Last Updated** | 2026-09-21 |
@@ -22,6 +22,7 @@
 | 1.10 | 2026-09-21 | In §4, §5: Verify zero regression across the analyzer-to-executor pipeline in backend/test/service/agent/comet_regression_live_test.go with live trader wallet (0xd8bf50c157a79260c77b25f89ef713e6c3feda6f) on BRPT (BRPTP) and BMRI (BMRIP), confirming seamless routing to analyzer_then_executor, clean evidence gathering, Arm card creation, and Eino pause before execution. |
 | 1.11 | 2026-09-21 | In §3, §4: Re-anchor web_search to native Tavily include_domains with tool-level auto-fallback for unlisted news; strip bloated domain rules and hardcoded disclaimer templates from analyzer/instructions.go; delete dead code wrapper fetchArticle in analyzer/tools_service.go; isolate iteration exhaustion recovery strictly to Analyzer in orchestrator_workflow_service.go; eliminate raw JSON tool dump on missing assistant replies. |
 | 1.12 | 2026-09-21 | In §3, §4, §5: Eliminate redundant root-level fields (title, content, excerpt, etc.) from readArticleResponse in analyzer/tools_service.go to stop wasteful duplication of articles[0] data and prevent LLM context token inflation. readArticleResponse now cleanly and exclusively returns articles: []readArticleItem; refactor fetchSingleReadability to return readArticleItem directly; update unit tests in analyzer_tools_test.go. |
+| 1.13 | 2026-09-21 | In §3, §4, §5: Fix fatal classification bug where NewsBrief card never rendered due to extractNewsEvidence trying to json.Unmarshal Nova's markdown chat prose. Refactor classifyReply to extract news evidence directly from turn.AnalyzerToolCalls (read_article and web_search), populating uiProps and setting content_type: "news" deterministically, which persists to agent_chat_messages and activates <NewsBrief /> in frontend. |
 
 **Note on scope.** A scoped-down version of a richer "News Brief" design reference the user shared (composite sentiment score, multi-asset comparison tabs, a quarantine view for rejected sources) — this covers only what was explicitly asked for in words: a dated, sourced, linked citation card per evidence item, reusing `TrustedNewsDomains` for legitimacy. The composite score/tabs/quarantine UI are not built.
 
@@ -78,10 +79,15 @@ To resolve this reliably in production:
 - **Clean Nova Instructions (Zero Prompt Bloat & Zero Static Disclaimers)**:
   - In `analyzer/instructions.go`, all verbose domain allowlist rules and static disclaimer string templates (`Ini tidak ada di trusted domain PulsarFi...`) are completely removed.
   - Nova focuses strictly on analytical verification: querying tools, batch reading trusted articles, detecting consensus vs bias, providing direct markdown citations `[Media](URL)`, and determining whether the trigger condition is met.
-- **Scoped Iteration Recovery & No Raw JSON Leaks in `orchestrator_workflow_service.go`**:
-  - `runRoleAgent` guards iteration exhaustion recovery strictly to read-only analytical roles (`analyzer`).
-  - For the executor (`comet`), any `exceeds max iterations` error is returned immediately, preventing unfinished on-chain executions from falsely succeeding or clearing checkpoints.
-  - If an agent turn ends with `final == nil`, the orchestrator returns a clean error instead of dumping raw JSON tool results (`tc.Result`) into the user chat stream.
+- **Deterministic Tool-Call Evidence Extraction in `classifyReply`**:
+  - `classifyReply` in `orchestrator_workflow_service.go` replaces the broken `extractNewsEvidence(turn.AnalyzerReply)` (which wrongly attempted to `json.Unmarshal` Nova's natural-language markdown prose) with deterministic inspection of `turn.AnalyzerToolCalls`.
+  - Scans `turn.AnalyzerToolCalls` for `read_article` tool results:
+    - Parses `readArticleResponse.Articles` directly from `tc.Result`.
+    - Maps `SiteName` -> `newsEvidenceItem.Source`, `URL` -> `newsEvidenceItem.URL`, `PublishedAt` -> `newsEvidenceItem.PublishedAt`, `Excerpt` -> `newsEvidenceItem.Excerpt`, and `ImageURL` -> `newsEvidenceItem.ImageURL`.
+  - Provides a secondary fallback for `web_search`: if `read_article` was not called or yielded no articles, inspects `web_search` results, parsing `Source` from URL host and `Excerpt` from snippet content.
+  - Deduplicates articles across tool calls by URL.
+  - Returns `content_type: "news"` and marshaled `uiProps` containing the evidence array whenever `len(evidence) > 0`.
+  - This directly feeds `persistSupervisorReply`, writing `content_type = 'news'` and `ui_props` into PostgreSQL `agent_chat_messages`, emitting the `final` WebSocket event, and activating `<NewsBrief uiProps={message.ui_props} />` on the frontend.
 
 ---
 
@@ -91,13 +97,13 @@ To resolve this reliably in production:
 |---|---|---|
 | Backend | `backend/src/service/agent/analyzer/instructions.go` | `[MODIFY]` Strip bloated domain allowlist rules and static disclaimer templates; maintain clean analytical instructions |
 | Backend | `backend/src/service/agent/analyzer/tools_service.go` | `[MODIFY]` Native Tavily `include_domains` with tool-level auto-fallback; remove dead wrapper `fetchArticle`; eliminate root-level duplication in `readArticleResponse` |
-| Backend | `backend/src/service/agent/orchestrator_workflow_service.go` | `[MODIFY]` Scope max-iterations recovery to analyzer only; eliminate raw tool JSON payload leakage |
+| Backend | `backend/src/service/agent/orchestrator_workflow_service.go` | `[MODIFY]` Scope max-iterations recovery to analyzer only; eliminate raw tool JSON payload leakage; extract news evidence directly from `turn.AnalyzerToolCalls` in `classifyReply` and map to `newsEvidenceItem` with `content_type: "news"` |
 | Backend | `backend/test/service/agent/analyzer_tools_test.go` | `[MODIFY]` Update unit tests for native trusted search and batch extraction |
 | Backend | `backend/src/service/agent/analyzer/index.go` | `[MODIFY]` Set `MaxIterations: 8` |
 | Backend | `backend/src/service/agent/analyzer/chart_service.go` | `[MODIFY]` Update `stockChartRequest.Ticker` jsonschema description with cleanup instructions, export `NewStockChartTool` |
 | Backend | `backend/src/service/public/stock_chart_service.go` | `[MODIFY]` Delegate `PriceLineHistory` to `GetStockHistory` |
 | Backend | `backend/src/service/public/price_service.go` | `[MODIFY]` Map Yahoo 404 to `ErrStockNotFound` in `GetStockHistory` |
-| Backend | `backend/test/service/agent/news_endpoint_live_test.go` | `[MODIFY]` Add multi-turn follow-up test verifying reference query does not hit HTTP 500 |
+| Backend | `backend/test/service/agent/news_endpoint_live_test.go` | `[MODIFY]` Assert `card.ContentType == "news"` and verify `uiProps` evidence payload structure |
 | Backend | `backend/test/service/agent/comet_regression_live_test.go` | `[NEW]` Live pipeline test validating analyzer_then_executor for BRPT and BMRI with trader wallet |
 | Backend | `backend/migrations/020_agent_chat_message_news_content_type.sql` | `[NEW]` |
 | Frontend | `frontend/components/agent/NewsBrief.tsx` | `[NEW]` |
@@ -114,3 +120,5 @@ To resolve this reliably in production:
 - `TestReadArticleTool_FallbackNoKey` confirms that when Tavily API key is absent and `go-readability` is invoked, `article.Node == nil` is caught safely without `the Node field is nil`.
 - `TestSearchTool_TrustedDomainsAndFallback` verifies that `web_search` leverages native `include_domains` and executes graceful fallback if trusted results are empty.
 - `TestCometRegression_BRPT_And_BMRI` confirms zero regression on the complete Nova-to-Comet actionable pipeline for both BRPT (BRPTP) and BMRI (BMRIP) using the live trader wallet.
+- `TestLiveNewsQueryEndpoint` in `news_endpoint_live_test.go` confirms `card.ContentType == "news"` and `card.UIProps` contains the parsed evidence array.
+

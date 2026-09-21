@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -70,7 +71,14 @@ func TestLiveNewsQueryEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleChatMessage returned ERROR: %v", err)
 	}
-	fmt.Printf("\nCard Result: content_type=%s, task_id=%d, reply=%s\n", card.ContentType, card.TaskID, card.Reply)
+	fmt.Printf("\nCard Result: content_type=%s, task_id=%d, ui_props=%s, reply=%s\n", card.ContentType, card.TaskID, string(card.UIProps), card.Reply)
+	if card.ContentType != "news" {
+		t.Fatalf("expected card.ContentType to be 'news', got '%s'", card.ContentType)
+	}
+	if len(card.UIProps) == 0 {
+		t.Fatalf("expected non-empty card.UIProps for news card")
+	}
+	t.Logf("PASS: card.ContentType is %s, UIProps: %s", card.ContentType, string(card.UIProps))
 }
 
 func TestLiveNewsQueryHTTPEndpoint(t *testing.T) {
@@ -121,6 +129,14 @@ func TestLiveNewsQueryHTTPEndpoint(t *testing.T) {
 		t.Fatalf("expected HTTP 200, got HTTP %d: %s", w.Code, w.Body.String())
 	}
 	t.Logf("Turn 1 HTTP endpoint returned %d OK with response: %s", w.Code, w.Body.String())
+	var turn1Resp struct {
+		Data struct {
+			ContentType string `json:"content_type"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &turn1Resp); err == nil && turn1Resp.Data.ContentType != "news" {
+		t.Fatalf("expected HTTP turn 1 content_type to be 'news', got '%s'", turn1Resp.Data.ContentType)
+	}
 
 	// Turn 2: Follow-up asking for reference / source link (exact user query that previously triggered HTTP 500)
 	reqBody2 := `{"message":"Btw itu SINI referensinya dari mana? Ada link legitnya?"}`
