@@ -42,9 +42,10 @@ type searchRequest struct {
 }
 
 type searchResultItem struct {
-	Title   string `json:"title"`
-	URL     string `json:"url"`
-	Content string `json:"content" jsonschema_description:"A snippet of the matching page's content — call read_article on the url for the full body before treating this as evidence."`
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+	Content  string `json:"content" jsonschema_description:"A snippet of the matching page's content — call read_article on the url for the full body before treating this as evidence."`
+	ImageURL string `json:"image_url,omitempty"`
 }
 
 type searchResponse struct {
@@ -56,6 +57,7 @@ type tavilySearchRequestBody struct {
 	MaxResults     int      `json:"max_results"`
 	IncludeDomains []string `json:"include_domains,omitempty"`
 	Topic          string   `json:"topic"`
+	IncludeImages  bool     `json:"include_images"`
 }
 
 // NewSearchTool replaces the previous DuckDuckGo-backed tool (no stable
@@ -106,6 +108,7 @@ func executeTavilySearch(ctx context.Context, apiKey, query string, maxResults i
 		MaxResults:     maxResults,
 		IncludeDomains: includeDomains,
 		Topic:          "news",
+		IncludeImages:  true,
 	})
 	if err != nil {
 		return searchResponse{}, fmt.Errorf("web_search: marshal request: %w", err)
@@ -135,9 +138,15 @@ func executeTavilySearch(ctx context.Context, apiKey, query string, maxResults i
 
 	var parsed struct {
 		Results []searchResultItem `json:"results"`
+		Images  []string           `json:"images"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return searchResponse{}, fmt.Errorf("web_search: parse response: %w", err)
+	}
+	for i := range parsed.Results {
+		if parsed.Results[i].ImageURL == "" && i < len(parsed.Images) {
+			parsed.Results[i].ImageURL = parsed.Images[i]
+		}
 	}
 	return searchResponse{Results: parsed.Results}, nil
 }

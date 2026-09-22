@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
@@ -923,22 +924,35 @@ func extractNewsEvidenceFromToolCalls(toolCalls []toolCallResult) []newsEvidence
 			}
 			var resp struct {
 				Results []struct {
-					Title   string `json:"title"`
-					URL     string `json:"url"`
-					Content string `json:"content"`
+					Title    string `json:"title"`
+					URL      string `json:"url"`
+					Content  string `json:"content"`
+					ImageURL string `json:"image_url"`
 				} `json:"results"`
+				Images []string `json:"images"`
 			}
 			if err := json.Unmarshal([]byte(tc.Result), &resp); err == nil {
-				for _, r := range resp.Results {
+				for i, r := range resp.Results {
 					if r.URL == "" || seenURLs[r.URL] {
 						continue
 					}
 					seenURLs[r.URL] = true
+					imgURL := r.ImageURL
+					if imgURL == "" && i < len(resp.Images) {
+						imgURL = resp.Images[i]
+					}
+					if imgURL == "" {
+						reImg := regexp.MustCompile(`!\[.*?\]\((https?://[^\s)]+)\)`)
+						if m := reImg.FindStringSubmatch(r.Content); len(m) > 1 {
+							imgURL = m[1]
+						}
+					}
 					evidence = append(evidence, newsEvidenceItem{
-						Title:   r.Title,
-						Source:  extractHostName(r.URL),
-						URL:     r.URL,
-						Excerpt: r.Content,
+						Title:    r.Title,
+						Source:   extractHostName(r.URL),
+						URL:      r.URL,
+						Excerpt:  r.Content,
+						ImageURL: imgURL,
 					})
 				}
 			}
