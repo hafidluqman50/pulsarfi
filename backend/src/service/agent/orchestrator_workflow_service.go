@@ -842,6 +842,7 @@ type toolCallResult struct {
 }
 
 type newsEvidenceItem struct {
+	Title       string `json:"title,omitempty"`
 	Source      string `json:"source"`
 	URL         string `json:"url,omitempty"`
 	PublishedAt string `json:"published_at,omitempty"`
@@ -903,6 +904,7 @@ func extractNewsEvidenceFromToolCalls(toolCalls []toolCallResult) []newsEvidence
 					source = extractHostName(a.URL)
 				}
 				evidence = append(evidence, newsEvidenceItem{
+					Title:       a.Title,
 					Source:      source,
 					URL:         a.URL,
 					PublishedAt: a.PublishedAt,
@@ -933,6 +935,7 @@ func extractNewsEvidenceFromToolCalls(toolCalls []toolCallResult) []newsEvidence
 					}
 					seenURLs[r.URL] = true
 					evidence = append(evidence, newsEvidenceItem{
+						Title:   r.Title,
 						Source:  extractHostName(r.URL),
 						URL:     r.URL,
 						Excerpt: r.Content,
