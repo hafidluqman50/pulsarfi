@@ -16,23 +16,44 @@ function formatPublishedAt(value?: string): string | null {
   return date.toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+const ACRONYMS = new Set(['IHSG', 'BI', 'BEI', 'IDX', 'OJK', 'FED', 'AS', 'RI', 'APBN', 'BUMN', 'IPO', 'BBRI', 'BBCA', 'BMRI', 'BBNI', 'BUMI', 'BRPT', 'PTRO', 'ENRG', 'ANTM', 'TLKM', 'GOTO', 'EMTK']);
+const NAV_TOKENS = new Set(['home', 'beranda', 'news', 'bisnis', 'showbiz', 'tekno', 'otomotif', 'bola', 'lifestyle', 'foto', 'video', 'pemilu', 'cek', 'fakta']);
+
 function cleanExcerpt(text?: string): string {
   if (!text) return '';
   let clean = text
-    // Remove markdown images: ![alt](url)
-    .replace(/!\[.*?\]\(.*?\)/g, '')
-    // Remove common navigation/header boilerplate links
-    .replace(/\[(?:\+?\s*(?:login|masuk|daftar|icon|home|baca e-paper|konten interaktif|kompas\.com|detik\.com|bisnis indonesia|foto|video)).*?\]\(.*?\)/gi, '')
-    // Convert remaining markdown links [text](url) -> text
+    // 1. Remove markdown links wrapping images: [![alt](img)](url)
+    .replace(/\[\s*!\[.*?\]\(.*?\)\s*\]\(.*?\)/gi, '')
+    // 2. Remove standalone markdown images: ![alt](url)
+    .replace(/!\[.*?\]\(.*?\)/gi, '')
+    // 3. Remove empty markdown links: [](url) or [ ](url)
+    .replace(/\[\s*\]\(.*?\)/gi, '')
+    // 4. Remove common navigation/header boilerplate links
+    .replace(/\[(?:\+?\s*(?:login|masuk|daftar|icon|home|beranda|baca e-paper|konten interaktif|kompas\.com|detik\.com|bisnis indonesia|liputan6|foto|video|news|bisnis|showbiz|tekno|otomotif)).*?\]\(.*?\)/gi, '')
+    // 5. Convert remaining markdown links [text](url) -> text
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    // Remove markdown syntax characters
+    // 6. Remove raw URLs in http(s)://...
+    .replace(/https?:\/\/[^\s)]+/gi, '')
+    // 7. Remove markdown formatting characters
     .replace(/[*#_`~>]/g, ' ')
-    // Collapse whitespace
+    // 8. Collapse whitespace
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Strip leading punctuation/symbols like "-", "*", "+", "|", ":"
-  clean = clean.replace(/^[-+*|:\s]+/, '');
+  // Strip leading/trailing punctuation & symbols like "-", "*", "+", "|", ":", "/"
+  clean = clean.replace(/^[-+*|:\/\s]+/, '').replace(/[-+*|:\/\s]+$/, '').trim();
+
+  // If the result is just a series of nav menu items or too short to be a real sentence (< 25 chars), discard it
+  if (clean.length < 25) {
+    return '';
+  }
+
+  // Discard if mostly navigation tokens (>40% of words)
+  const words = clean.toLowerCase().split(/\s+/);
+  const navWordCount = words.filter((w) => NAV_TOKENS.has(w)).length;
+  if (words.length > 0 && navWordCount / words.length > 0.4) {
+    return '';
+  }
 
   if (clean.length > 220) {
     clean = clean.slice(0, 220).trim() + '…';
@@ -54,7 +75,11 @@ function deriveTitle(item: NewsEvidenceItem): string {
       const words = slug
         .split(/[-_]+/)
         .filter((w) => !/^\d+$/.test(w) && w.length > 0)
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+        .map((w) => {
+          const upper = w.toUpperCase();
+          if (ACRONYMS.has(upper)) return upper;
+          return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+        });
       if (words.length > 0) {
         return words.join(' ');
       }
