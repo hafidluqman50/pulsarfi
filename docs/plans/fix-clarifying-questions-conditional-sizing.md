@@ -2,16 +2,17 @@
 
 | | |
 |---|---|
-| **Version** | 1.2 |
+| **Version** | 1.3 |
 | **Status** | Completed |
 | **Date Created** | 2026-09-21 |
-| **Last Updated** | 2026-09-21 |
+| **Last Updated** | 2026-09-22 |
 
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-09-21 | Initial draft to resolve: (1) Quasar asking both buy budget and sell token quantity in the same intake turn when side is unknown; (2) Quasar stripping authentic markdown source links `[Nama Media](URL)` from Nova news findings; (3) Supporting simultaneous delivery of both chart and news cards (`content_type: "composite"`) when user requests both. |
 | 1.1 | 2026-09-21 | Section 3.3 & Section 4 updated: aligned composite card payload with PostgreSQL check constraint `agent_chat_messages_content_type_check` by using existing `content_type: "chart"` (with fallback support for "composite" and "news") containing `{"charts": ..., "news": ...}` in `ui_props` to eliminate database schema violation risks without migrations; added analyzer tool calling instructions for dual news + chart queries. |
 | 1.2 | 2026-09-21 | Section 7 updated: implementation completed and verified via live integration tests `TestAmbiguousTradeDoesNotAskSizingUntilSideKnown` (proving only side/shape asked in Turn 1, buy budget only in Turn 2, task committed in Turn 3) and `TestDualNewsAndChartQuery` (proving simultaneous chart + news evidence delivery in composite payload). Status moved to Completed. |
+| 1.3 | 2026-09-22 | Section 3.3 updated: adjusted `classifyReply` composite payload to return `content_type = "news"` when news evidence is present so that news queries maintain accurate semantic type and satisfy `TestLiveNewsQueryEndpoint` while delivering both `<ChartCard />` and `<NewsBrief />`. |
 
 ---
 
@@ -77,7 +78,7 @@ Three critical issues have been identified from live user testing on `https://pu
 
 ### 3.3 Composite Card in `orchestrator_workflow_service.go` & `ChatThread.tsx`
 - Backend:
-  To strictly comply with PostgreSQL check constraint `agent_chat_messages_content_type_check` without requiring a database migration, `classifyReply` returns `contentType = "chart"` with payload containing both `charts` and `news`:
+  To strictly comply with PostgreSQL check constraint `agent_chat_messages_content_type_check` without requiring a database migration, `classifyReply` returns `contentType = "news"` when news evidence is present (along with any accompanying charts in `charts` field):
   ```go
   if len(chartPayloads) > 0 && len(newsEvidence) > 0 {
       var chartData any = chartPayloads
@@ -88,7 +89,7 @@ Three critical issues have been identified from live user testing on `https://pu
           "charts": chartData,
           "news":   newsEvidence,
       }); err == nil {
-          return "chart", payload
+          return "news", payload
       }
   }
   ```

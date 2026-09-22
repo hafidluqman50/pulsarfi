@@ -965,7 +965,7 @@ func classifyReply(turn *orchestratorTurn) (contentType string, uiProps json.Raw
 	newsEvidence := extractNewsEvidenceFromToolCalls(turn.AnalyzerToolCalls)
 
 	// If both charts and news evidence are present, deliver both via a composite payload
-	// using "chart" as the database-safe content_type enum
+	// using "news" as the database-safe content_type enum
 	if len(chartPayloads) > 0 && len(newsEvidence) > 0 {
 		var chartData any = chartPayloads
 		if len(chartPayloads) == 1 {
@@ -975,7 +975,7 @@ func classifyReply(turn *orchestratorTurn) (contentType string, uiProps json.Raw
 			"charts": chartData,
 			"news":   newsEvidence,
 		}); err == nil {
-			return "chart", payload
+			return "news", payload
 		}
 	}
 

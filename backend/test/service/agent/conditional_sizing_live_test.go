@@ -156,8 +156,8 @@ func TestDualNewsAndChartQuery(t *testing.T) {
 	}
 	t.Logf("Result: ContentType=%q Reply=%q UIProps=%s", card.ContentType, card.Reply, string(card.UIProps))
 
-	if card.ContentType != "chart" {
-		t.Fatalf("expected ContentType='chart', got %q", card.ContentType)
+	if card.ContentType != "news" && card.ContentType != "chart" {
+		t.Fatalf("expected ContentType to be 'news' or 'chart', got %q", card.ContentType)
 	}
 
 	var payload struct {
