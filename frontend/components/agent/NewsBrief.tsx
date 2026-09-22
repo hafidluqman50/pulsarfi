@@ -1,6 +1,7 @@
 'use client';
 
 type NewsEvidenceItem = {
+  title?: string;
   source: string;
   url?: string;
   published_at?: string;
@@ -15,13 +16,60 @@ function formatPublishedAt(value?: string): string | null {
   return date.toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-// One evidence item, straight from analyzer_agent's own sourced/dated
-// citations (task_service.go's NewsEvidenceItem) — never re-summarized or
-// embellished here, only laid out. A missing published_at/image_url means
-// the source page genuinely didn't provide one; both are simply omitted,
-// never guessed.
+function cleanExcerpt(text?: string): string {
+  if (!text) return '';
+  let clean = text
+    // Remove markdown images: ![alt](url)
+    .replace(/!\[.*?\]\(.*?\)/g, '')
+    // Remove common navigation/header boilerplate links
+    .replace(/\[(?:\+?\s*(?:login|masuk|daftar|icon|home|baca e-paper|konten interaktif|kompas\.com|detik\.com|bisnis indonesia|foto|video)).*?\]\(.*?\)/gi, '')
+    // Convert remaining markdown links [text](url) -> text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // Remove markdown syntax characters
+    .replace(/[*#_`~>]/g, ' ')
+    // Collapse whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Strip leading punctuation/symbols like "-", "*", "+", "|", ":"
+  clean = clean.replace(/^[-+*|:\s]+/, '');
+
+  if (clean.length > 220) {
+    clean = clean.slice(0, 220).trim() + '…';
+  }
+  return clean;
+}
+
+function deriveTitle(item: NewsEvidenceItem): string {
+  if (item.title && item.title.trim()) {
+    return item.title.replace(/^\[Sumber Eksternal\]\s*/i, '').trim();
+  }
+  if (!item.url) return item.source;
+  try {
+    const parsedUrl = new URL(item.url);
+    const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+    const lastPart = pathParts[pathParts.length - 1] || '';
+    const slug = lastPart.replace(/\.[a-zA-Z0-9]+$/, '');
+    if (slug.includes('-') || slug.includes('_')) {
+      const words = slug
+        .split(/[-_]+/)
+        .filter((w) => !/^\d+$/.test(w) && w.length > 0)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+      if (words.length > 0) {
+        return words.join(' ');
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return `${item.source} - Berita Terkait`;
+}
+
 function NewsBriefItem({ item }: { item: NewsEvidenceItem }) {
   const publishedAt = formatPublishedAt(item.published_at);
+  const title = deriveTitle(item);
+  const excerpt = cleanExcerpt(item.excerpt);
+
   return (
     <div style={{ display: 'flex', gap: 12, padding: '12px 0', borderTop: '1px solid var(--hairline)' }}>
       {item.image_url && (
@@ -32,17 +80,34 @@ function NewsBriefItem({ item }: { item: NewsEvidenceItem }) {
           style={{ width: 64, height: 64, objectFit: 'cover', flex: 'none', border: '1px solid var(--hairline)', background: 'var(--canvas-soft)' }}
         />
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ font: '700 9px/1.3 var(--font-sans)', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--merah)', border: '1px solid var(--merah)', padding: '2px 4px' }}>
             {item.source}
           </span>
           {publishedAt && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ticker)' }}>{publishedAt}</span>}
         </div>
-        {item.excerpt && <div style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--ink-soft)' }}>{item.excerpt}</div>}
+        {title && (
+          <a
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', textDecoration: 'none', lineHeight: 1.4 }}
+            onMouseEnter={(e) => (e.currentTarget.style.textDecoration = 'underline')}
+            onMouseLeave={(e) => (e.currentTarget.style.textDecoration = 'none')}
+          >
+            {title}
+          </a>
+        )}
+        {excerpt && <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--ink-soft)' }}>{excerpt}</div>}
         {item.url && (
-          <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: 'var(--body)', textDecoration: 'underline' }}>
-            {item.url}
+          <a
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: 11, color: 'var(--merah)', textDecoration: 'underline', marginTop: 2, display: 'inline-flex', alignItems: 'center', gap: 3 }}
+          >
+            Buka artikel di {item.source} ↗
           </a>
         )}
       </div>

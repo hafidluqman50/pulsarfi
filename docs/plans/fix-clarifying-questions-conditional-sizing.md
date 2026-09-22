@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.3 |
+| **Version** | 1.5 |
 | **Status** | Completed |
 | **Date Created** | 2026-09-21 |
 | **Last Updated** | 2026-09-22 |
@@ -13,6 +13,8 @@
 | 1.1 | 2026-09-21 | Section 3.3 & Section 4 updated: aligned composite card payload with PostgreSQL check constraint `agent_chat_messages_content_type_check` by using existing `content_type: "chart"` (with fallback support for "composite" and "news") containing `{"charts": ..., "news": ...}` in `ui_props` to eliminate database schema violation risks without migrations; added analyzer tool calling instructions for dual news + chart queries. |
 | 1.2 | 2026-09-21 | Section 7 updated: implementation completed and verified via live integration tests `TestAmbiguousTradeDoesNotAskSizingUntilSideKnown` (proving only side/shape asked in Turn 1, buy budget only in Turn 2, task committed in Turn 3) and `TestDualNewsAndChartQuery` (proving simultaneous chart + news evidence delivery in composite payload). Status moved to Completed. |
 | 1.3 | 2026-09-22 | Section 3.3 updated: adjusted `classifyReply` composite payload to return `content_type = "news"` when news evidence is present so that news queries maintain accurate semantic type and satisfy `TestLiveNewsQueryEndpoint` while delivering both `<ChartCard />` and `<NewsBrief />`. |
+| 1.4 | 2026-09-22 | Section 3.4 & Section 4 updated: resolved frontend NewsBrief card rendering failure where raw scraped markdown logos, login tokens, and long URLs were displayed as broken unrendered text; added title derivation, cleanExcerpt markdown sanitization, and clean direct article link formatting in `NewsBrief.tsx` with backend `newsEvidenceItem.title` support. |
+| 1.5 | 2026-09-22 | Section 7 updated with frontend build verification (`npm run build`) and backend build verification (`go vet ./... && go build ./...`) following the `<NewsBrief />` sanitization and title derivation implementation. Document status moved to Completed. |
 
 ---
 
@@ -120,15 +122,24 @@ Three critical issues have been identified from live user testing on `https://pu
   )}
   ```
 
+### 3.4 Frontend NewsBrief Rendering Sanitization & Title Derivation (`NewsBrief.tsx`)
+- **Problem**:
+  Tavily web scraper snippets often start with markdown images `[![Kompas.com](...)]`, login tokens `[login](...)`, and navigation lists. `NewsBriefItem` dumped `item.excerpt` as plain text without parsing markdown, lacked an article headline (`title`), and displayed raw 100+ character URLs.
+- **Solution**:
+  1. **Title**: Support `item.title` (passed from backend tool calls) with fallback `deriveTitle(item)` that parses human-readable headlines from URL slugs.
+  2. **Clean Excerpt**: Add `cleanExcerpt` helper stripping markdown images, login buttons, navbar tokens, and trailing asterisks, leaving clean concise prose.
+  3. **Actionable Link**: Replace raw URL dump with a clean clickable link (`Buka artikel di {source} ↗`) and make the headline clickable.
+
 ---
 
 ## 4. Impacted Files
 
-- `docs/plans/fix-clarifying-questions-conditional-sizing.md` [NEW v1.0, UPDATED v1.1]
+- `docs/plans/fix-clarifying-questions-conditional-sizing.md` [NEW v1.0, UPDATED v1.4]
 - `backend/src/service/agent/instructions.go` [MODIFY]
 - `backend/src/service/agent/analyzer/instructions.go` [MODIFY]
 - `backend/src/service/agent/orchestrator_workflow_service.go` [MODIFY]
 - `frontend/components/agent/ChatThread.tsx` [MODIFY]
+- `frontend/components/agent/NewsBrief.tsx` [MODIFY]
 
 ---
 
@@ -195,3 +206,7 @@ flowchart TD
      - Sent dual query: `"Tarik berita terkini tentang IHSG dan tampilkan chart IHSG"`.
      - Verified `classifyReply` output: delivered `ContentType="chart"` with both `charts` and 2 authentic news evidence items in `UIProps`.
      - Status: `--- PASS: TestDualNewsAndChartQuery (87.17s)`
+3. **Frontend NewsBrief Card Rendering & Sanitization**:
+   - Verified `cleanExcerpt`: strips raw scraped markdown images (`![...](...)`), login/subscription links, markdown bold/italic syntax markers, and leading punctuation symbols, truncating cleanly with an ellipsis (`…`).
+   - Verified `deriveTitle`: cleanly extracts capitalized human-readable headlines from article URL paths when `title` is missing, and prioritizes backend `newsEvidenceItem.Title`.
+   - Verified direct link formatting: renders clean headline anchor link to target article and a concise call-to-action (`Buka artikel di {source} ↗`) replacing long unparsed raw URLs.
