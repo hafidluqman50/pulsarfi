@@ -5,7 +5,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Product',
-      items: ['overview', 'problem', 'why-idrx', 'business-flow'],
+      items: ['overview', 'problem', 'why-idrx', 'business-flow', 'ai-trading-agent'],
     },
     {
       type: 'category',

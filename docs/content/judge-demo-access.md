@@ -85,7 +85,7 @@ sequenceDiagram
   participant C3 as Demo Custodian 3
   participant P as PulsarProtocol Proxy
   participant B as Backend
-  participant AMM as Uniswap V2 Pool
+  participant AMM as Uniswap V4 Pool
 
   C1->>P: requestMint(ticker, amount, IDRX, attestationHash)
   P-->>P: record proposal + first approval
