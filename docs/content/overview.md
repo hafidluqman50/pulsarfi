@@ -21,8 +21,9 @@ PulsarFi is:
 
 - an RWA receipt-token system for IDX equities;
 - a 3-of-5 custodian-controlled mint and redemption workflow;
-- an IDRX-denominated trading venue using Uniswap V2 pools;
+- an IDRX-denominated trading venue using Uniswap V4 pools, with protocol fees enforced at the pool level by a custom `PulsarSwapHook`;
 - a wallet-first app for swaps, portfolio tracking, redemption, and custodian operations;
+- an AI trading agent (Quasar/Nova/Comet) that lets users delegate spot trades in chat, under on-chain budget/cooldown guardrails;
 - a testnet deployment that demonstrates the full lifecycle from custody to on-chain liquidity.
 
 PulsarFi is not:
@@ -86,10 +87,10 @@ PulsarFi is designed around the following guarantees:
 ## Current scope
 
 The current implementation targets Arbitrum Sepolia. It uses a mock IDRX token,
-a custom Uniswap V2 deployment, and a faucet for testnet liquidity. The design is
-structured so production deployments can replace mock IDRX, strengthen
-proof-of-reserves automation, and migrate liquidity controls to a more advanced
-AMM model.
+a custom Uniswap V4 deployment (official `PoolManager`) with `PulsarSwapHook`
+enforcing protocol fees at the pool level, and a faucet for testnet liquidity.
+The design is structured so production deployments can replace mock IDRX and
+strengthen proof-of-reserves automation.
 
 ## Reading order
 
@@ -98,7 +99,8 @@ If you are new to the system, read these pages in order:
 1. [Why PulsarFi](./problem)
 2. [IDRX Settlement](./why-idrx)
 3. [Market & Revenue Model](./business-flow)
-4. [Architecture](./architecture)
-5. [Protocol Design](./protocol-design)
-6. [App & Operator Flow](./app-flow)
-7. [Getting Started](./getting-started)
+4. [AI Trading Agent](./ai-trading-agent)
+5. [Architecture](./architecture)
+6. [Protocol Design](./protocol-design)
+7. [App & Operator Flow](./app-flow)
+8. [Getting Started](./getting-started)

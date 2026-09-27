@@ -2,7 +2,7 @@
 
 ## Custodian Model
 
-Custodians are **independent licensed financial institutions** (e.g. Mirae Asset, Mandiri Sekuritas, Ajaib, Growin) — not a centralized operator.
+Custodians are intended to be **independent licensed financial institutions** — not a centralized operator, once the model reaches V2 (see Roadmap). In the current V1 phase, custodian seats are held by the internal PulsarFi team while the onboarding process for licensed broker-dealers is finalized.
 
 By signing the custodian agreement and joining the multisig, they commit to the fee structure below. Mint = agreement accepted.
 
@@ -16,7 +16,7 @@ Trustless by design: custodians are competitors. Colluding to fraudulently mint 
 
 | Source | Mechanism | Recipient |
 |---|---|---|
-| AMM LP fee | 0.3% (Uniswap V2 native) on every buy/sell | Pool reserves — protocol-owned liquidity, not withdrawn |
+| AMM LP fee | pool's own LP fee (Uniswap V4, full-range position) on every buy/sell | Pool reserves — protocol-owned liquidity, not withdrawn |
 | Protocol swap fee | `swapFeeBps` on every buy/sell, denominated in IDRX | `accumulatedFees` (in-contract) |
 | Redeem fee | `redeemFeeBps` basis points on every redemption | `accumulatedFees` (in-contract) |
 
@@ -30,7 +30,7 @@ Custodians earn a share of `accumulatedFees` via `distributeFees()` — see belo
 
 The 0.3% AMM fee and the protocol fee are **not the same thing**, and mixing them was the original design flaw:
 
-- **AMM LP fee (0.3%)**: never withdrawn. It compounds inside each Uniswap V2 pair's reserves. Since `PulsarProtocol` is the sole LP on every pair (`addLiquidity(..., to: address(this), ...)`), this growth is 100% protocol-owned — but its value is realized *indirectly*: deeper pools mean less slippage, more trading volume, and a stronger peg buffer during redemption runs. Extracting it would mean removing liquidity from the very pool that backs the peg, so it is intentionally left untouched.
+- **AMM LP fee**: never withdrawn. It compounds inside each pStock/IDRX Uniswap V4 pool's full-range position. Since `PulsarProtocol` is the sole LP on every pool, this growth is 100% protocol-owned — but its value is realized *indirectly*: deeper pools mean less slippage, more trading volume, and a stronger peg buffer during redemption runs. Extracting it would mean removing liquidity from the very pool that backs the peg, so it is intentionally left untouched.
 - **Protocol swap fee + redeem fee**: realized *immediately* and *explicitly*, following the same pattern already used by `redeemFeeBps` — a bps cut taken directly in IDRX, never entangled with AMM reserves. This is the actual treasury/custodian revenue.
 
 ## Protocol Swap Fee (`swapFeeBps`)
@@ -65,7 +65,7 @@ accumulatedFees (once ≥ minimumDistributionThreshold)
 
 ## Mint — All to Liquidity Pool
 
-All mints go directly to the Uniswap V2 liquidity pool. There is no OTC / OperatorWallet destination.
+All mints go directly to the Uniswap V4 liquidity pool (created and seeded with full-range liquidity on a ticker's first mint). There is no OTC / OperatorWallet destination.
 
 **Why:** An OTC mint path creates tokens without proportionally funding the pool. If the OTC recipient sells into the pool, IDRX drains and price depegs. Since the pool is the only on-chain liquidity venue, every new token supply must be matched by IDRX liquidity.
 
@@ -107,10 +107,24 @@ All four are admin-adjustable post-deploy — these are conservative starting po
 
 ---
 
+## AI Trading Agent (Quasar / Nova / Comet) — Product Differentiator, Not a Separate Fee Model
+
+| Role | Job |
+|---|---|
+| Quasar (Supervisor) | Conversational entry point — routes the request, asks clarifying questions, auto-settles direct trades. |
+| Nova (Analyzer) | Technical analysis, news synthesis, charts, portfolio snapshots that inform the trade decision. |
+| Comet (Executor) | On-chain execution — sizing, spot swaps via `AgentTaskManager`. |
+
+Every user instruction becomes a **Task** (an identity + lifecycle status, never a money amount). If Executor concludes a trade is warranted, a **TradePermission** (budget ceiling + expiry) is granted separately, and each execution step is recorded as a **Sub Task**. Trades still settle through the same `swapV4` path as manual trading — this is a UX/execution layer, not a new fee mechanism. `AgentTaskManager` enforces on-chain guardrails (`totalBudget`, `maxAmountPerTrade`, `cooldownInterval`) so the agent can never move more than the user explicitly authorized.
+
+**Status**: scalp-style (short-horizon, immediate execution) trading is production-hardened — validated end-to-end against live Postgres and live Arbitrum Sepolia contracts. Swing/longer-horizon positions (auto-exit, standing price guardrails) are still in design and deferred, not yet shipped.
+
+---
+
 ## Roadmap
 
 | Phase | Model |
 |---|---|
 | V1 (now) | PulsarFi as trusted operator, custodian = internal team |
 | V2 | Onboard licensed broker-dealers as independent custodians, off-chain SLA + on-chain multisig |
-| V3 | On-chain proof of reserve, decentralized KYC (zkKYC / Polygon ID), Uniswap V4 hooks |
+| V3 | On-chain proof of reserve, decentralized KYC (zkKYC / Polygon ID) |

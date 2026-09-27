@@ -44,7 +44,7 @@ The swap UI performs several steps before the final transaction:
 3. Build a quote from token metadata, amount, and slippage.
 4. Check input token allowance.
 5. Submit approval if allowance is too low.
-6. Simulate `PulsarProtocol.swap`.
+6. Simulate `PulsarProtocol.swapV4`.
 7. Submit the swap transaction.
 8. Wait for receipt.
 9. Parse `TokensSwapped`.
