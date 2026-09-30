@@ -1,8 +1,10 @@
 package authhandler
 
 import (
+	"errors"
 	"log/slog"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/gin-gonic/gin"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
 	"github.com/horizonlabs/pulsarfi-backend/src/logger"
@@ -21,7 +23,20 @@ func NonceHandler(c *gin.Context) {
 		response.BadRequest(c, "address query param is required")
 		return
 	}
-	nonce := svc.Nonce(address)
+	if !common.IsHexAddress(address) {
+		response.BadRequest(c, "address must be a valid hex address")
+		return
+	}
+
+	nonce, err := svc.Nonce(c.Request.Context(), address)
+	if err != nil {
+		logger.L.ErrorContext(c.Request.Context(), "nonce: issue failed",
+			slog.String("address", address),
+			slog.String("error", err.Error()),
+		)
+		response.InternalError(c, "failed to issue nonce")
+		return
+	}
 	response.OK(c, "nonce issued", gin.H{"nonce": nonce})
 }
 
@@ -62,7 +77,12 @@ func VerifyHandler(c *gin.Context) {
 			slog.String("error", err.Error()),
 			slog.String("remote_addr", c.ClientIP()),
 		)
-		response.Unauthorized(c, err.Error())
+		var verifyErr *authsvc.VerifyError
+		if errors.As(err, &verifyErr) {
+			response.Unauthorized(c, verifyErr.Message)
+			return
+		}
+		response.InternalError(c, "failed to verify signature")
 		return
 	}
 

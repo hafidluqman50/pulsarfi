@@ -61,7 +61,6 @@ func buildHandler() (*gin.Engine, func(), error) {
 	}
 
 	repos := repository.NewRegistry(db)
-	nonceStore := auth.NewNonceStore()
 
 	var emailSvc *external.EmailService
 	if apiKey := config.GetEnv("RESEND_API_KEY"); apiKey != "" {
@@ -88,7 +87,6 @@ func buildHandler() (*gin.Engine, func(), error) {
 	svcs := service.NewRegistry(service.Config{
 		Repos:                 repos,
 		JwtConfig:             jwtConfig,
-		NonceStore:            nonceStore,
 		EmailService:          emailSvc,
 		StorageService:        storageSvc,
 		TransferIndexerConfig: transferIndexerConfig(),

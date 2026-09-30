@@ -39,7 +39,6 @@ type Registry struct {
 type Config struct {
 	Repos                 *repository.Registry
 	JwtConfig             auth.Config
-	NonceStore            *auth.NonceStore
 	EmailService          *external.EmailService
 	StorageService        *external.StorageService
 	TransferIndexerConfig indexersvc.TransferIndexerConfig
@@ -79,7 +78,7 @@ func NewRegistry(cfg Config) *Registry {
 		Repos: cfg.Repos,
 		Auth: &authsvc.AuthService{
 			Custodians: cfg.Repos.Custodian,
-			Nonces:     cfg.NonceStore,
+			SiweNonces: cfg.Repos.SiweNonce,
 			JwtConfig:  cfg.JwtConfig,
 		},
 		Custodian: &custodiansvc.CustodianService{
