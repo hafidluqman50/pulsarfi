@@ -19,6 +19,7 @@ type Registry struct {
 	AgentSubTask       *AgentSubTaskRepository
 	AgentTrade         *AgentTradeRepository
 	AgentCheckpoint    *AgentCheckpointRepository
+	SiweNonce          *SiweNonceRepository
 }
 
 func NewRegistry(db *gorm.DB) *Registry {
@@ -39,5 +40,6 @@ func NewRegistry(db *gorm.DB) *Registry {
 		AgentSubTask:       &AgentSubTaskRepository{DB: db},
 		AgentTrade:         &AgentTradeRepository{DB: db},
 		AgentCheckpoint:    &AgentCheckpointRepository{DB: db},
+		SiweNonce:          &SiweNonceRepository{DB: db},
 	}
 }
