@@ -20,12 +20,17 @@ import {
   useRejectMint,
   useRejectRedeem,
 } from '@/http/custodian/contractHooks';
-import { Icon } from '@/components/ui/Icon';
 import { PStockMark } from '@/components/ui/PStockMark';
 import { AttestorsModal } from './AttestorsModal';
 import { requestKey, formatRawToken, formatRawIDR, relativeAge, shortHash } from './utils';
 
 const THRESHOLD = 3;
+
+const QUEUE_GRID = 'grid grid-cols-[32px_1fr_1fr_1fr_1fr_1fr_1fr_minmax(max-content,2fr)] gap-[12px]';
+const ACTION_BASE = 'cursor-pointer appearance-none whitespace-nowrap text-[12px] font-[600] disabled:cursor-not-allowed';
+const OUTLINE_BUTTON = `${ACTION_BASE} border border-[var(--ink)] bg-[var(--putih)] px-[12px] py-[6px] text-[var(--ink)]`;
+const APPROVE_BUTTON = `${ACTION_BASE} border-0 bg-[var(--ink)] px-[14px] py-[7px] text-[var(--putih)] shadow-[0_3px_0_-1px_#fff,0_4px_0_-1px_#16110e]`;
+const EXECUTE_MERAH = `${ACTION_BASE} border-0 bg-[var(--merah)] px-[14px] py-[7px] text-[var(--putih)] shadow-[0_3px_0_-1px_#fff,0_4px_0_-1px_#9a0c24]`;
 
 interface RequestQueueProps {
   requests: CustodianRequest[];
@@ -35,7 +40,7 @@ interface RequestQueueProps {
 
 function EmptyRow({ text }: { text: string }): React.ReactNode {
   return (
-    <div className="hairline py-[18px] text-[13px] text-[var(--body)]">
+    <div className="border-b border-[var(--hairline)] py-[18px] text-[13px] text-[var(--body)]">
       {text}
     </div>
   );
@@ -157,113 +162,115 @@ export function RequestQueue({ requests, isLoading, currentAddress }: RequestQue
   return (
     <>
       {activeRequest && <AttestorsModal request={activeRequest} onClose={() => setActiveRequest(null)} />}
-      <div>
-        <div className="hairline table-head-desktop grid grid-cols-[32px_1fr_1fr_1fr_1fr_1fr_1fr_1.6fr] gap-[12px] py-[12px]">
-          {["", "ID", "Type", "Asset", "Quantity", "IDR notional", "Waited", ""].map((heading, columnIndex) => (
-            <div key={columnIndex} className={`eyebrow !text-[var(--body)] ${columnIndex >= 4 && columnIndex <= 6 ? "text-right" : "text-left"}`}>{heading}</div>
-          ))}
+      <div className="paper-stack mt-[16px] overflow-x-auto px-[clamp(12px,2vw,20px)]">
+        <div className="min-w-[980px]">
+          <div className={`${QUEUE_GRID} border-b border-[var(--ink)] py-[12px] text-[10px] font-[600] uppercase leading-[normal] tracking-[0.14em] text-[var(--body)]`}>
+            {["", "ID", "Type", "Asset", "Quantity", "IDR notional", "Waited", ""].map((heading, columnIndex) => (
+              <span key={columnIndex} className={columnIndex >= 4 && columnIndex <= 6 ? "text-right" : "text-left"}>{heading}</span>
+            ))}
+          </div>
+          {isLoading && <EmptyRow text="Loading custodian requests…" />}
+          {!isLoading && requests.length === 0 && <EmptyRow text="No pending mint or redeem requests" />}
+          {requests.map(request => {
+            const status      = completedRequests[requestKey(request)];
+            const isMint      = request.kind === "mint";
+            const quantity    = formatRawToken(request.token_amount);
+            const idrNotional = request.idrx_amount ? formatRawIDR(request.idrx_amount) : "—";
+
+            // Mint-specific
+            const isRequester = isMint &&
+              !!currentAddress &&
+              !!request.requester_address &&
+              request.requester_address.toLowerCase() === currentAddress.toLowerCase();
+            const canExecute  = request.approval_count >= THRESHOLD;
+            const canCancel   = request.reject_count   >= THRESHOLD;
+
+            // Redeem-specific
+            const hasAttested = !isMint && !!currentAddress &&
+              (request.attestors ?? []).some(a => a.wallet_address.toLowerCase() === currentAddress.toLowerCase());
+            const isApproveInitiator = !isMint && !!currentAddress && !!request.approve_initiator_address &&
+              request.approve_initiator_address.toLowerCase() === currentAddress.toLowerCase();
+            const isRejectInitiator = !isMint && !!currentAddress && !!request.reject_initiator_address &&
+              request.reject_initiator_address.toLowerCase() === currentAddress.toLowerCase();
+            const canExecuteRedeem = request.approval_count >= THRESHOLD;
+            const canExecuteRejectRedeem = request.reject_count >= THRESHOLD;
+
+            return (
+              <div key={requestKey(request)} className={`${QUEUE_GRID} items-center border-b border-[var(--hairline)] py-[14px] transition-opacity duration-300 ${status ? "opacity-[0.55]" : "opacity-100"}`}>
+                <span className={`grid h-[32px] w-[32px] place-items-center text-[var(--putih)] ${isMint ? "bg-[var(--merah)] shadow-[2px_2px_0_#e8b4bd]" : "bg-[var(--ink)] shadow-[2px_2px_0_#bcb2a3]"}`}>
+                  {isMint ? "↑" : "↓"}
+                </span>
+                <span className="mono text-[13px] leading-[normal]">REQ-{request.on_chain_id}</span>
+                <span className={`text-[11px] font-[700] uppercase leading-[normal] tracking-[0.06em] ${isMint ? "text-[var(--merah)]" : "text-[var(--ink)]"}`}>{request.kind} · {request.source}</span>
+                <span className="flex items-center gap-[8px]"><PStockMark ticker={request.ticker} size={22} /><span className="text-[13px] font-[600]">{request.ticker}</span></span>
+                <span className="mono text-right text-[13px] leading-[normal]">{quantity}</span>
+                <span className="mono text-right text-[13px] leading-[normal]">{idrNotional}</span>
+                <span className="mono text-right text-[12px] leading-[normal] text-[var(--body)]">{relativeAge(request.created_at)}</span>
+                <span className="flex items-center justify-end gap-[8px]">
+                  {(request.attestors?.length ?? 0) > 0 && (
+                    <button
+                      onClick={() => setActiveRequest(request)}
+                      className="inline-flex cursor-pointer items-center gap-[5px] whitespace-nowrap border border-[var(--hairline-strong)] bg-[var(--putih)] px-[10px] py-[5px] text-[11px] font-[600] text-[var(--body)] [font-family:var(--font-inter,_Inter,_sans-serif)] hover:border-[var(--ink)] hover:text-[var(--ink)]"
+                    >
+                      <span className="h-[6px] w-[6px] rounded-full bg-[var(--merah)]" />
+                      {request.attestors!.length}/5
+                    </button>
+                  )}
+
+                  {/* ── Mint actions ── */}
+                  {!status && isMint && isRequester && canExecute && (
+                    <button className={EXECUTE_MERAH} onClick={() => handleExecuteMint(request)}>Execute Mint</button>
+                  )}
+                  {!status && isMint && isRequester && !canExecute && canCancel && (
+                    <button className={OUTLINE_BUTTON} onClick={() => handleExecuteRejectMint(request)}>Cancel Mint</button>
+                  )}
+                  {!status && isMint && isRequester && !canExecute && !canCancel && (
+                    <div className="flex items-center gap-[8px]">
+                      <span className="mono whitespace-nowrap text-[11px] text-[var(--body)]">{request.approval_count}/{THRESHOLD} approve · {request.reject_count}/{THRESHOLD} reject</span>
+                      <button className={`${OUTLINE_BUTTON} !border-[var(--hairline)] opacity-40`} disabled>Cancel Mint</button>
+                      <button className={`${EXECUTE_MERAH} opacity-40`} disabled>Execute Mint</button>
+                    </div>
+                  )}
+                  {!status && isMint && !isRequester && (
+                    <>
+                      <button className={OUTLINE_BUTTON} onClick={() => handleRejectMint(request)}>Reject</button>
+                      <button className={APPROVE_BUTTON} onClick={() => handleApproveMint(request)}>Approve</button>
+                    </>
+                  )}
+
+                  {/* ── Redeem actions ── */}
+                  {!status && !isMint && !hasAttested && (
+                    <>
+                      <button className={OUTLINE_BUTTON} onClick={() => handleRejectRedeem(request)}>Reject</button>
+                      <button className={APPROVE_BUTTON} onClick={() => handleApproveRedeem(request)}>Approve</button>
+                    </>
+                  )}
+                  {!status && !isMint && hasAttested && isApproveInitiator && canExecuteRedeem && (
+                    <button className={APPROVE_BUTTON} onClick={() => handleExecuteRedeem(request)}>Execute Redeem</button>
+                  )}
+                  {!status && !isMint && hasAttested && isRejectInitiator && canExecuteRejectRedeem && (
+                    <button className={OUTLINE_BUTTON} onClick={() => handleExecuteRejectRedeem(request)}>Cancel Redeem</button>
+                  )}
+                  {!status && !isMint && hasAttested && !(isApproveInitiator && canExecuteRedeem) && !(isRejectInitiator && canExecuteRejectRedeem) && (
+                    <div className="flex items-center gap-[8px]">
+                      <span className="mono whitespace-nowrap text-[11px] text-[var(--body)]">{request.approval_count}/{THRESHOLD} approve · {request.reject_count}/{THRESHOLD} reject</span>
+                      <button className={`${OUTLINE_BUTTON} !border-[var(--hairline)] opacity-40`} disabled>Voted</button>
+                    </div>
+                  )}
+
+                  {status && (
+                    <span className={`-rotate-3 border px-[8px] py-[4px] text-[10px] font-[700] uppercase leading-[normal] tracking-[0.14em] ${status === "rejected" ? "border-[var(--negative)] text-[var(--negative)]" : "border-[var(--positive)] text-[var(--positive)]"}`}>
+                      {status === "executed"
+                        ? isMint ? "Executed · tokens minted" : "Executed · tokens burned"
+                        : status === "approved" ? "Approved"
+                        : "Rejected"}
+                    </span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
         </div>
-        {isLoading && <EmptyRow text="Loading custodian requests…" />}
-        {!isLoading && requests.length === 0 && <EmptyRow text="No pending mint or redeem requests" />}
-        {requests.map(request => {
-          const status      = completedRequests[requestKey(request)];
-          const isMint      = request.kind === "mint";
-          const quantity    = formatRawToken(request.token_amount);
-          const idrNotional = request.idrx_amount ? formatRawIDR(request.idrx_amount) : "—";
-
-          // Mint-specific
-          const isRequester = isMint &&
-            !!currentAddress &&
-            !!request.requester_address &&
-            request.requester_address.toLowerCase() === currentAddress.toLowerCase();
-          const canExecute  = request.approval_count >= THRESHOLD;
-          const canCancel   = request.reject_count   >= THRESHOLD;
-
-          // Redeem-specific
-          const hasAttested = !isMint && !!currentAddress &&
-            (request.attestors ?? []).some(a => a.wallet_address.toLowerCase() === currentAddress.toLowerCase());
-          const isApproveInitiator = !isMint && !!currentAddress && !!request.approve_initiator_address &&
-            request.approve_initiator_address.toLowerCase() === currentAddress.toLowerCase();
-          const isRejectInitiator = !isMint && !!currentAddress && !!request.reject_initiator_address &&
-            request.reject_initiator_address.toLowerCase() === currentAddress.toLowerCase();
-          const canExecuteRedeem = request.approval_count >= THRESHOLD;
-          const canExecuteRejectRedeem = request.reject_count >= THRESHOLD;
-
-          return (
-            <div key={requestKey(request)} className={`hairline table-row-stack grid grid-cols-[32px_1fr_1fr_1fr_1fr_1fr_1fr_1.6fr] items-center gap-[12px] py-[16px] ${status ? "opacity-[0.55]" : "opacity-100"}`}>
-              <div className={`flex h-[32px] w-[32px] shrink-0 items-center justify-center border border-[var(--ink)] text-[var(--putih)] ${isMint ? "bg-[var(--merah)]" : "bg-[var(--ink)]"}`}>
-                <Icon name={isMint ? "arrow-up" : "arrow-down"} size={14} />
-              </div>
-              <div className="row-cell"><span className="row-cell-label">ID</span><div className="row-cell-value"><span className="mono text-[13px]">REQ-{request.on_chain_id}</span></div></div>
-              <div className="row-cell"><span className="row-cell-label">Type</span><div className="row-cell-value"><span className={`text-[11px] font-bold uppercase tracking-[0.06em] ${isMint ? "text-[var(--merah)]" : "text-[var(--ink)]"}`}>{request.kind} · {request.source}</span></div></div>
-              <div className="row-cell"><span className="row-cell-label">Asset</span><div className="row-cell-value"><div className="flex items-center gap-[8px]"><PStockMark ticker={request.ticker} size={22} /><span className="text-[13px] font-semibold">{request.ticker}</span></div></div></div>
-              <div className="row-cell text-right"><span className="row-cell-label">Quantity</span><div className="row-cell-value"><span className="mono text-[13px]">{quantity}</span></div></div>
-              <div className="row-cell text-right"><span className="row-cell-label">IDR notional</span><div className="row-cell-value"><span className="mono text-[13px]">{idrNotional}</span></div></div>
-              <div className="row-cell text-right"><span className="row-cell-label">Waited</span><div className="row-cell-value"><span className="mono text-[12px] text-[var(--body)]">{relativeAge(request.created_at)}</span></div></div>
-              <div className="col-actions pos-actions flex items-center justify-end gap-[8px]">
-                {(request.attestors?.length ?? 0) > 0 && (
-                  <button
-                    onClick={() => setActiveRequest(request)}
-                    className="inline-flex cursor-pointer items-center gap-[5px] border border-[var(--hairline-strong)] bg-transparent px-[10px] py-[4px] text-[11px] font-semibold tracking-[0.06em] text-[var(--body)] [font-family:var(--font-inter,_Inter,_sans-serif)]"
-                  >
-                    <span className="h-[6px] w-[6px] rounded-[999px] bg-[var(--merah)]" />
-                    {request.attestors!.length}/5
-                  </button>
-                )}
-
-                {/* ── Mint actions ── */}
-                {!status && isMint && isRequester && canExecute && (
-                  <button className="btn btn-merah !px-[14px] !py-[6px]" onClick={() => handleExecuteMint(request)}>Execute Mint</button>
-                )}
-                {!status && isMint && isRequester && !canExecute && canCancel && (
-                  <button className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px]" onClick={() => handleExecuteRejectMint(request)}>Cancel Mint</button>
-                )}
-                {!status && isMint && isRequester && !canExecute && !canCancel && (
-                  <div className="flex items-center gap-[8px]">
-                    <span className="mono text-[11px] text-[var(--body)]">{request.approval_count}/{THRESHOLD} approve · {request.reject_count}/{THRESHOLD} reject</span>
-                    <button className="btn btn-ghost !cursor-not-allowed !border !border-[var(--hairline)] !px-[12px] !py-[6px] !opacity-40" disabled>Cancel Mint</button>
-                    <button className="btn btn-merah !cursor-not-allowed !px-[14px] !py-[6px] !opacity-40" disabled>Execute Mint</button>
-                  </div>
-                )}
-                {!status && isMint && !isRequester && (
-                  <>
-                    <button className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px]" onClick={() => handleRejectMint(request)}>Reject</button>
-                    <button className="btn btn-primary !px-[14px] !py-[6px]" onClick={() => handleApproveMint(request)}>Approve</button>
-                  </>
-                )}
-
-                {/* ── Redeem actions ── */}
-                {!status && !isMint && !hasAttested && (
-                  <>
-                    <button className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px]" onClick={() => handleRejectRedeem(request)}>Reject</button>
-                    <button className="btn btn-primary !px-[14px] !py-[6px]" onClick={() => handleApproveRedeem(request)}>Approve</button>
-                  </>
-                )}
-                {!status && !isMint && hasAttested && isApproveInitiator && canExecuteRedeem && (
-                  <button className="btn btn-primary !px-[14px] !py-[6px]" onClick={() => handleExecuteRedeem(request)}>Execute Redeem</button>
-                )}
-                {!status && !isMint && hasAttested && isRejectInitiator && canExecuteRejectRedeem && (
-                  <button className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px]" onClick={() => handleExecuteRejectRedeem(request)}>Cancel Redeem</button>
-                )}
-                {!status && !isMint && hasAttested && !(isApproveInitiator && canExecuteRedeem) && !(isRejectInitiator && canExecuteRejectRedeem) && (
-                  <div className="flex items-center gap-[8px]">
-                    <span className="mono text-[11px] text-[var(--body)]">{request.approval_count}/{THRESHOLD} approve · {request.reject_count}/{THRESHOLD} reject</span>
-                    <button className="btn btn-ghost !cursor-not-allowed !border !border-[var(--hairline)] !px-[12px] !py-[6px] !opacity-40" disabled>Voted</button>
-                  </div>
-                )}
-
-                {status && (
-                  <span className={`text-[11px] font-bold uppercase tracking-[0.06em] ${status === "executed" || status === "approved" ? "text-[var(--positive)]" : "text-[var(--body)]"}`}>
-                    {status === "executed"
-                      ? isMint ? "Executed · tokens minted" : "Executed · tokens burned"
-                      : status === "approved" ? "Approved"
-                      : "Rejected"}
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })}
       </div>
     </>
   );

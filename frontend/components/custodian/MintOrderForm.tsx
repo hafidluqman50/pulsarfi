@@ -13,7 +13,7 @@ const LOT_SIZE = 100;
 function Field({ label, children }: { label: string; children: React.ReactNode }): React.ReactNode {
   return (
     <div>
-      <div className="eyebrow mb-[8px] !text-[var(--body)]">{label}</div>
+      <div className="mb-[8px] text-[10px] font-[600] uppercase leading-[normal] tracking-[0.14em] text-[var(--body)]">{label}</div>
       {children}
     </div>
   );
@@ -25,7 +25,7 @@ function Cursor(): React.ReactNode {
     const intervalId = setInterval(() => setIsVisible(prev => !prev), 500);
     return () => clearInterval(intervalId);
   }, []);
-  return <span className={`inline-block h-[13px] w-[7px] align-[-2px] ${isVisible ? "bg-[#fff]" : "bg-transparent"}`} />;
+  return <span className={`mt-[6px] inline-block h-[13px] w-[7px] ${isVisible ? "bg-[var(--ink)]" : "bg-transparent"}`} />;
 }
 
 export function MintOrderForm(): React.ReactNode {
@@ -58,19 +58,19 @@ export function MintOrderForm(): React.ReactNode {
   }
 
   return (
-    <div className="grid-2col-form mt-[32px]">
-      {/* FORM */}
-      <div className="card p-[0]">
-        <div className="hairline px-[20px] py-[16px]">
-          <div className="eyebrow !text-[var(--body)]">01 · New tokenization order</div>
+    <div className="mt-[44px] grid grid-cols-[repeat(auto-fit,minmax(min(100%,400px),1fr))] items-stretch gap-[28px]">
+      <div className="paper-stack flex flex-col">
+        <div className="flex flex-wrap items-baseline justify-between gap-[12px] border-b border-[var(--hairline)] px-[20px] py-[16px] text-[10px] font-[600] uppercase leading-[normal] tracking-[0.14em] text-[var(--body)]">
+          <span>01 · New tokenization order</span>
+          <span>Mint / burn on fill</span>
         </div>
         <div className="flex flex-col gap-[18px] p-[20px]">
           <Field label="IDX Ticker">
             {isStocksLoading ? (
-              <div className="skeleton h-[48px] w-full" />
+              <div className="h-[46px] w-full bg-[var(--canvas-soft)]" />
             ) : (
               <select
-                className="input mono"
+                className="input mono !bg-[var(--canvas)] !p-[12px] !text-[14px] !font-[500]"
                 value={activeIpoTicker}
                 onChange={event => setSelectedIpoTicker(event.target.value)}
                 disabled={stockOptions.length === 0}
@@ -84,16 +84,20 @@ export function MintOrderForm(): React.ReactNode {
             )}
           </Field>
           <Field label="Order quantity (lots to buy on IDX)">
-            <input className="input mono" value={quantity} onChange={event => setQuantity(event.target.value.replace(/[^0-9]/g, ""))} />
+            <input
+              className="input mono !bg-[var(--canvas)] !p-[12px] !text-[14px] !font-[500]"
+              value={quantity}
+              onChange={event => setQuantity(event.target.value.replace(/[^0-9]/g, ""))}
+            />
           </Field>
         </div>
 
-        <div className="hairline bg-[var(--canvas-soft)] px-[20px] py-[16px]">
-          <div className="eyebrow mb-[10px] !text-[var(--body)]">02 · Order preview</div>
+        <div className="border-y border-[var(--hairline)] bg-[var(--canvas-soft)] px-[20px] py-[16px]">
+          <div className="mb-[10px] text-[10px] font-[600] uppercase leading-[normal] tracking-[0.14em] text-[var(--body)]">02 · Order preview</div>
           {isPriceLoading || !idrPrice ? (
             <div className="flex flex-col gap-[8px]">
-              <div className="skeleton h-[22px] w-full" />
-              <div className="skeleton h-[22px] w-[80%]" />
+              <div className="h-[20px] w-full bg-[var(--hairline)]" />
+              <div className="h-[20px] w-[80%] bg-[var(--hairline)]" />
             </div>
           ) : (
             <div className="flex flex-col gap-[8px]">
@@ -107,11 +111,11 @@ export function MintOrderForm(): React.ReactNode {
           )}
         </div>
 
-        <div className="p-[20px]">
+        <div className="mt-auto p-[20px]">
           <button
             onClick={handleRunPipeline}
             disabled={running || isMintPending || !quantity || !selectedStock || !idrPrice}
-            className="btn btn-merah !inline-flex !w-full !items-center !justify-center !gap-[10px] !p-[16px] !text-[15px]"
+            className={`btn btn-merah !inline-flex !w-full !items-center !justify-center !gap-[10px] !p-[16px] !text-[15px] ${running || isMintPending ? "is-busy" : ""}`}
           >
             {running ? <Icon name="loader" size={14} /> : <Icon name="play" size={14} />}
             {isMintPending ? "Sign in wallet…" : running ? "Executing pipeline…" : "Execute mint pipeline"}
@@ -122,33 +126,36 @@ export function MintOrderForm(): React.ReactNode {
         </div>
       </div>
 
-      {/* CONSOLE */}
-      <div className="card-ink flex min-h-[540px] flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[rgba(255,255,255,0.16)] px-[18px] py-[12px]">
-          <div className="flex items-center gap-[12px]">
-            <Icon name="terminal" size={16} />
-            <span className="mono text-[12px] uppercase tracking-[0.08em]">horizon-bridge // ops.go</span>
-          </div>
-          <div className="mono text-[11px] text-[rgba(255,255,255,0.55)]">
-            <span className="mr-[6px] inline-block h-[6px] w-[6px] rounded-[999px] bg-[#52ce7a] align-[2px]" />
-            streaming
-          </div>
-        </div>
-        <div className="mono max-h-[540px] flex-1 overflow-y-auto px-[18px] py-[16px] text-[12.5px] leading-[1.7] text-[rgba(255,255,255,0.85)]">
-          {log.map((logLine, logIndex) => (
-            <div key={logIndex} className="flex gap-[14px]">
-              <span className="shrink-0 text-[rgba(255,255,255,0.4)]">{logLine.timestamp}</span>
-              <span className={`w-[32px] shrink-0 ${logLine.level === "OK" ? "text-[#52ce7a]" : logLine.level === "ERR" ? "text-[#ff6a6a]" : "text-[rgba(255,255,255,0.55)]"}`}>{logLine.level}</span>
-              <span className="flex-1 whitespace-pre-wrap break-words">{logLine.text}</span>
+      <div className="relative min-h-[480px]">
+        <div className="absolute bottom-[-10px] left-[10px] right-[-6px] top-[14px] rotate-[0.8deg] border border-[var(--hairline)] bg-[#f3eedf]" />
+        <div className="relative flex h-full min-h-[480px] border border-[var(--hairline)] bg-[#fdfbf4] shadow-[0_22px_30px_-16px_rgba(22,17,14,0.25)]">
+          <div className="tractor-margin w-[22px] flex-none border-r border-dashed border-[#d9d1c4]" />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="flex items-center justify-between gap-[10px] border-b border-[var(--ink)] px-[16px] py-[12px]">
+              <span className="mono text-[12px] font-[600] uppercase leading-[normal] tracking-[0.08em]">horizon-bridge // ops.go</span>
+              <span className="mono flex items-center gap-[6px] text-[11px] leading-[normal] text-[var(--positive)]">
+                <span className="h-[6px] w-[6px] rounded-full bg-[var(--positive)]" />
+                streaming
+              </span>
             </div>
-          ))}
-          {running && (
-            <div className="flex gap-[14px]">
-              <span className="text-[rgba(255,255,255,0.4)]">{currentTimestamp()}</span>
-              <span className="w-[32px] text-[rgba(255,255,255,0.55)]">...</span>
-              <span><Cursor /></span>
+            <div className="tractor-lines mono max-h-[520px] flex-1 overflow-y-auto px-[16px] text-[12.5px] leading-[26px] text-[var(--ink-soft)]">
+              {log.map((logLine, logIndex) => (
+                <div key={logIndex} className="flex gap-[14px]">
+                  <span className="shrink-0 text-[#9a9286]">{logLine.timestamp}</span>
+                  <span className={`w-[34px] shrink-0 ${logLine.level === "OK" ? "font-[600] text-[var(--positive)]" : logLine.level === "ERR" ? "font-[600] text-[var(--merah)]" : "text-[var(--body)]"}`}>{logLine.level}</span>
+                  <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{logLine.text}</span>
+                </div>
+              ))}
+              {running && (
+                <div className="flex gap-[14px]">
+                  <span className="text-[#9a9286]">{currentTimestamp()}</span>
+                  <span className="w-[34px] text-[var(--body)]">...</span>
+                  <span><Cursor /></span>
+                </div>
+              )}
             </div>
-          )}
+          </div>
+          <div className="tractor-margin w-[22px] flex-none border-l border-dashed border-[#d9d1c4]" />
         </div>
       </div>
     </div>

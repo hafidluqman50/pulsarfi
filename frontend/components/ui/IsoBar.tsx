@@ -21,16 +21,17 @@ interface IsoBarProps {
   depth: number;
   height: number;
   palette: IsoPalette;
+  topContent?: React.ReactNode;
 }
 
-export function IsoBar({ x, y, width, depth, height, palette }: IsoBarProps) {
+export function IsoBar({ x, y, width, depth, height, palette, topContent }: IsoBarProps) {
   return (
     <div style={{ position: 'absolute', left: x, top: y, width, height: depth, transformStyle: 'preserve-3d' }}>
       <div style={{ position: 'absolute', left: 0, top: 0, width, height, background: palette.front, transformOrigin: '0 0', transform: 'rotateX(90deg)' }} />
       <div style={{ position: 'absolute', left: 0, top: depth, width, height, background: palette.front, transformOrigin: '0 0', transform: 'rotateX(90deg)' }} />
       <div style={{ position: 'absolute', left: 0, top: 0, width: height, height: depth, background: palette.side, transformOrigin: '0 0', transform: 'rotateY(-90deg)' }} />
       <div style={{ position: 'absolute', left: width, top: 0, width: height, height: depth, background: palette.side, transformOrigin: '0 0', transform: 'rotateY(-90deg)' }} />
-      <div style={{ position: 'absolute', inset: 0, background: palette.top, transform: `translateZ(${height}px)` }} />
+      <div style={{ position: 'absolute', inset: 0, background: palette.top, transform: `translateZ(${height}px)`, display: 'grid', placeItems: 'center' }}>{topContent}</div>
     </div>
   );
 }
