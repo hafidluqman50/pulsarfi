@@ -11,11 +11,6 @@ type TaskDetailProps = {
 // plan card first, then either the pre-arm ArmPanel or the post-arm
 // TradeLedger (which itself covers armed/paused/disarmed banners).
 export function TaskDetail({ task }: TaskDetailProps) {
-  // armed_at, not on_chain_task_id: the latter is set the instant any Task
-  // is recognized, so inferring "armed" from it made this true immediately
-  // and ArmPanel could never render at all.
-  const isArmed = task.armed_at != null;
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '16px 14px' }}>
       <div style={{ background: 'var(--canvas)', border: '1px solid var(--hairline)', padding: '16px 14px' }}>

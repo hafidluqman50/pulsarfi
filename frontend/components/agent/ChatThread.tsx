@@ -293,7 +293,7 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
             {message.content && (
               <div className="rise" style={{ maxWidth: '92%' }}>
                 <div style={{ font: '600 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', marginBottom: 5 }}>Quasar</div>
-                <div style={{ fontFamily: 'var(--font-display)', color: 'var(--ink-soft)' }}>
+                <div style={{ fontFamily: 'var(--font-display)', color: 'var(--ink-soft)', border: '1px solid var(--hairline)', borderLeft: '3px solid var(--merah)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
                   <MessageMarkdown content={message.content} fontSize={15} />
                 </div>
               </div>
@@ -358,7 +358,7 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
       {isStreaming && streamingReplyText && (
         <div className="rise" style={{ maxWidth: '92%' }}>
           <div style={{ font: '600 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', marginBottom: 5 }}>Quasar</div>
-          <div style={{ fontFamily: 'var(--font-display)', color: 'var(--ink-soft)' }}>
+          <div style={{ fontFamily: 'var(--font-display)', color: 'var(--ink-soft)', border: '1px solid var(--hairline)', borderLeft: '3px solid var(--merah)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
             <MessageMarkdown content={streamingReplyText} fontSize={15} />
           </div>
         </div>

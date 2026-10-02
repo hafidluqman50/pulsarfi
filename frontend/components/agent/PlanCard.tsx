@@ -128,7 +128,7 @@ export function PlanCard({ taskId, chatId }: PlanCardProps) {
         const isOpen = openRow === subTask.id;
         const needsInput = subTask.status === 'needs_input';
         const color = statusColor(subTask.status);
-        const statusLabel = contract.status_labels[subTask.status] || subTask.status.toUpperCase();
+        const statusLabel = contract.status_labels[subTask.status] || subTask.status.replace(/_/g, ' ').toUpperCase();
         return (
           <div key={subTask.id} style={{ borderBottom: '1px solid var(--hairline)', background: isOpen ? 'var(--canvas)' : 'transparent' }}>
             <button

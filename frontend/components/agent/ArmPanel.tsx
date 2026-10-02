@@ -188,7 +188,7 @@ export function ArmPanel({ taskId, isActionable, tokenAddress, tokenSymbol, side
         setStep('approving');
         setSubProgress(contract.button_labels.approving);
 
-        let feeOverrides: { maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint } = {};
+        const feeOverrides: { maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint } = {};
         if (publicClient) {
           try {
             const fees = await publicClient.estimateFeesPerGas();

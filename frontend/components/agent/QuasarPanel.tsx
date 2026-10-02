@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { useSiweAuth } from '@/contexts/SiweAuthContext';
+import { useViewportWidth } from '@/lib/useViewportWidth';
 import { useAgentActivity, useAgentChats, useAgentTasks } from '@/http/agent/hooks';
 import { RosterCard } from './RosterCard';
 import { MenuPanel, type QuasarDestination } from './MenuPanel';
@@ -10,6 +11,7 @@ import { ChatThread } from './ChatThread';
 import { TaskDetail } from './TaskDetail';
 import { agentDisplayName, statusColor, stepDisplayName } from './SubTaskReasoning';
 
+const SHEET_BREAKPOINT = 700;
 const ACTIVITY_KINDS = ['all', 'supervisor', 'analyzer', 'executor'] as const;
 type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
@@ -32,15 +34,8 @@ function QuasarPanelContent() {
   const [pendingDraft, setPendingDraft] = useState('');
   const [initialMessageForActiveChat, setInitialMessageForActiveChat] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
-  const [isSheet, setIsSheet] = useState(false);
   const [activityKind, setActivityKind] = useState<ActivityKind>('all');
-
-  useEffect(() => {
-    const check = () => setIsSheet(window.innerWidth < 700);
-    check();
-    window.addEventListener('resize', check);
-    return () => window.removeEventListener('resize', check);
-  }, []);
+  const isSheet = useViewportWidth() < SHEET_BREAKPOINT;
 
   const { data: chats = [] } = useAgentChats();
   const { data: tasks = [] } = useAgentTasks();
@@ -256,7 +251,7 @@ function QuasarPanelContent() {
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ticker)' }}>T-{row.task_id}</span>
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ticker)' }}>{agentDisplayName(row.agent)}</span>
                       <span style={{ marginLeft: 'auto', font: '600 9px/1.3 var(--font-sans)', letterSpacing: '.1em', textTransform: 'uppercase', color, border: `1px solid ${color}`, padding: '3px 4px', whiteSpace: 'nowrap' }}>
-                        {row.status.toUpperCase()}
+                        {row.status.replace(/_/g, ' ').toUpperCase()}
                       </span>
                     </div>
                     <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{stepDisplayName(row.label, row.step_name)}</div>
@@ -272,9 +267,9 @@ function QuasarPanelContent() {
         {!activeChatId && (
           <>
             <div className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div className="rise">
+              <div className="rise" style={{ maxWidth: '92%' }}>
                 <div style={{ font: '600 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', marginBottom: 5 }}>Quasar</div>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, lineHeight: 1.5, color: 'var(--ink-soft)' }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, lineHeight: 1.5, color: 'var(--ink-soft)', border: '1px solid var(--hairline)', borderLeft: '3px solid var(--merah)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
                   I am Quasar. Write the instruction in your own words — a fast trade or a long mandate, I read the horizon out of what you wrote. Standing
                   instructions I turn into a rule with named sources, a number and hard caps, and show you every step before anything is armed.
                 </div>
