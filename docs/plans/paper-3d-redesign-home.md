@@ -2,13 +2,14 @@
 
 | | |
 |---|---|
-| **Version** | 1.3 |
+| **Version** | 1.4 |
 | **Status** | Approved |
 | **Date Created** | 2026-10-02 |
 | **Last Updated** | 2026-10-02 |
 
 | Version | Date | Change |
 |---|---|---|
+| 1.4 | 2026-10-02 | Bug fix. Section 3.1 note and criterion 6 were wrong: with `animation-fill-mode: both` the animated wrapper keeps `transform: matrix(1,0,0,1,0,0)` after the animation ends (not `none`), which still makes it the anchor for `position: fixed` children, so every dialog inside the page scrolled with the page instead of staying fixed (measured: fixed element at top -1387 after scrolling 1400). `.page-turn` and `.rise` now use fill-mode `backwards`, so after the animation nothing is applied and `transform` is `none`. |
 | 1.3 | 2026-10-02 | Found by comparing screenshots with the handoff. Section 3.5: new "Typography" table (Fraunces optical-size axis, line-height rule). Section 4: `app/layout.tsx` added as `[MODIFY]` (load Fraunces with the `opsz` axis). Section 3.3: swap card title uses line-height normal. |
 | 1.2 | 2026-10-02 | Sections 3.6, 4 and 8: Home movers must match the handoff sparkline (88×28, stroke 1.4), so `Sparkline.tsx` gets an optional `strokeWidth` prop (default unchanged at 1.25) and moves from "not touched" to `[MODIFY]`. Open question 3 removed. |
 | 1.1 | 2026-10-02 | Status set to Approved. Added section 3.5 (exact 1:1 spec read from both handoff HTML files) and section 3.6 (intentional deviations). Section 3.1: swap card needs a 3-sheet stack shadow, added `.paper-stack-3`. Section 3.3: stats grid, slippage panel background and disclaimer margin corrected to the handoff values. Section 4: added `Sparkline.tsx` as untouched. Section 8: question 3 added. |
@@ -64,7 +65,7 @@ Tokens and utilities added to `app/globals.css`. Existing variable names are kep
 | `.rise` | Becomes opacity 0, `translateY(10px) rotateX(-8deg)` to none in .28s, same easing |
 | `.page-turn` | New. Page enter animation, `translateY(18px) rotateX(3deg)` to none in about .3s |
 
-> **Note:** `.page-turn` uses the `perspective()` function inside the keyframes, not the `perspective` property on `<main>`. The property would make `<main>` the containing block for `position: fixed` children and displace them. The animation ends at `transform: none`, so nothing stays transformed afterwards.
+> **Note:** `.page-turn` uses the `perspective()` function inside the keyframes, not the `perspective` property on `<main>`, which would make `<main>` the containing block for `position: fixed` children. Both `.page-turn` and `.rise` use `animation-fill-mode: backwards` (not `both`). With `both` the element keeps a computed `transform: matrix(1,0,0,1,0,0)` after the animation ends, and any transform value other than `none` still turns the element into the anchor for `position: fixed` children, so dialogs scroll with the page. With `backwards` nothing is applied after the animation ends.
 
 Because these are global classes, other pages will pick up the lip, skeleton and `.rise` changes the moment this commit lands. That is intended; their own layouts are restyled in their own plans.
 
