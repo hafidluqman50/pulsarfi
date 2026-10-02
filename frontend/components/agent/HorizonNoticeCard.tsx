@@ -94,7 +94,7 @@ export function HorizonNoticeCard({ uiProps, taskId: directTaskId, chatId, onSen
   }
 
   return (
-    <div className="rise" style={{ border: '1px solid var(--merah)', background: 'var(--putih)' }}>
+    <div className="rise" style={{ border: '1px solid var(--merah)', background: 'var(--putih)', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e8b4bd, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
       {/* Header */}
       <div
         style={{
@@ -109,7 +109,7 @@ export function HorizonNoticeCard({ uiProps, taskId: directTaskId, chatId, onSen
         <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>
           {labels.badge || 'SWING HORIZON ALERT · H-1'}
         </span>
-        <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--merah)' }}>
+        <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#ff8a9a' }}>
           {ticker}
         </span>
       </div>
@@ -191,7 +191,7 @@ export function HorizonNoticeCard({ uiProps, taskId: directTaskId, chatId, onSen
                 appearance: 'none',
                 border: '1px solid var(--ink)',
                 cursor: isPending ? 'not-allowed' : 'pointer',
-                background: 'transparent',
+                background: 'var(--putih)',
                 color: 'var(--ink)',
                 font: '600 12.5px/1 var(--font-sans)',
                 padding: '10px 14px',

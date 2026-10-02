@@ -109,7 +109,10 @@ function deriveTitle(item: NewsEvidenceItem): string {
   return `${item.source} - Berita Terkait`;
 }
 
-function NewsBriefItem({ item }: { item: NewsEvidenceItem }) {
+const THUMB_ROTATIONS = [-2, 1.5, 2];
+
+function NewsBriefItem({ item, index }: { item: NewsEvidenceItem; index: number }) {
+  const thumbStyle = { transform: `rotate(${THUMB_ROTATIONS[index % THUMB_ROTATIONS.length]}deg)`, boxShadow: '2px 3px 0 var(--hairline)' };
   const publishedAt = formatPublishedAt(item.published_at);
   const title = deriveTitle(item);
   const excerpt = cleanExcerpt(item.excerpt);
@@ -125,7 +128,7 @@ function NewsBriefItem({ item }: { item: NewsEvidenceItem }) {
           src={imgSrc}
           alt=""
           onError={() => setImgSrc(null)}
-          style={{ width: 64, height: 64, objectFit: 'cover', flex: 'none', border: '1px solid var(--hairline)', background: 'var(--canvas-soft)', borderRadius: 2 }}
+          style={{ width: 64, height: 64, objectFit: 'cover', flex: 'none', border: '1px solid var(--hairline)', background: 'var(--canvas-soft)', ...thumbStyle }}
         />
       ) : (
         <div
@@ -135,7 +138,7 @@ function NewsBriefItem({ item }: { item: NewsEvidenceItem }) {
             flex: 'none',
             border: '1px solid var(--hairline)',
             background: 'var(--canvas-soft)',
-            borderRadius: 2,
+            ...thumbStyle,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -192,12 +195,12 @@ export function NewsBrief({ uiProps }: { uiProps: unknown }) {
   const items = Array.isArray(uiProps) ? (uiProps as NewsEvidenceItem[]) : [];
   if (items.length === 0) return null;
   return (
-    <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--merah)', background: 'var(--putih)', padding: '13px 15px' }}>
+    <div className="rise" style={{ border: '1px solid var(--hairline)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
       <div style={{ font: '700 9px/1.3 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--ticker)', marginBottom: 4 }}>
         Sumber · {items.length} berita
       </div>
       {items.map((item, i) => (
-        <NewsBriefItem key={item.url ?? i} item={item} />
+        <NewsBriefItem key={item.url ?? i} item={item} index={i} />
       ))}
     </div>
   );

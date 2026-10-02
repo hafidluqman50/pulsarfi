@@ -278,6 +278,9 @@ export function ArmPanel({ taskId, isActionable, tokenAddress, tokenSymbol, side
     step === 'executed' ||
     !address;
 
+  const progressPercent = step === 'arming' ? '33%' : step === 'approving' ? '66%' : step === 'executing' ? '92%' : null;
+  const isDone = isTaskExecuted || step === 'executed';
+
   const armLabel = (() => {
     if (isTaskExecuted || step === 'executed') {
       return contract.button_labels.executed;
@@ -321,7 +324,7 @@ export function ArmPanel({ taskId, isActionable, tokenAddress, tokenSymbol, side
   );
 
   return (
-    <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)' }}>
+    <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 11px 0 -4px #fbfaf7, 0 12px 0 -4px #e3ddd2, 0 20px 24px -14px rgba(22,17,14,.3)' }}>
       <div style={{ background: 'var(--ink)', color: 'var(--canvas)', padding: '11px 13px', display: 'flex', alignItems: 'baseline', gap: 9, flexWrap: 'wrap' }}>
         <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>
           {isArmed ? contract.arm_title_armed : contract.arm_title_ready}
@@ -565,9 +568,26 @@ export function ArmPanel({ taskId, isActionable, tokenAddress, tokenSymbol, side
         <button
           onClick={handleArm}
           disabled={disabled}
-          style={{ appearance: 'none', border: 0, cursor: disabled ? 'not-allowed' : 'pointer', width: '100%', background: disabled ? 'var(--hairline-strong)' : 'var(--merah)', color: 'var(--putih)', font: '600 13.5px/1 var(--font-sans)', padding: 14, textAlign: 'left', marginTop: 12 }}
+          style={{
+            position: 'relative',
+            overflow: 'hidden',
+            appearance: 'none',
+            border: isDone ? '1px solid var(--positive)' : disabled ? '1px solid var(--hairline-strong)' : 0,
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            width: '100%',
+            background: isDone ? 'var(--putih)' : disabled ? 'var(--hairline)' : 'var(--merah)',
+            color: isDone ? 'var(--positive)' : disabled ? 'var(--body)' : 'var(--putih)',
+            font: '600 13.5px/1.35 var(--font-sans)',
+            padding: 14,
+            textAlign: 'left',
+            marginTop: 12,
+            boxShadow: disabled ? 'none' : '0 4px 0 -1px #fff, 0 5px 0 -1px #9a0c24',
+          }}
         >
-          {armLabel}
+          {progressPercent && (
+            <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: progressPercent, background: 'var(--merah)', opacity: 0.14, transition: 'width .6s' }} />
+          )}
+          <span style={{ position: 'relative' }}>{armLabel}</span>
         </button>
         {step === 'error' && (
           <p style={{ marginTop: 8, fontSize: 12, color: 'var(--negative)', lineHeight: 1.45 }}>

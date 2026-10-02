@@ -106,7 +106,7 @@ export function PlanCard({ taskId, chatId }: PlanCardProps) {
   const canArm = Boolean(task?.is_actionable && task.status !== 'failed' && task.status !== 'cancelled');
 
   return (
-    <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)' }}>
+    <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 11px 0 -4px #fbfaf7, 0 12px 0 -4px #e3ddd2, 0 20px 24px -14px rgba(22,17,14,.3)' }}>
       <div style={{ background: 'var(--ink)', color: 'var(--canvas)', padding: '10px 13px', display: 'flex', alignItems: 'center', gap: 9 }}>
         <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>
           {contract.task_badge.replace('{id}', String(taskId))}
@@ -130,8 +130,9 @@ export function PlanCard({ taskId, chatId }: PlanCardProps) {
         const color = statusColor(subTask.status);
         const statusLabel = contract.status_labels[subTask.status] || subTask.status.toUpperCase();
         return (
-          <div key={subTask.id} style={{ borderBottom: '1px solid var(--hairline)' }}>
+          <div key={subTask.id} style={{ borderBottom: '1px solid var(--hairline)', background: isOpen ? 'var(--canvas)' : 'transparent' }}>
             <button
+              className="quasar-plan-row"
               onClick={() => setOpenRow(isOpen ? null : subTask.id)}
               style={{ width: '100%', appearance: 'none', border: 0, cursor: 'pointer', background: 'transparent', padding: '11px 13px', textAlign: 'left', display: 'block' }}
             >
@@ -144,7 +145,9 @@ export function PlanCard({ taskId, chatId }: PlanCardProps) {
                 </span>
                 <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, flex: 'none' }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ticker)' }}>{agentDisplayName(subTask.agent)}</span>
-                  <span style={{ font: '600 9px/1.3 var(--font-sans)', letterSpacing: '.1em', textTransform: 'uppercase', color, border: `1px solid ${color}`, padding: '3px 4px', whiteSpace: 'nowrap' }}>
+                  <span style={subTask.status === 'failed'
+                    ? { font: '600 9px/1.3 var(--font-sans)', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--putih)', background: 'var(--merah)', border: '1px solid var(--merah)', padding: '3px 4px', whiteSpace: 'nowrap' }
+                    : { font: '600 9px/1.3 var(--font-sans)', letterSpacing: '.1em', textTransform: 'uppercase', color, border: `1px solid ${color}`, padding: '3px 4px', whiteSpace: 'nowrap' }}>
                     {statusLabel}
                   </span>
                 </span>
@@ -152,7 +155,7 @@ export function PlanCard({ taskId, chatId }: PlanCardProps) {
             </button>
 
             {isOpen && !needsInput && (
-              <div style={{ margin: '0 13px 12px 35px', borderLeft: '1px solid var(--hairline)', paddingLeft: 12 }}>
+              <div style={{ margin: '10px 13px 12px 35px', background: 'var(--canvas-soft)', border: '1px solid var(--hairline)', padding: '10px 12px', transform: 'rotate(-.25deg)' }}>
                 <div style={{ font: '600 8.5px/1.2 var(--font-sans)', letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--ticker)', marginBottom: 6 }}>
                   {agentDisplayName(subTask.agent)}
                 </div>
@@ -181,7 +184,7 @@ export function PlanCard({ taskId, chatId }: PlanCardProps) {
                 {chatId != null && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                     <input
-                      style={{ appearance: 'none', border: '1px solid var(--hairline-strong)', background: 'var(--putih)', color: 'var(--ink)', font: '500 12.5px/1.35 var(--font-sans)', padding: '9px 10px' }}
+                      style={{ appearance: 'none', border: '1px solid var(--hairline-strong)', background: 'var(--canvas)', color: 'var(--ink)', font: '500 12.5px/1.35 var(--font-sans)', padding: '9px 10px' }}
                       placeholder={contract.needs_input.placeholder}
                       value={answerDraft}
                       onChange={(e) => setAnswerDraft(e.target.value)}

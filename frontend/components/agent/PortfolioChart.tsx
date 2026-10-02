@@ -118,15 +118,23 @@ function LineChart({ series }: { series: { name: string; color: string; points: 
   );
 }
 
+const BAR_PALETTE = [
+  { fill: '#c8102e', lip: '#9a0c24' },
+  { fill: '#16110e', lip: '#000' },
+  { fill: '#1f7a4b', lip: '#155a37' },
+  { fill: '#1f4d8a', lip: '#173a68' },
+  { fill: '#5a4a3a', lip: '#45382c' },
+];
+
 function BarChart({ entries }: { entries: { label: string; value: number }[] }) {
   const max = Math.max(...entries.map((e) => Math.abs(e.value)), 1);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {entries.map((e) => (
+      {entries.map((e, entryIndex) => (
         <div key={e.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ width: 64, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--body)', flex: 'none' }}>{e.label}</span>
-          <div style={{ flex: 1, background: 'var(--hairline)', height: 14, position: 'relative' }}>
-            <div style={{ width: `${(Math.abs(e.value) / max) * 100}%`, background: COLORS.merah, height: '100%' }} />
+          <div style={{ flex: 1, background: 'var(--canvas-soft)', height: 14, position: 'relative' }}>
+            <div style={{ width: `${(Math.abs(e.value) / max) * 100}%`, background: BAR_PALETTE[entryIndex % BAR_PALETTE.length].fill, boxShadow: `inset 0 -3px 0 ${BAR_PALETTE[entryIndex % BAR_PALETTE.length].lip}`, height: '100%' }} />
           </div>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--body)', flex: 'none', textAlign: 'right', width: 96 }}>
             {e.value.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
@@ -151,11 +159,11 @@ function TimeframeTabs({ value, onChange }: { value: Timeframe; onChange: (t: Ti
           style={{
             appearance: 'none',
             cursor: 'pointer',
-            border: `1px solid ${t === value ? 'var(--ink)' : 'var(--hairline)'}`,
+            border: `1px solid ${t === value ? 'var(--ink)' : 'var(--hairline-strong)'}`,
             background: t === value ? 'var(--ink)' : 'transparent',
             color: t === value ? 'var(--canvas)' : 'var(--body)',
             font: '600 10.5px/1 var(--font-mono)',
-            padding: '5px 9px',
+            padding: '4px 8px',
           }}
         >
           {t}

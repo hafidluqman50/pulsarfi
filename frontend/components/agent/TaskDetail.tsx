@@ -18,7 +18,7 @@ export function TaskDetail({ task }: TaskDetailProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '16px 14px' }}>
-      <div>
+      <div style={{ background: 'var(--canvas)', border: '1px solid var(--hairline)', padding: '16px 14px' }}>
         <div style={{ fontSize: 15, fontWeight: 600 }}>Task T-{task.id}</div>
         <div style={{ fontSize: 12, color: 'var(--body)' }}>{task.summary ?? task.raw_prompt ?? 'No summary yet'}</div>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--body)', marginTop: 4 }}>

@@ -32,7 +32,7 @@ const CHART_TOOLS = new Set(['get_portfolio_snapshot', 'get_stock_chart']);
 
 function ChartSkeletonCard() {
   return (
-    <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
+    <div className="rise" style={{ border: '1px solid var(--hairline)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
       <div className="skeleton" style={{ height: 220, width: '100%' }} />
     </div>
   );
@@ -70,7 +70,7 @@ function LiveSubTasks({
   const anyInProgress = subTasks.some((subTask) => subTask.status === 'in_progress');
   const label = isFinalizing ? 'Finalizing on-chain' : anyInProgress ? 'Working' : 'Composing reply';
   return (
-    <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)' }}>
+    <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 11px 0 -4px #fbfaf7, 0 12px 0 -4px #e3ddd2, 0 20px 24px -14px rgba(22,17,14,.3)' }}>
       <div style={{ background: 'var(--ink)', color: 'var(--canvas)', padding: '10px 13px', display: 'flex', alignItems: 'center', gap: 9 }}>
         <span className="pulsar" />
         <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>{label}</span>
@@ -100,7 +100,7 @@ function LiveSubTasks({
               </span>
             </button>
             {isOpen && (
-              <div style={{ margin: '0 13px 12px 35px', borderLeft: '1px solid var(--hairline)', paddingLeft: 12 }}>
+              <div style={{ margin: '10px 13px 12px 22px', background: 'var(--canvas-soft)', border: '1px solid var(--hairline)', padding: '10px 12px', transform: 'rotate(-.25deg)' }}>
                 <div style={{ font: '600 8.5px/1.2 var(--font-sans)', letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--ticker)', marginBottom: 6 }}>
                   Reasoning · {agentDisplayName(subTask.agent)}
                 </div>
@@ -157,7 +157,7 @@ type ChartUIProps = { lens?: string; ticker?: string; lensNote?: string; data?: 
 function SingleChartCard({ props }: { props: ChartUIProps }) {
   if (!props.lens) return null;
   return (
-    <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
+    <div className="rise" style={{ border: '1px solid var(--hairline)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10, paddingBottom: 9, borderBottom: '1px solid var(--canvas-soft)' }}>
         <span style={{ font: '700 9px/1.3 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', border: '1px solid var(--merah)', padding: '3px 5px', whiteSpace: 'nowrap' }}>
           {props.lens}
@@ -274,14 +274,14 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
         const retryDescription = needsRetry && failedMessage?.text === message.content ? failedMessage.description : 'No reply received for this message yet.';
 
         return message.sender === 'user' ? (
-          <div key={message.id} className="rise" style={{ background: 'var(--merah-soft)', border: `1px solid ${needsRetry ? 'var(--negative)' : 'var(--merah-line)'}`, borderRight: `2px solid ${needsRetry ? 'var(--negative)' : 'var(--merah)'}`, padding: '13px 15px', marginLeft: 'clamp(18px,6vw,34px)' }}>
-            <div style={{ fontSize: 14.5, lineHeight: 1.55, color: 'var(--ink-soft)' }}>{message.content}</div>
+          <div key={message.id} className="rise" style={{ alignSelf: 'flex-end', maxWidth: '84%', background: 'var(--ink)', color: 'var(--canvas)', padding: '10px 12px', boxShadow: '0 4px 0 -2px #fbfaf7, 0 5px 0 -2px #4a423d', outline: needsRetry ? '1px solid var(--negative)' : 'none', outlineOffset: 2 }}>
+            <div style={{ fontSize: 13.5, lineHeight: 1.5, overflowWrap: 'anywhere' }}>{message.content}</div>
             {needsRetry && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 9, paddingTop: 9, borderTop: '1px solid var(--merah-line)' }}>
-                <span style={{ fontSize: 11.5, color: 'var(--negative)' }}>{retryDescription}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 9, paddingTop: 9, borderTop: '1px solid var(--ink-line)' }}>
+                <span style={{ fontSize: 11.5, color: '#ff8a9a' }}>{retryDescription}</span>
                 <button
                   onClick={onRetry}
-                  style={{ marginLeft: 'auto', appearance: 'none', cursor: 'pointer', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', font: '600 11px/1 var(--font-mono)', padding: '6px 10px', flex: 'none' }}
+                  style={{ marginLeft: 'auto', appearance: 'none', cursor: 'pointer', border: '1px solid #ff8a9a', background: 'transparent', color: '#ff8a9a', font: '600 11px/1 var(--font-mono)', padding: '6px 10px', flex: 'none' }}
                 >
                   Retry
                 </button>
@@ -291,8 +291,11 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
         ) : (
           <div key={message.id} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {message.content && (
-              <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
-                <MessageMarkdown content={message.content} />
+              <div className="rise" style={{ maxWidth: '92%' }}>
+                <div style={{ font: '600 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', marginBottom: 5 }}>Quasar</div>
+                <div style={{ fontFamily: 'var(--font-display)', color: 'var(--ink-soft)' }}>
+                  <MessageMarkdown content={message.content} fontSize={15} />
+                </div>
               </div>
             )}
             {message.ui_ref_task_id != null && message.ui_component !== 'HorizonNoticeCard' && message.content_type !== 'horizon_notice' && lastPlanCardIndexByTaskId.get(message.ui_ref_task_id) === index && <PlanCard taskId={message.ui_ref_task_id} chatId={chatId} />}
@@ -343,8 +346,8 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
       })}
 
       {pendingText && (
-        <div className="rise" style={{ background: 'var(--merah-soft)', border: '1px solid var(--merah-line)', borderRight: '2px solid var(--merah)', padding: '13px 15px', marginLeft: 'clamp(18px,6vw,34px)', opacity: 0.6 }}>
-          <div style={{ fontSize: 14.5, lineHeight: 1.55, color: 'var(--ink-soft)' }}>{pendingText}</div>
+        <div className="rise" style={{ alignSelf: 'flex-end', maxWidth: '84%', background: 'var(--ink)', color: 'var(--canvas)', padding: '10px 12px', boxShadow: '0 4px 0 -2px #fbfaf7, 0 5px 0 -2px #4a423d', opacity: 0.6 }}>
+          <div style={{ fontSize: 13.5, lineHeight: 1.5, overflowWrap: 'anywhere' }}>{pendingText}</div>
         </div>
       )}
 
@@ -353,13 +356,16 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
       {isStreaming && chartPending && <ChartSkeletonCard />}
 
       {isStreaming && streamingReplyText && (
-        <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
-          <MessageMarkdown content={streamingReplyText} />
+        <div className="rise" style={{ maxWidth: '92%' }}>
+          <div style={{ font: '600 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', marginBottom: 5 }}>Quasar</div>
+          <div style={{ fontFamily: 'var(--font-display)', color: 'var(--ink-soft)' }}>
+            <MessageMarkdown content={streamingReplyText} fontSize={15} />
+          </div>
         </div>
       )}
 
       {isStreaming && liveSubTasks.length === 0 && !streamingReplyText && (
-        <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--canvas)', padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div className="rise" style={{ border: '1px solid var(--hairline)', background: 'var(--putih)', padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 10, boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
           <span className="pulsar" />
           <span style={{ fontSize: 12.5, color: 'var(--body)', fontFamily: 'var(--font-mono)' }}>Quasar is thinking…</span>
         </div>
@@ -526,8 +532,8 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
         onSendPrompt={handleSend}
       />
 
-      <div style={{ flex: 'none', borderTop: '1px solid var(--hairline)', background: 'var(--canvas)', padding: '10px 12px 12px' }}>
-        <div style={{ border: '1px solid var(--ink)', background: 'var(--putih)', display: 'flex', alignItems: 'flex-end', gap: 0 }}>
+      <div style={{ flex: 'none', borderTop: '1px solid var(--ink)', background: 'var(--putih)', padding: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -539,12 +545,12 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
             }}
             rows={2}
             placeholder="Ask or instruct Quasar…"
-            style={{ flex: 1, border: 0, background: 'transparent', padding: '11px 12px', font: '400 14px/1.5 var(--font-sans)', color: 'var(--ink)', outline: 'none', resize: 'none' }}
+            style={{ flex: 1, border: '1px solid var(--hairline-strong)', background: 'var(--canvas)', padding: '10px 12px', font: '400 13.5px/1.5 var(--font-sans)', color: 'var(--ink)', outline: 'none', resize: 'none' }}
           />
           <button
             onClick={() => handleSend()}
             disabled={!draft.trim() || isStreaming || pendingText != null}
-            style={{ appearance: 'none', border: 0, cursor: 'pointer', background: 'var(--merah)', color: 'var(--putih)', font: '600 12px/1 var(--font-sans)', padding: '14px 13px', flex: 'none', alignSelf: 'stretch' }}
+            style={{ appearance: 'none', border: 0, cursor: !draft.trim() || isStreaming || pendingText != null ? 'not-allowed' : 'pointer', background: 'var(--ink)', color: 'var(--putih)', font: '600 12px/1 var(--font-sans)', letterSpacing: '.06em', padding: '0 16px', flex: 'none', opacity: !draft.trim() || isStreaming || pendingText != null ? 0.5 : 1 }}
           >
             Send
           </button>

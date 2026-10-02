@@ -23,8 +23,8 @@
   --body-strong: #5a4a3a;
   --merah-line: #f0d3cf;
   --warn: #a8730a;
-  --warn-deep: #8a5f08;
-  --warn-soft: #fdf6e8;
+  --warn-deep: #7a5406;
+  --warn-soft: #fdf6e6;
   --warn-line: #e0a93a;
   --info: #1f4d8a;
   --scroll-thumb: #d6cfc1;
@@ -153,6 +153,12 @@ img, svg, video { max-width: 100%; }
 @keyframes flip { from { transform: scaleY(.1); opacity: .3; } to { transform: scaleY(1); opacity: 1; } }
 .board-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .board-dot { animation: none; } }
+
+.quasar-launcher { transition: transform .2s; }
+.quasar-launcher:hover { transform: translateY(-3px); }
+.quasar-row:hover { background: var(--canvas-soft) !important; }
+.quasar-menu-row:hover { background: var(--putih) !important; }
+.quasar-plan-row:hover { background: var(--canvas) !important; }
 
 /* Tractor-feed paper */
 .tractor-margin { background-image: radial-gradient(circle, #e3ddd2 4px, transparent 4.5px); background-size: 22px 26px; background-position: center 8px; }

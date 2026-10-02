@@ -69,7 +69,7 @@ export function TradeLedger({ task, contract: passedContract }: TradeLedgerProps
       )}
 
       {isCancelled ? (
-        <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
+        <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '3px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
           <div style={{ font: '700 9.5px/1 var(--font-sans)', letterSpacing: '.16em', textTransform: 'uppercase', color: 'var(--ink)', marginBottom: 8 }}>
             {contract.ledger.disarmed_title.replace('{id}', String(task.id))}
           </div>
@@ -78,7 +78,7 @@ export function TradeLedger({ task, contract: passedContract }: TradeLedgerProps
           </div>
         </div>
       ) : isExecuted ? (
-        <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--positive)', background: 'var(--putih)', padding: '13px 15px' }}>
+        <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '3px solid var(--positive)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
           <div style={{ font: '700 9.5px/1 var(--font-sans)', letterSpacing: '.16em', textTransform: 'uppercase', color: 'var(--positive)', marginBottom: 8 }}>
             {contract.ledger.executed_title.replace('{id}', String(task.id)).replace('{onChainTaskId}', String(onChainTaskId))}
           </div>
@@ -86,7 +86,7 @@ export function TradeLedger({ task, contract: passedContract }: TradeLedgerProps
         </div>
       ) : (
         !task.paused && (
-          <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--positive)', background: 'var(--putih)', padding: '13px 15px' }}>
+          <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '3px solid var(--positive)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
             <div style={{ font: '700 9.5px/1 var(--font-sans)', letterSpacing: '.16em', textTransform: 'uppercase', color: 'var(--positive)', marginBottom: 8 }}>
               {contract.ledger.armed_title.replace('{id}', String(task.id)).replace('{onChainTaskId}', String(onChainTaskId))}
             </div>
@@ -152,13 +152,13 @@ export function TradeLedger({ task, contract: passedContract }: TradeLedgerProps
           </span>
           <button
             onClick={() => (task.paused ? resumeTask.mutate() : pauseTask.mutate())}
-            style={{ appearance: 'none', cursor: 'pointer', border: '1px solid var(--ink)', background: 'transparent', color: 'var(--ink)', font: '600 11.5px/1 var(--font-sans)', padding: '10px 12px', flex: 'none' }}
+            style={{ appearance: 'none', cursor: 'pointer', border: '1px solid var(--ink)', background: 'var(--putih)', color: 'var(--ink)', font: '600 11.5px/1 var(--font-sans)', padding: '10px 12px', flex: 'none' }}
           >
             {task.paused ? contract.ledger.resume_button : contract.ledger.pause_button}
           </button>
           <button
             onClick={() => disarmTask.mutate()}
-            style={{ appearance: 'none', cursor: 'pointer', border: '1px solid var(--merah)', background: 'transparent', color: 'var(--merah)', font: '600 11.5px/1 var(--font-sans)', padding: '10px 12px', flex: 'none' }}
+            style={{ appearance: 'none', cursor: 'pointer', border: '1px solid var(--merah)', background: 'var(--putih)', color: 'var(--merah)', font: '600 11.5px/1 var(--font-sans)', padding: '10px 12px', flex: 'none' }}
           >
             {contract.ledger.disarm_button}
           </button>

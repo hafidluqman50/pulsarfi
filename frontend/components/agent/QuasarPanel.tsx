@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAccount } from 'wagmi';
+import { useSiweAuth } from '@/contexts/SiweAuthContext';
 import { useAgentActivity, useAgentChats, useAgentTasks } from '@/http/agent/hooks';
 import { RosterCard } from './RosterCard';
 import { MenuPanel, type QuasarDestination } from './MenuPanel';
@@ -12,6 +14,13 @@ const ACTIVITY_KINDS = ['all', 'supervisor', 'analyzer', 'executor'] as const;
 type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
 export function QuasarPanel() {
+  const { isConnected } = useAccount();
+  const { isAuthenticated } = useSiweAuth();
+  if (!isConnected || !isAuthenticated) return null;
+  return <QuasarPanelContent />;
+}
+
+function QuasarPanelContent() {
   const [expanded, setExpanded] = useState(false);
   const [destination, setDestination] = useState<QuasarDestination>('chat');
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -86,6 +95,7 @@ export function QuasarPanel() {
           alignItems: 'center',
           gap: 11,
           textAlign: 'left',
+          boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #16110e, 0 20px 26px -12px rgba(22,17,14,.5)',
         }}
         className="quasar-launcher"
       >
@@ -99,20 +109,34 @@ export function QuasarPanel() {
 
   return (
     <div
-      className="panel"
       style={{
         position: 'fixed',
         right: isSheet ? 0 : 22,
         bottom: isSheet ? 0 : 22,
         zIndex: 300,
-        width: isSheet ? '100vw' : 452,
-        height: isSheet ? '100dvh' : 'min(760px, calc(100vh - 146px))',
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--canvas)',
-        border: isSheet ? '0' : '1px solid var(--ink)',
+        width: isSheet ? '100vw' : 'min(452px, calc(100vw - 24px))',
+        height: isSheet ? '100dvh' : 'min(720px, calc(100vh - 120px))',
+        perspective: 1600,
       }}
     >
+      {!isSheet && (
+        <>
+          <div style={{ position: 'absolute', inset: 0, background: '#efebe3', border: '1px solid var(--hairline-strong)', transform: 'translate(10px,10px) rotate(1.2deg)' }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'var(--canvas-soft)', border: '1px solid var(--hairline-strong)', transform: 'translate(5px,5px) rotate(.5deg)' }} />
+        </>
+      )}
+      <div
+        className="rise"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          background: 'var(--canvas)',
+          border: isSheet ? '0' : '1px solid var(--ink)',
+          boxShadow: '0 30px 50px -20px rgba(22,17,14,.45)',
+        }}
+      >
       <div style={{ background: 'var(--ink)', color: 'var(--canvas)', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 9, flex: 'none' }}>
         <span className="pulsar" />
         <span style={{ fontFamily: 'var(--font-display)', fontSize: 17, letterSpacing: '-.01em', whiteSpace: 'nowrap' }}>Quasar</span>
@@ -124,7 +148,7 @@ export function QuasarPanel() {
         </button>
         <button
           onClick={() => setDestination(destination === 'chat' ? 'tasks' : 'chat')}
-          style={{ marginLeft: 0, appearance: 'none', border: '1px solid var(--ink-line)', cursor: 'pointer', background: 'transparent', color: 'var(--canvas)', font: '500 11px/1 var(--font-mono)', padding: '7px 9px', flex: 'none' }}
+          style={{ marginLeft: 0, appearance: 'none', border: '1px solid var(--ink-line)', cursor: 'pointer', background: destination !== 'chat' ? 'var(--ink-soft)' : 'transparent', color: 'var(--canvas)', font: '500 11px/1 var(--font-mono)', padding: '7px 9px', flex: 'none' }}
         >
           menu
         </button>
@@ -146,6 +170,7 @@ export function QuasarPanel() {
             <button
               key={task.id}
               onClick={() => setActiveTaskId(task.id)}
+              className="quasar-row"
               style={{ width: '100%', appearance: 'none', border: 0, borderBottom: '1px solid var(--hairline)', cursor: 'pointer', background: 'var(--canvas)', padding: 13, textAlign: 'left' }}
             >
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 6 }}>
@@ -181,6 +206,7 @@ export function QuasarPanel() {
             <button
               key={chat.id}
               onClick={() => handleSelectChat(chat.id)}
+              className="quasar-row"
               style={{ width: '100%', appearance: 'none', border: 0, borderBottom: '1px solid var(--hairline)', cursor: 'pointer', background: 'var(--canvas)', padding: 13, textAlign: 'left' }}
             >
               <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{chat.description ?? `Chat #${chat.id}`}</div>
@@ -223,6 +249,7 @@ export function QuasarPanel() {
                       setActiveTaskId(row.task_id);
                       setDestination('tasks');
                     }}
+                    className="quasar-row"
                     style={{ width: '100%', appearance: 'none', border: 0, borderBottom: '1px solid var(--hairline)', cursor: 'pointer', background: 'var(--canvas)', padding: 13, textAlign: 'left' }}
                   >
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 6 }}>
@@ -245,16 +272,17 @@ export function QuasarPanel() {
         {!activeChatId && (
           <>
             <div className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
-                <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>
+              <div className="rise">
+                <div style={{ font: '600 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', marginBottom: 5 }}>Quasar</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, lineHeight: 1.5, color: 'var(--ink-soft)' }}>
                   I am Quasar. Write the instruction in your own words — a fast trade or a long mandate, I read the horizon out of what you wrote. Standing
                   instructions I turn into a rule with named sources, a number and hard caps, and show you every step before anything is armed.
                 </div>
               </div>
               <RosterCard />
             </div>
-            <div style={{ flex: 'none', borderTop: '1px solid var(--hairline)', background: 'var(--canvas)', padding: '10px 12px 12px' }}>
-              <div style={{ border: '1px solid var(--ink)', background: 'var(--putih)', display: 'flex', alignItems: 'flex-end', gap: 0 }}>
+            <div style={{ flex: 'none', borderTop: '1px solid var(--ink)', background: 'var(--putih)', padding: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
                 <textarea
                   value={pendingDraft}
                   onChange={(e) => setPendingDraft(e.target.value)}
@@ -266,12 +294,12 @@ export function QuasarPanel() {
                   }}
                   rows={2}
                   placeholder="Ask or instruct Quasar…"
-                  style={{ flex: 1, border: 0, background: 'transparent', padding: '11px 12px', font: '400 14px/1.5 var(--font-sans)', color: 'var(--ink)', outline: 'none', resize: 'none' }}
+                  style={{ flex: 1, border: '1px solid var(--hairline-strong)', background: 'var(--canvas)', padding: '10px 12px', font: '400 13.5px/1.5 var(--font-sans)', color: 'var(--ink)', outline: 'none', resize: 'none' }}
                 />
                 <button
                   onClick={handleSendPending}
                   disabled={!pendingDraft.trim()}
-                  style={{ appearance: 'none', border: 0, cursor: 'pointer', background: 'var(--merah)', color: 'var(--putih)', font: '600 12px/1 var(--font-sans)', padding: '14px 13px', flex: 'none', alignSelf: 'stretch' }}
+                  style={{ appearance: 'none', border: 0, cursor: !pendingDraft.trim() ? 'not-allowed' : 'pointer', background: 'var(--ink)', color: 'var(--putih)', font: '600 12px/1 var(--font-sans)', letterSpacing: '.06em', padding: '0 16px', flex: 'none', opacity: !pendingDraft.trim() ? 0.5 : 1 }}
                 >
                   Send
                 </button>
@@ -283,6 +311,7 @@ export function QuasarPanel() {
         {activeChatId && (
           <ChatThread key={activeChatId} chatId={activeChatId} initialMessage={initialMessageForActiveChat ?? undefined} />
         )}
+      </div>
       </div>
     </div>
   );
