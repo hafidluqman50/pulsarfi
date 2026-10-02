@@ -5,7 +5,7 @@ import { Providers } from "./providers";
 
 const fraunces = Fraunces({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
+  axes: ["opsz"],
   variable: "--font-fraunces",
   display: "swap",
 });

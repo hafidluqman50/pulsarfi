@@ -1,7 +1,5 @@
 'use client';
 
-import { Icon } from './Icon';
-
 interface AccordionProps {
   open: boolean;
   onToggle: () => void;
@@ -11,19 +9,17 @@ interface AccordionProps {
 
 export function Accordion({ open, onToggle, summary, children }: AccordionProps) {
   return (
-    <div className="hairline-top">
-      <button onClick={onToggle} style={{
-        appearance: "none", border: 0, background: "transparent", width: "100%",
+    <div>
+      <button onClick={onToggle} className="mono" style={{
+        appearance: "none", border: 0, borderBottom: "1px dashed var(--hairline)", background: "transparent", width: "100%",
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "12px 0", cursor: "pointer", color: "inherit", font: "inherit", textAlign: "left",
+        padding: "12px 0", cursor: "pointer", color: "inherit", fontSize: 13, textAlign: "left",
       }}>
-        <span style={{ fontSize: 13, color: "var(--body)" }}>{summary}</span>
-        <span style={{ transition: "transform .15s", transform: open ? "rotate(180deg)" : "none", color: "var(--body)" }}>
-          <Icon name="chevron-down" size={16} />
-        </span>
+        <span>{summary}</span>
+        <span style={{ fontSize: 11, color: "var(--body)" }}>{open ? "▴" : "▾"}</span>
       </button>
       {open && (
-        <div style={{ paddingBottom: 12, display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
+        <div style={{ padding: "12px 0", display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
           {children}
         </div>
       )}

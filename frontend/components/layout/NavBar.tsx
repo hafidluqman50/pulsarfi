@@ -5,7 +5,6 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
-import { Icon } from '@/components/ui/Icon';
 import { shortAddr } from '@/lib/data';
 import { useSiweAuth } from '@/contexts/SiweAuthContext';
 import { useProtocolStats } from '@/http/market/hooks';
@@ -39,18 +38,18 @@ export function NavBar() {
     href === '/stocks' ? pathname.startsWith('/stocks') : pathname === href;
 
   return (
-    <div className="hairline-strong sticky top-[0px] z-[100] bg-[var(--canvas)] px-[24px] py-[14px]">
-      <div className="relative flex items-center justify-between gap-[16px]">
+    <div className="hairline-strong sticky top-[0px] z-[100] bg-[rgba(251,250,247,0.94)] px-[24px] py-[14px] backdrop-blur-[8px] max-[719px]:px-[16px] max-[719px]:py-[10px]">
+      <div className="relative flex min-h-[44px] items-center justify-between gap-[16px]">
 
         {/* Left: hamburger + logo mobile + nav tabs desktop */}
         <div className="flex items-center gap-[16px] flex-1 min-w-0">
           <button
             type="button"
-            className="only-mobile appearance-none border border-[var(--ink)] bg-[var(--canvas)] p-[8px] cursor-pointer text-[var(--ink)] leading-none"
+            className="only-mobile h-[40px] w-[40px] appearance-none border border-[var(--ink)] bg-[var(--canvas)] cursor-pointer text-[16px] text-[var(--ink)] leading-none"
             onClick={() => setIsMobileMenuOpen(isOpen => !isOpen)}
             aria-label="Toggle navigation menu"
           >
-            <Icon name={isMobileMenuOpen ? 'x' : 'menu'} size={18} />
+            {isMobileMenuOpen ? '✕' : '☰'}
           </button>
 
           <Link href="/home" className="only-mobile no-underline">
@@ -84,7 +83,7 @@ export function NavBar() {
 
         {/* Right: wallet connect */}
         <div className="flex justify-end gap-[12px] items-center flex-1">
-          <span className="eyebrow nav-wallet-ens text-[var(--body)]">EN · IDR/USD {idrUsdRate}</span>
+          <span className="eyebrow nav-wallet-ens !text-[var(--body)]">EN · IDR/USD {idrUsdRate}</span>
           <ConnectButton.Custom>
             {({ account, chain, openConnectModal, openAccountModal, mounted }) => {
               if (!mounted) return null;
@@ -99,7 +98,7 @@ export function NavBar() {
               return (
                 <button
                   type="button"
-                  className="btn btn-outline inline-flex items-center gap-[10px] px-[14px] py-[10px]"
+                  className="btn btn-outline inline-flex items-center gap-[10px] !px-[14px] !py-[10px]"
                   onClick={isAuthenticated ? signOut : openAccountModal}
                   disabled={isSigningIn}
                 >
@@ -108,7 +107,7 @@ export function NavBar() {
                       isSigningIn ? 'bg-[#d1a917] animate-pulse' : isAuthenticated ? 'bg-[#1f7a4b]' : 'bg-[var(--body)]'
                     }`}
                   />
-                  <span className="mono text-[12px]">
+                  <span className="mono text-[12px] !font-[500]">
                     {isSigningIn ? signInPhaseLabel[signInPhase] : shortAddr(account.address)}
                   </span>
                 </button>

@@ -29,14 +29,16 @@ export function Providers({ children }: { children: React.ReactNode }) {
           </SiweAuthProvider>
           <Toaster
             position="bottom-right"
+            style={{ '--width': '380px' } as React.CSSProperties}
+            icons={{
+              success: <span className="toast-glyph" style={{ color: 'var(--positive)' }}>✓</span>,
+              error: <span className="toast-glyph" style={{ color: 'var(--merah)' }}>!</span>,
+              info: <span className="toast-glyph">i</span>,
+              loading: <span className="toast-spinner" />,
+            }}
             toastOptions={{
-              style: {
-                background: '#fff',
-                color: '#16110e',
-                border: '1px solid #16110e',
-                borderRadius: 0,
-                fontFamily: '"Inter", sans-serif',
-              },
+              unstyled: true,
+              classNames: { toast: 'paper-toast' },
             }}
           />
         </RainbowKitProvider>
