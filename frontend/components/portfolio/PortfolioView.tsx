@@ -5,7 +5,7 @@ import { useAccount } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { toast } from 'sonner';
 import { type Address } from 'viem';
-import { tokenByTicker, sliceRange, fmtIDRX, fmtNum, fmtPct, shortAddr } from '@/lib/data';
+import { sliceRange, fmtIDRX, fmtNum, fmtPct, shortAddr } from '@/lib/data';
 import { useMarketStocks, useStockHistory, useStockTransactions } from '@/http/market/hooks';
 import { useWalletTokenBalanceState } from '@/http/market/tokenHooks';
 import { useTransferToken } from '@/http/market/transferHooks';
@@ -93,6 +93,7 @@ export function PortfolioView() {
   const [redeemOpen, setRedeemOpen]     = useState<RedeemToken | null>(null);
   const [tradeToken, setTradeToken]     = useState<PortfolioPosition | null>(null);
 
+  const tradeOutput = tradeToken ? marketTokens.find(token => token.ticker === tradeToken.ticker) : undefined;
   const positions = useMemo(() => buildPositions(balances, marketStocks, transactions), [balances, marketStocks, transactions]);
   const stables = useMemo(() => buildStables(balances), [balances]);
   const stockValue = positions.reduce((sum, position) => sum + position.value, 0);
@@ -251,9 +252,9 @@ export function PortfolioView() {
         />
       )}
 
-      {tradeToken && (
+      {tradeToken && tradeOutput && (
         <SwapModal
-          defaultOut={tokenByTicker(tradeToken.ticker)}
+          defaultOut={tradeOutput}
           onClose={() => setTradeToken(null)}
         />
       )}
