@@ -22,51 +22,54 @@ import {
 } from '@/lib/portfolio';
 import { Icon } from '@/components/ui/Icon';
 import { PStockMark } from '@/components/ui/PStockMark';
+import { ISO_PALETTES } from '@/components/ui/IsoBar';
 import { AreaChart } from '@/components/charts/AreaChart';
-import { Donut } from '@/components/charts/Donut';
+import { AllocationBars } from '@/components/portfolio/AllocationBars';
 import { SwapModal } from '@/components/ui/SwapModal';
 import { TransferModal, type TransferToken } from '@/components/ui/TransferModal';
 import { RedeemModal, type RedeemToken } from '@/components/ui/RedeemModal';
 
-const PALETTE = ["#c8102e", "#16110e", "#1f4d8a", "#5a4a3a", "#9a0c24", "#2a231e", "#6f2da8", "#2c5e2e"];
-const PALETTE_CLASSES = [
-  "bg-[#c8102e]",
-  "bg-[#16110e]",
-  "bg-[#1f4d8a]",
-  "bg-[#5a4a3a]",
-  "bg-[#9a0c24]",
-  "bg-[#2a231e]",
-  "bg-[#6f2da8]",
-  "bg-[#2c5e2e]",
-];
+const POSITION_GRID = 'grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_240px] gap-[16px]';
+const SECTION_LABEL = 'text-[11px] font-[600] uppercase leading-[normal] tracking-[0.16em] text-[var(--body)]';
+const PAGE_WRAPPER = 'mx-auto w-full max-w-[1440px] px-[32px] pb-[64px] pt-[32px] max-[719px]:px-[16px] max-[719px]:pb-[48px] max-[719px]:pt-[24px]';
+
+const ACTIVITY_COLORS: Record<string, string> = {
+  Buy: 'var(--positive)',
+  Sell: 'var(--negative)',
+  Received: '#1f4d8a',
+  Sent: '#1f4d8a',
+};
+const ACTIVITY_DEFAULT_COLOR = '#5a4a3a';
 
 function PortfolioSkeleton(): React.ReactNode {
   return (
-    <div className="pad-x !px-[24px] !pb-[16px] !pt-[32px]">
-      <div className="grid-2col-balanced">
+    <div className={PAGE_WRAPPER}>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,420px),1fr))] items-center gap-[48px]">
         <div>
-          <div className="skeleton h-[14px] w-[180px]" />
-          <div className="skeleton mt-[22px] h-[74px] w-[420px] max-w-full" />
+          <div className="h-[13px] w-[180px] bg-[var(--canvas-soft)]" />
+          <div className="mt-[22px] h-[66px] w-[420px] max-w-full bg-[var(--canvas-soft)]" />
           <div className="mt-[20px] flex flex-wrap gap-[28px]">
-            <div className="skeleton h-[48px] w-[150px]" />
-            <div className="skeleton h-[48px] w-[190px]" />
-            <div className="skeleton h-[48px] w-[150px]" />
+            <div className="h-[40px] w-[150px] bg-[var(--canvas-soft)]" />
+            <div className="h-[40px] w-[190px] bg-[var(--canvas-soft)]" />
+            <div className="h-[40px] w-[150px] bg-[var(--canvas-soft)]" />
           </div>
         </div>
-        <div className="skeleton h-[92px] w-full" />
+        <div className="h-[250px] w-full bg-[var(--canvas-soft)]" />
       </div>
-      <div className="hairline-top mt-[32px] pt-[24px]">
+      <div className="mt-[32px] border-t border-[var(--hairline)] pt-[24px]">
         <div className="mb-[18px] flex items-center justify-between">
-          <div className="skeleton h-[42px] w-[180px]" />
-          <div className="skeleton h-[34px] w-[260px]" />
+          <div className="h-[42px] w-[180px] bg-[var(--canvas-soft)]" />
+          <div className="h-[34px] w-[260px] bg-[var(--canvas-soft)]" />
         </div>
-        <div className="skeleton h-[280px] w-full" />
+        <div className="paper-stack px-[16px] pb-[0] pt-[12px]">
+          <div className="skeleton h-[260px] w-full" />
+        </div>
       </div>
-      <div className="mt-[40px]">
-        <div className="skeleton h-[38px] w-[180px]" />
+      <div className="mt-[44px]">
+        <div className="h-[38px] w-[180px] bg-[var(--canvas-soft)]" />
         {Array.from({ length: 4 }, (_, index) => (
-          <div key={index} className="hairline py-[18px]">
-            <div className="skeleton h-[44px] w-full" />
+          <div key={index} className="border-b border-[var(--hairline)] py-[18px]">
+            <div className="h-[34px] w-full bg-[var(--canvas-soft)]" />
           </div>
         ))}
       </div>
@@ -100,7 +103,14 @@ export function PortfolioView() {
   const allTimePnlPct = stockCost ? (allTimePnl / stockCost) * 100 : 0;
   const dayPnl = positions.reduce((sum, position) => sum + position.dayPnl, 0);
   const dayPnlPct = stockValue - dayPnl ? (dayPnl / (stockValue - dayPnl)) * 100 : 0;
-  const donutData = positions.map(position => ({ label: position.ticker, value: position.value }));
+  const allocationItems = useMemo(() => [
+    ...[...positions].sort((first, second) => second.value - first.value).map(position => ({ label: position.ticker, value: position.value })),
+    ...(stables.length > 0 ? [{ label: 'IDRX', value: stableValue }] : []),
+  ], [positions, stables, stableValue]);
+  const accentByTicker = useMemo(
+    () => Object.fromEntries(allocationItems.map((item, index) => [item.label, ISO_PALETTES[index % ISO_PALETTES.length].top])),
+    [allocationItems],
+  );
   const activityRows = useMemo(() => buildActivityRows(transactions), [transactions]);
   const series = useMemo(() => buildPortfolioSeries(totalValue, transactions), [totalValue, transactions]);
   const ranged = useMemo(() => sliceRange(series, range), [series, range]);
@@ -173,73 +183,50 @@ export function PortfolioView() {
   }
 
   return (
-    <div className="pad-x !px-[24px] !pb-[16px] !pt-[32px]">
-      {/* HERO */}
-      <div className="grid-2col-balanced">
+    <div className={PAGE_WRAPPER}>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,420px),1fr))] items-center gap-[48px]">
         <div>
-          <div className="eyebrow mb-[12px] !text-[var(--merah)]">Portfolio · {shortAddr(address!)}</div>
-          <div className="mb-[6px] flex flex-wrap items-baseline gap-[12px]">
-            <span className="eyebrow !text-[var(--body)]">Total Net Worth</span>
-          </div>
-          <div className="display tnum total-display !text-[72px] !leading-[0.92] !tracking-[-0.035em]">{fmtIDRX(totalValue)}</div>
+          <div className="mb-[12px] text-[11px] font-[600] uppercase leading-[normal] tracking-[0.16em] text-[var(--merah)]">Portfolio · {shortAddr(address!)}</div>
+          <div className={`mb-[6px] ${SECTION_LABEL}`}>Total Net Worth</div>
+          <div className="display tnum !text-[length:clamp(44px,5.4vw,72px)] !leading-[0.92] !tracking-[-0.035em]">{fmtIDRX(totalValue)}</div>
           <div className="mt-[18px] flex flex-wrap gap-[28px]">
-            <PnLChip label="Today"              v={dayPnl}     pct={dayPnlPct} />
-            <PnLChip label="All-time unrealized" v={allTimePnl} pct={allTimePnlPct} />
-            <PnLChip label="Cash · stables"     v={stableValue} muted />
+            <PnLChip label="Today"               amount={dayPnl}      pct={dayPnlPct} />
+            <PnLChip label="All-time unrealized" amount={allTimePnl}  pct={allTimePnlPct} />
+            <PnLChip label="Cash · stables"      amount={stableValue} muted />
           </div>
         </div>
-        <SplitRow stockValue={stockValue} stableValue={stableValue} />
+        <AllocationBars items={allocationItems} total={totalValue} />
       </div>
 
-      {/* CHART */}
-      <div className="hairline-top mt-[32px] pt-[24px]">
+      <div className="mt-[32px] border-t border-[var(--hairline)] pt-[24px]">
         <div className="mb-[18px] flex flex-wrap items-center justify-between gap-[12px]">
           <div>
-            <div className="eyebrow !text-[var(--body)]">Portfolio value</div>
-            <div className="display mt-[2px] !text-[20px]">{range === "1D" ? "Today" : range === "ALL" ? "All time" : `Last ${range}`}</div>
+            <div className={SECTION_LABEL}>Portfolio value</div>
+            <div className="display mt-[2px] !text-[20px] !leading-[normal]">{range === "1D" ? "Today" : range === "ALL" ? "All time" : `Last ${range}`}</div>
           </div>
-          <div className="range-pills">
+          <div className="range-pills range-pills-full">
             {["1D","1W","1M","3M","1Y","ALL"].map(timeframeOption => (
               <button key={timeframeOption} className={range === timeframeOption ? "active" : ""} onClick={() => setRange(timeframeOption)}>{timeframeOption}</button>
             ))}
           </div>
         </div>
-        <AreaChart data={ranged} height={280} valueFormatter={value => `${(value / 1_000_000).toFixed(1)}M IDRX`} />
+        <div className="paper-stack px-[16px] pb-[0] pt-[12px]">
+          <AreaChart data={ranged} height={260} paper valueFormatter={value => `${(value / 1_000_000).toFixed(1)}M IDRX`} />
+        </div>
       </div>
 
-      {/* ALLOCATION */}
-      {donutData.length > 0 && (
-        <div className="hairline-top mt-[36px] pt-[24px]">
-          <div className="eyebrow mb-[16px] !text-[var(--body)]">Allocation</div>
-          <div className="flex flex-wrap items-center gap-[32px]">
-            <Donut data={donutData} size={180} thickness={22} palette={PALETTE} />
-            <div className="grid min-w-[240px] flex-1 grid-cols-[1fr_1fr] gap-x-[24px] gap-y-[10px]">
-              {donutData.map((donutSegment, segmentIndex) => (
-                <div key={donutSegment.label} className="flex items-center gap-[8px]">
-                  <span className={`h-[10px] w-[10px] shrink-0 ${PALETTE_CLASSES[segmentIndex % PALETTE_CLASSES.length]}`} />
-                  <span className="text-[13px] font-semibold">{donutSegment.label}</span>
-                  <span className="mono ml-auto text-[12px] text-[var(--body)]">{((donutSegment.value / stockValue) * 100).toFixed(1)}%</span>
-                </div>
-              ))}
-            </div>
-          </div>
+      <div className="mt-[44px]">
+        <div className="flex flex-wrap items-baseline justify-between gap-[8px] border-b border-[var(--ink)] pb-[10px]">
+          <h2 className="display m-[0] !text-[32px] !leading-[normal] !tracking-[-0.02em]">Positions</h2>
+          <span className={SECTION_LABEL}>{positions.length} stocks · {stables.length} stable</span>
         </div>
-      )}
-
-      {/* POSITIONS */}
-      <div className="mt-[40px]">
-        <div className="hairline-strong flex flex-wrap items-baseline justify-between gap-[8px] pb-[10px]">
-          <h2 className="display section-title !m-[0] !text-[32px] !tracking-[-0.02em]">Positions</h2>
-          <div className="eyebrow !text-[var(--body)]">{positions.length} stocks · {stables.length} stable</div>
-        </div>
-        <PositionsList positions={positions} stables={stables} idrxAddress={idrxAddress} expanded={expanded} setExpanded={setExpanded} onTrade={t => setTradeToken(t)} onTransfer={t => setTransferOpen(t)} onRedeem={t => setRedeemOpen(t)} />
+        <PositionsList positions={positions} stables={stables} idrxAddress={idrxAddress} accentByTicker={accentByTicker} expanded={expanded} setExpanded={setExpanded} onTrade={t => setTradeToken(t)} onTransfer={t => setTransferOpen(t)} onRedeem={t => setRedeemOpen(t)} />
       </div>
 
-      {/* ACTIVITY */}
       <div className="mt-[56px]">
-        <div className="hairline-strong flex flex-wrap items-baseline justify-between pb-[10px]">
-          <h2 className="display section-title !m-[0] !text-[32px] !tracking-[-0.02em]">Recent activity</h2>
-          <span className="eyebrow !text-[var(--body)]">wallet swaps</span>
+        <div className="flex flex-wrap items-baseline justify-between border-b border-[var(--ink)] pb-[10px]">
+          <h2 className="display m-[0] !text-[32px] !leading-[normal] !tracking-[-0.02em]">Recent activity</h2>
+          <span className={SECTION_LABEL}>wallet swaps</span>
         </div>
         <ActivityList rows={activityRows} />
       </div>
@@ -274,172 +261,130 @@ export function PortfolioView() {
   );
 }
 
-function PnLChip({ label, v, pct, muted }: { label: string; v: number; pct?: number; muted?: boolean }) {
-  const pos = v >= 0;
-  const colorClass = muted ? "text-[var(--ink)]" : pos ? "text-[var(--positive)]" : "text-[var(--negative)]";
+function PnLChip({ label, amount, pct, muted }: { label: string; amount: number; pct?: number; muted?: boolean }) {
+  const isPositive = amount >= 0;
+  const color = muted ? 'var(--body)' : isPositive ? 'var(--positive)' : 'var(--negative)';
+  const sign = muted ? '' : isPositive ? '+' : '−';
   return (
     <div>
-      <div className="eyebrow mb-[4px] !text-[var(--body)]">{label}</div>
-      <div className={`mono text-[19px] font-medium leading-[1.1] ${colorClass}`}>
-        {!muted && (v >= 0 ? "+" : "−")}{fmtIDRX(Math.abs(v))}
-      </div>
-      {pct != null && <div className={`mono mt-[2px] text-[12px] ${colorClass}`}>{fmtPct(pct)}</div>}
-    </div>
-  );
-}
-
-function SplitRow({ stockValue, stableValue }: { stockValue: number; stableValue: number }) {
-  const total = stockValue + stableValue;
-  const pStockPct = total ? (stockValue / total) * 100 : 0;
-  return (
-    <div>
-      <svg className="mb-[14px] block h-[6px] w-full bg-[var(--canvas-soft)]" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true">
-        <rect x="0" y="0" width={pStockPct} height="6" fill="var(--merah)" />
-        <rect x={pStockPct} y="0" width={100 - pStockPct} height="6" fill="var(--ink)" />
-      </svg>
-      <div className="flex justify-between gap-[24px] text-[13px]">
-        <div>
-          <div className="flex items-center gap-[8px]">
-            <span className="h-[8px] w-[8px] bg-[var(--merah)]" />
-            <span className="eyebrow !text-[var(--body)]">pStocks · {pStockPct.toFixed(1)}%</span>
-          </div>
-          <div className="mono mt-[4px] text-[18px]">{fmtIDRX(stockValue)}</div>
-        </div>
-        <div className="text-right">
-          <div className="flex items-center justify-end gap-[8px]">
-            <span className="h-[8px] w-[8px] bg-[var(--ink)]" />
-            <span className="eyebrow !text-[var(--body)]">IDRX · {(100 - pStockPct).toFixed(1)}%</span>
-          </div>
-          <div className="mono mt-[4px] text-[18px]">{fmtIDRX(stableValue)}</div>
-        </div>
+      <div className={SECTION_LABEL}>{label}</div>
+      <div className="mono mt-[4px] text-[15px] font-[400] leading-[normal]" style={{ color }}>
+        {sign}{fmtIDRX(Math.abs(amount))}{pct != null && <> · {fmtPct(pct)}</>}
       </div>
     </div>
   );
 }
 
-function PositionsList({ positions, stables, idrxAddress, expanded, setExpanded, onTrade, onTransfer, onRedeem }: {
+const ACTION_BASE = 'cursor-pointer appearance-none px-[12px] py-[7px] text-[12px] font-[600] disabled:cursor-not-allowed disabled:opacity-50';
+const TRADE_BUTTON = `${ACTION_BASE} border border-[var(--ink)] bg-[var(--ink)] text-[var(--putih)] hover:bg-black`;
+const SEND_BUTTON = `${ACTION_BASE} border border-[var(--hairline-strong)] bg-[var(--putih)] text-[var(--ink)] hover:border-[var(--ink)]`;
+const REDEEM_BUTTON = `${ACTION_BASE} border border-[var(--ink)] bg-transparent text-[var(--ink)] hover:bg-[var(--ink)] hover:text-[var(--putih)]`;
+const NUMBER_CELL = 'mono text-right text-[13px] leading-[normal]';
+
+function PositionsList({ positions, stables, idrxAddress, accentByTicker, expanded, setExpanded, onTrade, onTransfer, onRedeem }: {
   positions: PortfolioPosition[];
   stables: StablePosition[];
   idrxAddress?: Address;
+  accentByTicker: Record<string, string>;
   expanded: string | null;
   setExpanded: (t: string | null) => void;
   onTrade: (t: PortfolioPosition) => void;
   onTransfer: (t: TransferToken) => void;
   onRedeem: (t: RedeemToken) => void;
 }) {
-  const totalValue = positions.reduce((sum, position) => sum + position.value, 0);
-
   return (
-    <div>
-      <div className="hairline table-head-desktop grid grid-cols-[auto_2fr_1fr_1fr_1fr_1fr_1fr_1fr_220px] gap-[16px] py-[14px]">
-        {["", "Stock", "Holdings", "Avg buy", "IDX lot", "Market value", "% Portfolio", "Unrealized P&L", ""].map((h, i) => (
-          <div key={i} className={`eyebrow !text-[var(--body)] ${i >= 2 && i <= 7 ? "text-right" : "text-left"}`}>{h}</div>
-        ))}
-      </div>
-      {positions.map(p => {
-        const pos    = p.pnl >= 0;
-        const isOpen = expanded === p.ticker;
-        return (
-          <div key={p.ticker} className="hairline">
-            <div className="row-hover position-row cursor-pointer" onClick={() => setExpanded(isOpen ? null : p.ticker)}>
-              <div className="pos-head">
-                <PStockMark ticker={p.ticker} size={40} />
-                <div className="col-asset min-w-0">
-                  <div className="flex flex-wrap items-center gap-[8px]">
-                    <span className="text-[15px] font-semibold">{p.ticker}</span>
-                    {p.ipo && <span className="border border-[var(--hairline-strong)] px-[6px] py-[1px] text-[11px] text-[var(--body)]">{p.ipo}</span>}
-                    <span className={`mono text-[11px] font-semibold ${(p.change24h ?? 0) >= 0 ? "text-[var(--positive)]" : "text-[var(--negative)]"}`}>
-                      {fmtPct(p.change24h ?? 0)} today
-                    </span>
+    <div className="overflow-x-auto">
+      <div className="min-w-[860px]">
+        <div className={`${POSITION_GRID} border-b border-[var(--hairline)] px-[8px] py-[12px] text-[10px] font-[600] uppercase leading-[normal] tracking-[0.14em] text-[var(--body)]`}>
+          <span>Asset</span>
+          <span className="text-right">Balance</span>
+          <span className="text-right">Avg buy</span>
+          <span className="text-right">Price</span>
+          <span className="text-right">Value</span>
+          <span className="text-right">Unrealized</span>
+          <span />
+        </div>
+        {positions.map(p => {
+          const isProfit = p.pnl >= 0;
+          const isOpen = expanded === p.ticker;
+          return (
+            <div key={p.ticker}>
+              <div
+                className={`${POSITION_GRID} mover-paper cursor-pointer items-center border-b border-[var(--hairline)] px-[8px] py-[18px]`}
+                onClick={() => setExpanded(isOpen ? null : p.ticker)}
+              >
+                <div className="flex items-center gap-[12px]">
+                  <span className="h-[34px] w-[4px] shrink-0" style={{ background: accentByTicker[p.ticker] }} />
+                  <PStockMark ticker={p.ticker} size={32} />
+                  <div className="min-w-0">
+                    <div className="text-[14px] font-[700] leading-[normal]">{p.ticker}</div>
+                    <div className="text-[12px] leading-[normal] text-[var(--body)]">{p.name}</div>
                   </div>
-                  <div className="mt-[2px] text-[12px] text-[var(--body)]">{p.name}</div>
+                </div>
+                <span className={NUMBER_CELL}>{fmtNum(p.qty, 2)}</span>
+                <span className={`${NUMBER_CELL} text-[var(--body)]`}>{fmtIDRX(p.avg)}</span>
+                <span className={NUMBER_CELL}>{fmtIDRX(p.price)}</span>
+                <span className={`${NUMBER_CELL} font-[600]`}>{fmtIDRX(p.value)}</span>
+                <span className={NUMBER_CELL} style={{ color: isProfit ? 'var(--positive)' : 'var(--negative)' }}>{fmtPct(p.pnlPct)}</span>
+                <div className="flex justify-end gap-[8px]">
+                  <button className={TRADE_BUTTON} onClick={e => { e.stopPropagation(); onTrade(p); }}>Trade</button>
+                  <button
+                    className={SEND_BUTTON}
+                    disabled={!p.contractAddress}
+                    onClick={e => {
+                      e.stopPropagation();
+                      if (p.contractAddress) onTransfer({ ticker: p.ticker, name: p.name, price: p.price, address: p.contractAddress, isStable: false });
+                    }}
+                  >
+                    Send
+                  </button>
+                  <button
+                    className={REDEEM_BUTTON}
+                    disabled={!p.contractAddress}
+                    onClick={e => {
+                      e.stopPropagation();
+                      if (p.contractAddress) onRedeem({ ticker: p.ticker, name: p.name, price: p.price, address: p.contractAddress });
+                    }}
+                  >
+                    Redeem
+                  </button>
                 </div>
               </div>
-              <div className="pos-data">
-                <RowCell label="Holdings" align="right"><span className="mono text-[14px]">{fmtNum(p.qty, 2)}</span></RowCell>
-                <RowCell label="Avg buy" align="right"><span className="mono text-[14px]">{fmtIDRX(p.avg)}</span></RowCell>
-                <RowCell label="Last" align="right"><span className="mono text-[14px]">{fmtIDRX(p.price)}</span></RowCell>
-                <RowCell label="Market value" align="right"><span className="mono text-[15px] font-medium">{fmtIDRX(p.value)}</span></RowCell>
-                <RowCell label="% Portfolio" align="right"><span className="mono text-[14px]">{fmtPct(totalValue ? (p.value / totalValue) * 100 : 0)}</span></RowCell>
-                <RowCell label="Unrealized P&L" align="right">
-                  <div className={`mono text-[14px] font-medium ${pos ? "text-[var(--positive)]" : "text-[var(--negative)]"}`}>
-                    {pos ? "+" : "−"}{fmtIDRX(Math.abs(p.pnl))}
-                  </div>
-                  <div className={`mono text-[11px] ${pos ? "text-[var(--positive)]" : "text-[var(--negative)]"}`}>{fmtPct(p.pnlPct)}</div>
-                </RowCell>
-              </div>
-              <div className="pos-actions">
-                <button className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px] !text-[13px]" onClick={e => { e.stopPropagation(); onTrade(p); }}>Trade</button>
-                <button
-                  className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px] !text-[13px]"
-                  disabled={!p.contractAddress}
-                  onClick={e => {
-                    e.stopPropagation();
-                    if (p.contractAddress) onTransfer({ ticker: p.ticker, name: p.name, price: p.price, address: p.contractAddress, isStable: false });
-                  }}
-                >
-                  Send
-                </button>
-                <button
-                  className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px] !text-[13px]"
-                  disabled={!p.contractAddress}
-                  onClick={e => {
-                    e.stopPropagation();
-                    if (p.contractAddress) onRedeem({ ticker: p.ticker, name: p.name, price: p.price, address: p.contractAddress });
-                  }}
-                >
-                  Redeem
-                </button>
+              {isOpen && <PositionDetail position={p} />}
+            </div>
+          );
+        })}
+
+        {stables.map(s => (
+          <div key={s.ticker} className={`${POSITION_GRID} mover-paper items-center border-b border-[var(--hairline)] px-[8px] py-[18px]`}>
+            <div className="flex items-center gap-[12px]">
+              <span className="h-[34px] w-[4px] shrink-0" style={{ background: accentByTicker[s.ticker] }} />
+              <PStockMark ticker={s.ticker} size={32} />
+              <div className="min-w-0">
+                <div className="text-[14px] font-[700] leading-[normal]">{s.ticker}</div>
+                <div className="text-[12px] leading-[normal] text-[var(--body)]">{s.name}</div>
               </div>
             </div>
-            {isOpen && <PositionDetail position={p} />}
-          </div>
-        );
-      })}
-
-      {stables.map(s => (
-        <div key={s.ticker} className="hairline row-hover position-row">
-          <div className="pos-head">
-            <PStockMark ticker={s.ticker} size={40} />
-            <div className="col-asset min-w-0">
-              <div className="flex items-center gap-[8px]">
-                <span className="text-[15px] font-semibold">{s.ticker}</span>
-                <span className="border border-[var(--hairline-strong)] px-[6px] py-[1px] text-[11px] text-[var(--body)]">STABLE</span>
-              </div>
-              <div className="mt-[2px] text-[12px] text-[var(--body)]">{s.name}</div>
+            <span className={NUMBER_CELL}>{fmtNum(s.qty, 2)}</span>
+            <span className={`${NUMBER_CELL} text-[var(--body)]`}>1 IDRX</span>
+            <span className={NUMBER_CELL}>1 IDRX</span>
+            <span className={`${NUMBER_CELL} font-[600]`}>{fmtIDRX(s.value)}</span>
+            <span className={`${NUMBER_CELL} text-[var(--body)]`}>—</span>
+            <div className="flex justify-end gap-[8px]">
+              <button className={TRADE_BUTTON} disabled>Trade</button>
+              <button
+                className={REDEEM_BUTTON}
+                disabled={!idrxAddress}
+                onClick={() => {
+                  if (idrxAddress) onTransfer({ ticker: s.ticker, name: s.name, price: 1, address: idrxAddress, isStable: true });
+                }}
+              >
+                Transfer
+              </button>
             </div>
           </div>
-          <div className="pos-data">
-            <RowCell label="Holdings" align="right"><span className="mono text-[14px]">{fmtNum(s.qty, 2)}</span></RowCell>
-            <RowCell label="Avg buy" align="right"><span className="mono text-[14px]">1 IDRX</span></RowCell>
-            <RowCell label="Last" align="right"><span className="mono text-[14px]">1 IDRX</span></RowCell>
-            <RowCell label="Market value" align="right"><span className="mono text-[15px]">{fmtIDRX(s.value)}</span></RowCell>
-            <RowCell label="% Portfolio" align="right"><span className="mono text-[13px] text-[var(--body)]">—</span></RowCell>
-            <RowCell label="Unrealized P&L" align="right"><span className="mono text-[13px] text-[var(--body)]">—</span></RowCell>
-          </div>
-          <div className="pos-actions">
-            <button className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px] !text-[13px]" disabled>Trade</button>
-            <button
-              className="btn btn-ghost !border !border-[var(--ink)] !px-[12px] !py-[6px] !text-[13px]"
-              disabled={!idrxAddress}
-              onClick={() => {
-                if (idrxAddress) onTransfer({ ticker: s.ticker, name: s.name, price: 1, address: idrxAddress, isStable: true });
-              }}
-            >
-              Send
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function RowCell({ label, align = "left", children }: { label: string; align?: "left" | "right"; children: React.ReactNode }) {
-  return (
-    <div className={`row-cell min-w-0 ${align === "right" ? "text-right" : "text-left"}`}>
-      <span className="row-cell-label">{label}</span>
-      <div className="row-cell-value">{children}</div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -466,7 +411,7 @@ function PositionDetail({ position }: { position: PortfolioPosition }) {
           {isLoading || series.length === 0 ? (
             <div className="skeleton h-[200px] w-full" />
           ) : (
-            <AreaChart data={series} height={200} valueFormatter={v => fmtIDRX(v)} />
+            <AreaChart data={series} height={200} paper valueFormatter={v => fmtIDRX(v)} />
           )}
         </div>
         <div className="flex flex-col gap-[12px] pt-[4px]">
@@ -501,7 +446,7 @@ function KV({ k, v, highlight }: { k: string; v: React.ReactNode; highlight?: bo
 function ActivityList({ rows }: { rows: ActivityRow[] }) {
   if (rows.length === 0) {
     return (
-      <div className="hairline py-[18px] text-[var(--body)]">
+      <div className="border-b border-[var(--hairline)] py-[18px] text-[var(--body)]">
         No swap activity recorded for this wallet yet.
       </div>
     );
@@ -510,20 +455,23 @@ function ActivityList({ rows }: { rows: ActivityRow[] }) {
   return (
     <div>
       {rows.map((row) => (
-        <div key={row.txHash} className="hairline row-hover activity-row grid grid-cols-[auto_1fr_auto_auto] items-center gap-[20px] py-[16px]">
-          <div className="flex h-[36px] w-[36px] shrink-0 items-center justify-center border border-[var(--ink)] bg-[var(--canvas)]">
-            <Icon name="swap" size={14} />
-          </div>
+        <div key={row.txHash} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-[16px] border-b border-[var(--hairline)] px-[4px] py-[14px]">
+          <span
+            className="min-w-[64px] px-[8px] py-[4px] text-center text-[10px] font-[600] uppercase leading-[normal] tracking-[0.14em] text-[var(--putih)]"
+            style={{ background: ACTIVITY_COLORS[row.text] ?? ACTIVITY_DEFAULT_COLOR }}
+          >
+            {row.text}
+          </span>
           <div className="min-w-0">
-            <div className="text-[14px] font-semibold">{row.text} <span className="font-normal text-[var(--body)]">· {row.a}{row.b && " → "}{row.b}</span></div>
-            <div className="mt-[3px] text-[12px] text-[var(--body)]">
-              <span className="mono">{row.hash}</span> · {row.when}
-            </div>
+            <div className="text-[14px] font-[600] leading-[normal]">{row.a}{row.b && " → "}{row.b}</div>
+            <div className="mono text-[11px] leading-[normal] text-[var(--body)]">{row.when} · {row.hash}</div>
           </div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--positive)]">{row.status}</div>
-          <a className="btn-ghost btn only-desktop !inline-flex !items-center !gap-[6px] !p-[4px]" href={`https://sepolia.arbiscan.io/tx/${row.txHash}`} target="_blank" rel="noreferrer">
-            <Icon name="external" size={13} />
-          </a>
+          <div className="flex items-center gap-[12px]">
+            <span className="text-[11px] font-[600] uppercase tracking-[0.06em] text-[var(--positive)]">{row.status}</span>
+            <a className="btn-ghost btn only-desktop !inline-flex !items-center !gap-[6px] !p-[4px]" href={`https://sepolia.arbiscan.io/tx/${row.txHash}`} target="_blank" rel="noreferrer">
+              <Icon name="external" size={13} />
+            </a>
+          </div>
         </div>
       ))}
     </div>

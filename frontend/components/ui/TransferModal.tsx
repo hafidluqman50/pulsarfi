@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { type Address } from 'viem';
 import { fmtNum } from '@/lib/data';
 import { DetailRow } from '@/components/swap/SwapView';
-import { Icon } from '@/components/ui/Icon';
 
 export type TransferToken = {
   ticker: string;
@@ -29,54 +28,67 @@ export function TransferModal({ token, balance, onClose, onSubmit, busy }: Trans
   const ok  = /^0x[a-fA-F0-9]{40}$/.test(to) && num > 0 && num <= balance && !busy;
 
   return (
-    <div className="overlay fixed inset-[0] z-[200] flex items-center justify-center bg-[rgba(22,17,14,0.45)] p-[16px]" onClick={onClose}>
-      <div className="modal w-[440px] max-w-full border border-[var(--ink)] bg-[var(--putih)] shadow-[8px_8px_0_0_rgba(22,17,14,0.10)]" onClick={e => e.stopPropagation()}>
-        <div className="hairline flex items-center justify-between px-[20px] py-[16px]">
-          <div className="display !text-[22px]">Send {token.ticker}</div>
-          <button className="btn-ghost btn !p-[4px]" onClick={onClose}><Icon name="x" /></button>
-        </div>
-        <div className="flex flex-col gap-[14px] p-[20px]">
-          <div>
-            <div className="eyebrow mb-[6px] !text-[var(--body)]">Recipient address</div>
-            <input className="input mono" placeholder="0x… or .arb name" value={to} onChange={e => setTo(e.target.value)} />
+    <div className="overlay fixed inset-[0] z-[200] flex items-center justify-center bg-[rgba(22,17,14,0.32)] p-[16px]" onClick={onClose}>
+      <div className="rise paper-sheaf w-[440px] max-w-full" onClick={e => e.stopPropagation()}>
+        <div className="sheet">
+          <div className="flex items-center justify-between border-b border-[var(--hairline)] px-[20px] py-[16px]">
+            <div className="display !text-[22px] !font-[500] !leading-[normal]">Send {token.ticker}</div>
+            <button
+              className="h-[30px] w-[30px] cursor-pointer appearance-none border border-[var(--hairline)] bg-[var(--putih)] text-[13px] text-[var(--ink)]"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              ✕
+            </button>
           </div>
-          <div>
-            <div className="mb-[6px] flex justify-between">
-              <div className="eyebrow !text-[var(--body)]">Amount</div>
-              <span className="mono text-[12px] text-[var(--body)]">Balance {fmtNum(balance, 4)}</span>
-            </div>
-            <div className="relative">
+          <div className="flex flex-col gap-[14px] p-[20px]">
+            <div>
+              <div className="mb-[6px] text-[10px] font-[600] uppercase leading-[normal] tracking-[0.14em] text-[var(--body)]">Recipient address</div>
               <input
-                className="input mono !pr-[60px]"
-                placeholder="0.00"
-                value={amt}
-                onChange={e => setAmt(e.target.value.replace(/[^0-9.]/g, ''))}
+                className={`input mono !bg-[var(--canvas)] !p-[12px] !text-[14px] !font-[500] ${to ? '!border-[var(--ink)]' : ''}`}
+                placeholder="0x… or .arb name"
+                value={to}
+                onChange={e => setTo(e.target.value)}
               />
-              <button
-                onClick={() => setAmt(balance.toString())}
-                className="absolute right-[6px] top-1/2 -translate-y-1/2 cursor-pointer appearance-none border border-[var(--hairline-strong)] bg-[var(--canvas)] px-[8px] py-[4px] text-[11px] font-semibold [font-family:var(--font-inter,_Inter,_sans-serif)]"
-              >
-                MAX
-              </button>
             </div>
-            {num > balance && <div className="mt-[6px] text-[12px] text-[var(--negative)]">Exceeds available balance</div>}
-          </div>
-          <div className="hairline-top flex flex-col gap-[6px] pt-[14px] text-[13px]">
-            <DetailRow k="Network"     v="Arbitrum Sepolia" />
-            <DetailRow k="Network fee" v="~$0.12" />
-          </div>
-          {!token.isStable && (
-            <div className="border border-[var(--hairline)] bg-[var(--canvas-soft)] px-[12px] py-[10px] text-[12px] leading-[1.45] text-[var(--body)]">
-              Cost basis is tracked accurately for PulsarFi swaps. The recipient&apos;s average buy and P&amp;L may be estimated from the current IDX reference price.
+            <div>
+              <div className="mb-[6px] flex justify-between">
+                <div className="text-[10px] font-[600] uppercase leading-[normal] tracking-[0.14em] text-[var(--body)]">Amount</div>
+                <span className="mono text-[12px] leading-[normal] text-[var(--body)]">Balance {fmtNum(balance, 4)}</span>
+              </div>
+              <div className="relative">
+                <input
+                  className={`input mono !bg-[var(--canvas)] !p-[12px] !pr-[60px] !text-[15px] !font-[500] ${amt ? '!border-[var(--ink)]' : ''}`}
+                  placeholder="0.00"
+                  value={amt}
+                  onChange={e => setAmt(e.target.value.replace(/[^0-9.]/g, ''))}
+                />
+                <button
+                  onClick={() => setAmt(balance.toString())}
+                  className="absolute right-[6px] top-1/2 -translate-y-1/2 cursor-pointer appearance-none border border-[var(--hairline-strong)] bg-[var(--canvas-soft)] px-[8px] py-[4px] text-[11px] font-[600] [font-family:var(--font-inter,_Inter,_sans-serif)]"
+                >
+                  MAX
+                </button>
+              </div>
+              {num > balance && <div className="mt-[6px] text-[12px] text-[var(--merah)]">Exceeds available balance</div>}
             </div>
-          )}
-          <button
-            className="btn btn-primary !w-full !p-[14px]"
-            disabled={!ok}
-            onClick={() => onSubmit({ token, to: to as Address, amount: amt })}
-          >
-            {busy ? 'Sending...' : `Send ${token.ticker}`}
-          </button>
+            <div className="flex flex-col gap-[6px] border-t border-[var(--hairline)] pt-[14px] text-[13px]">
+              <DetailRow k="Network"     v="Arbitrum Sepolia" />
+              <DetailRow k="Network fee" v="~$0.12" />
+            </div>
+            {!token.isStable && (
+              <div className="border border-[var(--hairline)] bg-[var(--canvas-soft)] px-[12px] py-[10px] text-[12px] leading-[1.45] text-[var(--body)]">
+                Cost basis is tracked accurately for PulsarFi swaps. The recipient&apos;s average buy and P&amp;L may be estimated from the current IDX reference price.
+              </div>
+            )}
+            <button
+              className="btn btn-primary !w-full !p-[14px]"
+              disabled={!ok}
+              onClick={() => onSubmit({ token, to: to as Address, amount: amt })}
+            >
+              {busy ? 'Sending...' : `Send ${token.ticker}`}
+            </button>
+          </div>
         </div>
       </div>
     </div>

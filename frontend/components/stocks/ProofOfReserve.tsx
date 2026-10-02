@@ -2,6 +2,7 @@
 
 import type { ReserveEntry } from '@/http/custodian/custodianApi';
 import { formatRawToken, relativeAge } from '@/components/custodian/utils';
+import { ISO_PALETTES, IsoBar } from '@/components/ui/IsoBar';
 import { rawTokenToNumber } from '@/lib/stockDetail';
 import { useViewportWidth } from '@/lib/useViewportWidth';
 
@@ -10,28 +11,8 @@ const MAX_BAR_HEIGHT = 130;
 const MIN_BAR_HEIGHT = 6;
 const BAR_FOOTPRINT = 60;
 
-interface BarPalette {
-  top: string;
-  front: string;
-  side: string;
-}
-
-const CUSTODY_PALETTE: BarPalette = { top: '#3a312b', front: '#16110e', side: '#000' };
-const SUPPLY_PALETTE: BarPalette = { top: '#c8102e', front: '#9a0c24', side: '#7a0a1d' };
-
-function IsoBar({ x, y, height, palette }: { x: number; y: number; height: number; palette: BarPalette }) {
-  const width = BAR_FOOTPRINT;
-  const depth = BAR_FOOTPRINT;
-  return (
-    <div style={{ position: 'absolute', left: x, top: y, width, height: depth, transformStyle: 'preserve-3d' }}>
-      <div style={{ position: 'absolute', left: 0, top: 0, width, height, background: palette.front, transformOrigin: '0 0', transform: 'rotateX(90deg)' }} />
-      <div style={{ position: 'absolute', left: 0, top: depth, width, height, background: palette.front, transformOrigin: '0 0', transform: 'rotateX(90deg)' }} />
-      <div style={{ position: 'absolute', left: 0, top: 0, width: height, height: depth, background: palette.side, transformOrigin: '0 0', transform: 'rotateY(-90deg)' }} />
-      <div style={{ position: 'absolute', left: width, top: 0, width: height, height: depth, background: palette.side, transformOrigin: '0 0', transform: 'rotateY(-90deg)' }} />
-      <div style={{ position: 'absolute', inset: 0, background: palette.top, transform: `translateZ(${height}px)` }} />
-    </div>
-  );
-}
+const CUSTODY_PALETTE = ISO_PALETTES[1];
+const SUPPLY_PALETTE = ISO_PALETTES[0];
 
 function barHeight(value: number, largest: number) {
   if (largest <= 0) return MIN_BAR_HEIGHT;
@@ -89,8 +70,8 @@ export function ProofOfReserve({ entry, isLoading }: ProofOfReserveProps): React
             transform: `scale(${stageScale}) rotateX(58deg) rotateZ(-38deg)`,
           }}
         >
-          <IsoBar x={20} y={10} height={barHeight(custodyAmount, largest)} palette={CUSTODY_PALETTE} />
-          <IsoBar x={120} y={10} height={barHeight(supplyAmount, largest)} palette={SUPPLY_PALETTE} />
+          <IsoBar x={20} y={10} width={BAR_FOOTPRINT} depth={BAR_FOOTPRINT} height={barHeight(custodyAmount, largest)} palette={CUSTODY_PALETTE} />
+          <IsoBar x={120} y={10} width={BAR_FOOTPRINT} depth={BAR_FOOTPRINT} height={barHeight(supplyAmount, largest)} palette={SUPPLY_PALETTE} />
         </div>
       </div>
       <div className="grid grid-cols-2 gap-[12px] border-t border-[var(--hairline)] pt-[12px]">
