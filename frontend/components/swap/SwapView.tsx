@@ -1,6 +1,7 @@
 "use client";
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { type Address } from "viem";
@@ -619,9 +620,10 @@ function MoversList({ tokens }: { tokens: MarketToken[] }) {
 			{movers.map((token) => {
 				const isPositive = token.change24h >= 0;
 				return (
-					<div
+					<Link
 						key={token.ticker}
-						className="hairline mover-paper mover-row grid grid-cols-[auto_minmax(0,1fr)_88px_auto_auto] items-center gap-[16px] px-[10px] py-[14px] max-[719px]:gap-[10px]"
+						href={`/stocks/${token.ticker}`}
+						className="hairline mover-paper mover-row grid grid-cols-[auto_minmax(0,1fr)_88px_auto_auto] items-center gap-[16px] px-[10px] py-[14px] text-inherit no-underline max-[719px]:gap-[10px]"
 					>
 						<PStockMark ticker={token.ticker} size={32} />
 						<div className="min-w-0">
@@ -649,7 +651,7 @@ function MoversList({ tokens }: { tokens: MarketToken[] }) {
 						>
 							{fmtPct(token.change24h)}
 						</div>
-					</div>
+					</Link>
 				);
 			})}
 		</div>

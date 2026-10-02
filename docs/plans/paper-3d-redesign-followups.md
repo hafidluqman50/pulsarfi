@@ -2,13 +2,14 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
+| **Version** | 1.2 |
 | **Status** | Approved |
 | **Date Created** | 2026-10-02 |
 | **Last Updated** | 2026-10-02 |
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2 | 2026-10-02 | Owner decisions on the two open findings. Price scale: kept as is on purpose, it copies how brokerage apps quote prices. Top movers: patched so each row opens the stock page. Section 3.4: both rows updated. Section 3.5 added for the movers. Section 4: `SwapView.tsx` added. Section 7: movers check added. |
 | 1.1 | 2026-10-02 | Correction found while fixing. Section 1 item 4 and 3.4: once the resize listener in `QuasarPanel` was replaced, the linter reported a second "state set inside an effect" in the same file, the one that opens the first saved chat automatically. It was hidden behind the first error. It decides which chat opens, so it is left alone and listed with the `ArmPanel` items. Verification step 7.1 now expects three remaining lint errors, not two. |
 | 1.0 | 2026-10-02 | Initial plan. Approved by the owner's instruction to fix the Quasar message bubble together with the findings reported earlier. |
 
@@ -77,12 +78,18 @@ Three lint errors are **not** touched: two in `ArmPanel.tsx` (state synced from 
 | `TaskDetail.tsx` | Remove the unused `isArmed` and its comment. |
 | `ArmPanel.tsx` | `let feeOverrides` becomes `const feeOverrides`. |
 
+### 3.5 Top movers open the stock page
+
+| Item | Spec |
+|---|---|
+| Behaviour | Each row in Home "Top movers" is a link to `/stocks/{ticker}`, the same route the Markets board uses. |
+| Look | Unchanged: the row keeps its grid, hover lift and paper shadow. The link has no underline and keeps the text colours. |
+
 ### 3.4 Findings noted, not changed
 
 | Finding | Why it is left |
 |---|---|
-| Markets and Stock detail show the per-share price (for example `175`), while the ticker and Home movers show the per-lot price (for example `17.500`). The handoff shows per-lot prices on both. | Changing it changes the numbers users read. It needs the owner's decision and a check of what the backend sends. |
-| Home "Top movers" rows lift on hover (as in the handoff) but are not clickable, while the handoff opens the stock page. | Making them links adds navigation. Waiting for the owner's answer. |
+| Markets and Stock detail show the per-share price (for example `175`), while the ticker and Home movers show the per-lot price (for example `17.500`). | Decided by the owner: intended, it follows how brokerage apps quote prices. No change. |
 | `ArmPanel` lint errors (state synced inside an effect, `any`-typed write request) and the `QuasarPanel` effect that opens the first saved chat. | They touch the transaction flow and the choice of the open chat, so each needs its own review. |
 
 ---
@@ -97,6 +104,7 @@ Three lint errors are **not** touched: two in `ArmPanel.tsx` (state synced from 
 | Quasar | `frontend/components/agent/TaskDetail.tsx` | `[MODIFY]` |
 | Quasar | `frontend/components/agent/ArmPanel.tsx` (one keyword) | `[MODIFY]` |
 | Layout | `frontend/components/layout/PriceTicker.tsx` | `[MODIFY]` |
+| Home | `frontend/components/swap/SwapView.tsx` (movers rows become links) | `[MODIFY]` |
 | Docs | `docs/plans/paper-3d-redesign-followups.md` | `[NEW]` (this file) |
 
 Not touched: `cardContract.ts`, `lib/data.ts` (the sample list stays, it is still used elsewhere), `http/`, `contexts/`, `backend/`, `smart-contract/`.
@@ -164,3 +172,4 @@ Frontend only. Interactive checks run through the browser debugging port against
 | 6 | Reserves table with one off-peg entry | Row tinted `#fdf3f4`, red ratio and dot |
 | 7 | Trade ledger, rule card, comparison bars, expanded plan row | Match the handoff |
 | 8 | Resize across 700px | Panel switches between corner panel and full screen |
+| 9 | Click a Top movers row on Home | Opens `/stocks/{ticker}` for that row, look unchanged |
