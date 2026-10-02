@@ -46,7 +46,7 @@ export function TokenSelectModal({ open, tokens, balances, onSelect, onClose, ti
 
   return (
     <div className="overlay" style={{
-      position: "fixed", inset: 0, background: "rgba(22,17,14,0.45)", zIndex: 400,
+      position: "fixed", inset: 0, background: "rgba(22,17,14,0.32)", zIndex: 400,
       display: "flex", alignItems: "center", justifyContent: "center",
     }} onClick={close}>
       <div className="rise paper-sheaf" onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: "92vw" }}>

@@ -26,11 +26,11 @@ export function StockDetailStats({
   ];
 
   return (
-    <div className="stock-stats-grid">
+    <div className="mt-[28px] grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] border border-[var(--hairline)] bg-[var(--putih)]">
       {stats.map(statItem => (
-        <div key={statItem.label} className="stock-stats-cell">
-          <div className="eyebrow mb-[5px] !text-[9px] !text-[var(--body)]">{statItem.label}</div>
-          <div className="mono text-[14px] font-bold">{statItem.value}</div>
+        <div key={statItem.label} className="border-r border-[var(--hairline)] px-[18px] py-[14px]">
+          <div className="mb-[5px] text-[9px] font-[600] uppercase leading-[normal] tracking-[0.16em] text-[var(--body)]">{statItem.label}</div>
+          <div className="mono text-[14px] font-[700] leading-[normal] [overflow-wrap:anywhere]">{statItem.value}</div>
         </div>
       ))}
     </div>

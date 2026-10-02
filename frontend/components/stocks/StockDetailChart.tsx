@@ -2,32 +2,30 @@
 
 import { AreaChart } from '@/components/charts/AreaChart';
 import type { PriceHistoryPoint } from '@/http/market/priceApi';
-import { fmtIDRX, fmtNum } from '@/lib/data';
+import { fmtIDRX } from '@/lib/data';
 import { STOCK_TIMEFRAME_OPTIONS } from '@/lib/stockDetail';
+import { ChartSkeleton } from './ChartSkeleton';
 
 type StockDetailChartProps = {
   chartData: PriceHistoryPoint[];
   isHistoryLoading: boolean;
-  isReservesLoading: boolean;
   selectedTimeframe: string;
-  stockTicker: string;
-  tokenSupply: number | null;
   onTimeframeChange: (timeframe: string) => void;
 };
+
+const CHART_HEIGHT = 260;
 
 export function StockDetailChart({
   chartData,
   isHistoryLoading,
-  isReservesLoading,
   selectedTimeframe,
-  stockTicker,
-  tokenSupply,
   onTimeframeChange,
 }: StockDetailChartProps): React.ReactNode {
   return (
-    <div className="mb-[20px]">
-      <div className="stock-chart-header mb-[10px] flex items-center justify-between">
-        <div className="range-pills">
+    <div>
+      <div className="mb-[12px] flex flex-wrap items-center justify-between gap-[12px]">
+        <div className="display !text-[20px] !leading-[normal]">Price · IDX</div>
+        <div className="range-pills range-pills-full">
           {STOCK_TIMEFRAME_OPTIONS.map(timeframe => (
             <button
               key={timeframe}
@@ -38,21 +36,15 @@ export function StockDetailChart({
             </button>
           ))}
         </div>
-        <span className="mono stock-supply-info text-[11px] text-[var(--body)]">
-          {isReservesLoading || tokenSupply == null ? (
-            <span className="skeleton inline-block h-[13px] w-[150px] align-[-2px]" />
-          ) : (
-            <>Total supply · {fmtNum(tokenSupply, 0)} {stockTicker}</>
-          )}
-        </span>
       </div>
-      <div className="border border-[var(--hairline)] bg-[var(--putih)] pb-[4px] pt-[12px]">
+      <div className="paper-stack px-[16px] pb-[0] pt-[12px]">
         {isHistoryLoading || chartData.length === 0 ? (
-          <div className="skeleton h-[340px] w-full" />
+          <ChartSkeleton height={CHART_HEIGHT} />
         ) : (
           <AreaChart
             data={chartData}
-            height={340}
+            height={CHART_HEIGHT}
+            paper
             valueFormatter={value => fmtIDRX(value)}
           />
         )}
