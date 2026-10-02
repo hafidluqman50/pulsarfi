@@ -148,6 +148,10 @@ img, svg, video { max-width: 100%; }
 .overlay { animation: overlay-in .18s ease-out both; }
 .modal   { animation: modal-in .22s cubic-bezier(.2,.7,.3,1) both; }
 
+@keyframes flip { from { transform: scaleY(.1); opacity: .3; } to { transform: scaleY(1); opacity: 1; } }
+.board-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .board-dot { animation: none; } }
+
 /* Spinner */
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin .8s linear infinite; }
@@ -185,6 +189,7 @@ img, svg, video { max-width: 100%; }
 .range-pills button { appearance: none; border: 0; background: transparent; padding: 8px 14px; cursor: pointer; font: 600 12px/1 var(--font-inter, "Inter"), sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: var(--body); }
 .range-pills button.active { background: var(--ink); color: var(--putih); }
 .range-pills button:hover:not(.active) { color: var(--ink); }
+.range-pills.range-pills-full button { padding: 8px 14px !important; font-size: 12px !important; }
 
 .pnl-pos { color: var(--positive); }
 .pnl-neg { color: var(--negative); }
@@ -258,10 +263,6 @@ img, svg, video { max-width: 100%; }
   .reserves-table .table-row-stack { grid-template-columns: 1fr !important; row-gap: 2px !important; }
   .kyc-table .table-row-stack { grid-template-columns: 1fr !important; row-gap: 2px !important; }
 
-  .stock-list-row { grid-template-columns: 1fr auto auto !important; gap: 12px !important; }
-  .stock-list-row .stock-sector   { display: none !important; }
-  .stock-list-row .stock-sparkline { display: none !important; }
-
   .stock-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   .stock-stats-grid .stock-stats-cell { border-left: none !important; }
   .stock-stats-grid .stock-stats-cell:nth-child(even) { border-left: 1px solid var(--hairline) !important; }
@@ -278,8 +279,6 @@ img, svg, video { max-width: 100%; }
 .nav-logo-mobile { height: 36px; }
 
 /* Stock market pages — base (desktop) */
-.stock-list-row    { display: grid; grid-template-columns: 2fr 1.2fr 1fr 1fr 80px; gap: 16px; padding: 16px; align-items: center; cursor: pointer; transition: background .12s ease; }
-.stock-list-row:hover { background: var(--canvas-soft); }
 .stock-stats-grid  { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--hairline); background: var(--putih); margin-bottom: 36px; }
 .stock-stats-cell  { min-width: 0; padding: 14px 20px; overflow: hidden; }
 .stock-stats-cell .mono { overflow-wrap: anywhere; }

@@ -17,6 +17,7 @@ import type { TimePoint } from '@/lib/data';
 const COLORS = {
   canvas:   '#fbfaf7',
   hairline: '#e3ddd2',
+  hairlineSoft: '#e9e4dc',
   body:     '#6b635c',
   ink:      '#16110e',
   positive: '#1f7a4b',
@@ -27,6 +28,7 @@ interface AreaChartProps {
   data: TimePoint[];
   height?: number;
   valueFormatter?: (value: number) => string;
+  paper?: boolean;
 }
 
 function toSeriesPoint(point: TimePoint): { time: UTCTimestamp; value: number } {
@@ -42,7 +44,7 @@ function dedupeAscending(
 
 // Responsibility: mount/update/destroy a lightweight-charts area chart for any TimePoint[] dataset.
 // Does not own range logic, data fetching, or any business concern.
-export function AreaChart({ data, height = 280, valueFormatter }: AreaChartProps) {
+export function AreaChart({ data, height = 280, valueFormatter, paper = false }: AreaChartProps) {
   const containerRef      = useRef<HTMLDivElement>(null);
   const chartRef          = useRef<IChartApi | null>(null);
   const seriesRef         = useRef<ISeriesApi<'Area'> | null>(null);
@@ -61,7 +63,7 @@ export function AreaChart({ data, height = 280, valueFormatter }: AreaChartProps
       width:  container.clientWidth,
       height,
       layout: {
-        background:  { type: ColorType.Solid, color: COLORS.canvas },
+        background:  { type: ColorType.Solid, color: paper ? 'rgba(0,0,0,0)' : COLORS.canvas },
         textColor:   COLORS.body,
         fontFamily:  '"JetBrains Mono", ui-monospace, monospace',
         fontSize:    10,
@@ -69,7 +71,9 @@ export function AreaChart({ data, height = 280, valueFormatter }: AreaChartProps
       },
       grid: {
         vertLines: { visible: false },
-        horzLines: { color: COLORS.hairline, style: LineStyle.Dashed },
+        horzLines: paper
+          ? { color: COLORS.hairlineSoft, style: LineStyle.Solid }
+          : { color: COLORS.hairline, style: LineStyle.Dashed },
       },
       crosshair: {
         mode:     CrosshairMode.Normal,
@@ -119,7 +123,7 @@ export function AreaChart({ data, height = 280, valueFormatter }: AreaChartProps
       chartRef.current  = null;
       seriesRef.current = null;
     };
-  }, [height]);
+  }, [height, paper]);
 
   // Update series data and direction-based color on every data change
   useEffect(() => {
