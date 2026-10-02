@@ -103,6 +103,7 @@ export function statusColor(status: string): string {
   if (status === 'needs_input') return 'var(--merah)';
   if (status === 'failed' || status === 'error') return 'var(--negative)';
   if (status === 'done' || status === 'completed') return 'var(--positive)';
+  if (status === 'in_progress' || status === 'running') return 'var(--warn)';
   return 'var(--ticker)';
 }
 

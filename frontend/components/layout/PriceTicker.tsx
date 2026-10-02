@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { PSTOCKS, fmtPct, fmtIDRX } from '@/lib/data';
+import { fmtPct, fmtIDRX } from '@/lib/data';
 import { useMarketStocks } from '@/http/market/hooks';
 
 const SKELETON_WIDTHS = [72, 88, 64, 96, 80, 76, 84, 68];
@@ -17,11 +17,7 @@ export function PriceTicker() {
         changePercent: stock.change_24h,
       }));
     }
-    return PSTOCKS.map(stock => ({
-      ticker:        stock.ticker,
-      price:         stock.price,
-      changePercent: stock.change24h,
-    }));
+    return [];
   }, [marketStocks]);
 
   if (isLoading && !marketStocks) {
@@ -39,6 +35,8 @@ export function PriceTicker() {
       </div>
     );
   }
+
+  if (tickerItems.length === 0) return null;
 
   const renderTickerRow = (animationKey: string) => (
     <div key={animationKey} className="flex gap-[48px]">

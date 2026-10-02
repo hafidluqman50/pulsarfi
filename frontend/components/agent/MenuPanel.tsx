@@ -22,6 +22,7 @@ export function MenuPanel({ active, onSelect }: MenuPanelProps) {
       {items.map((item) => (
         <button
           key={item.key}
+          className={item.disabled ? undefined : 'quasar-menu-row'}
           disabled={item.disabled}
           onClick={() => !item.disabled && onSelect(item.key)}
           style={{
@@ -29,7 +30,8 @@ export function MenuPanel({ active, onSelect }: MenuPanelProps) {
             border: 0,
             borderBottom: '1px solid var(--hairline)',
             cursor: item.disabled ? 'not-allowed' : 'pointer',
-            background: active === item.key ? 'var(--canvas-soft)' : 'var(--canvas)',
+            background: active === item.key ? 'var(--putih)' : 'var(--canvas)',
+            boxShadow: active === item.key ? 'inset 3px 0 0 var(--merah)' : 'none',
             padding: '16px 14px',
             textAlign: 'left',
             display: 'flex',

@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { Token, Balances, fmtNum, fmtIDRX } from '@/lib/data';
-import { Icon } from './Icon';
 import { PStockMark } from './PStockMark';
 
 interface TokenSelectModalProps {
@@ -47,59 +46,62 @@ export function TokenSelectModal({ open, tokens, balances, onSelect, onClose, ti
 
   return (
     <div className="overlay" style={{
-      position: "fixed", inset: 0, background: "rgba(22,17,14,0.45)", zIndex: 400,
+      position: "fixed", inset: 0, background: "rgba(22,17,14,0.32)", zIndex: 400,
       display: "flex", alignItems: "center", justifyContent: "center",
     }} onClick={close}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{
-        background: "var(--putih)", width: 460, maxWidth: "92vw", maxHeight: "82vh",
-        display: "flex", flexDirection: "column",
-        border: "1px solid var(--ink)",
-        boxShadow: "8px 8px 0 0 rgba(22,17,14,0.10)",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 12px" }}>
-          <div className="display" style={{ fontSize: 22 }}>{title}</div>
-          <button className="btn-ghost btn" onClick={close} aria-label="Close" style={{ padding: 4 }}><Icon name="x" /></button>
-        </div>
-        <div className="hairline-strong" style={{ padding: "0 20px 14px" }}>
-          <div style={{ position: "relative" }}>
-            <div style={{ position: "absolute", top: "50%", left: 12, transform: "translateY(-50%)", color: "var(--body)" }}>
-              <Icon name="search" size={16} />
-            </div>
-            <input
-              autoFocus value={q} onChange={e => setQ(e.target.value)}
-              placeholder="Search by name, ticker, or sector"
-              className="input" style={{ paddingLeft: 36 }}
-            />
+      <div className="rise paper-sheaf" onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: "92vw" }}>
+        <div className="sheet" style={{ maxHeight: "82vh", display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 12px" }}>
+            <div className="display" style={{ fontSize: 22, fontWeight: 500 }}>{title}</div>
+            <button onClick={close} aria-label="Close" style={{
+              appearance: "none", border: "1px solid var(--hairline)", background: "#fff", width: 30, height: 30,
+              cursor: "pointer", fontSize: 13, color: "var(--ink)",
+            }}>✕</button>
           </div>
-        </div>
-        <div style={{ overflowY: "auto", flex: 1 }}>
-          {groupOrder.length === 0 && (
-            <div style={{ padding: "24px 20px", color: "var(--body)", fontSize: 14 }}>No tokens match.</div>
-          )}
-          {groupOrder.map(g => (
-            <div key={g}>
-              <div className="eyebrow hairline" style={{ padding: "10px 20px", color: "var(--body)", background: "var(--canvas)" }}>{g}</div>
-              {groups[g].map(tok => {
-                const bal = balances?.[tok.ticker] ?? 0;
-                return (
-                  <div key={tok.ticker} className="row-hover" onClick={() => select(tok)} style={{
-                    display: "flex", alignItems: "center", gap: 14,
-                    padding: "12px 20px", cursor: "pointer", borderBottom: "1px solid var(--hairline)",
-                  }}>
-                    <PStockMark ticker={tok.ticker} size={32} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{tok.ticker}</div>
-                      <div style={{ fontSize: 12, color: "var(--body)" }}>{tok.name}</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div className="mono" style={{ fontSize: 13 }}>{fmtNum(bal)}</div>
-                      <div className="mono" style={{ fontSize: 11, color: "var(--body)" }}>{tok.isStable ? "1 IDRX" : fmtIDRX(tok.price)}</div>
-                    </div>
-                  </div>
-                );
-              })}
+          <div className="hairline-strong" style={{ padding: "0 20px 14px" }}>
+            <div style={{ position: "relative" }}>
+              <div style={{ position: "absolute", top: "50%", left: 12, transform: "translateY(-50%)", color: "var(--body)", fontSize: 13 }}>⌕</div>
+              <input
+                autoFocus value={q} onChange={e => setQ(e.target.value)}
+                placeholder="Search by name, ticker, or sector"
+                className="input" style={{ background: "var(--canvas)", padding: "11px 12px 11px 34px", fontSize: 14 }}
+              />
             </div>
-          ))}
+          </div>
+          <div style={{ overflowY: "auto", flex: 1 }}>
+            {groupOrder.length === 0 && (
+              <div style={{ margin: "14px 20px", padding: "24px 20px", background: "#fff", border: "1px dashed var(--hairline-strong)", color: "var(--body)", fontSize: 14 }}>No tokens match.</div>
+            )}
+            {groupOrder.map(g => (
+              <div key={g}>
+                <div style={{
+                  padding: "9px 20px", background: "var(--canvas-soft)", borderBottom: "1px solid var(--hairline)",
+                  fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--body)",
+                }}>{g}</div>
+                {groups[g].map(tok => {
+                  const bal = balances?.[tok.ticker] ?? 0;
+                  return (
+                    <div key={tok.ticker} className="transition-colors hover:bg-[#fbfaf7]" onClick={() => select(tok)} style={{
+                      display: "flex", alignItems: "center", gap: 14,
+                      padding: "12px 20px", cursor: "pointer", borderBottom: "1px solid var(--hairline)",
+                    }}>
+                      <span style={{ width: 34, height: 34, background: "var(--canvas-soft)", display: "grid", placeItems: "center", flex: "none" }}>
+                        <PStockMark ticker={tok.ticker} size={26} />
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{tok.ticker}</div>
+                        <div style={{ fontSize: 12, color: "var(--body)" }}>{tok.name}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div className="mono" style={{ fontSize: 13 }}>{fmtNum(bal)}</div>
+                        <div className="mono" style={{ fontSize: 11, color: "var(--body)" }}>{tok.isStable ? "1 IDRX" : fmtIDRX(tok.price)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>

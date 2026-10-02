@@ -85,10 +85,10 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt, initialAnsw
 
   if (isCancelled) {
     return (
-      <div className="rise" style={{ border: '1px solid var(--hairline-strong)', background: 'var(--canvas-subtle, #f6f6f6)' }}>
+      <div className="rise" style={{ border: '1px solid var(--hairline-strong)', background: 'var(--canvas-soft)' }}>
         <div
           style={{
-            background: 'var(--hairline-strong, #888)',
+            background: 'var(--hairline-strong)',
             color: 'var(--putih)',
             padding: '8px 13px',
             display: 'flex',
@@ -147,7 +147,7 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt, initialAnsw
   }
 
   return (
-    <div className="rise" style={{ border: '1px solid var(--merah)', background: 'var(--putih)' }}>
+    <div className="rise" style={{ border: '1px solid var(--merah)', background: 'var(--putih)', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e8b4bd, 0 11px 0 -4px #fbfaf7, 0 12px 0 -4px #e3ddd2, 0 20px 24px -14px rgba(22,17,14,.3)' }}>
       <div
         style={{
           background: 'var(--merah)',
@@ -209,6 +209,7 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt, initialAnsw
                     color: value === opt ? 'var(--canvas)' : 'var(--ink)',
                     font: '500 12px/1 var(--font-sans)',
                     padding: '7px 10px',
+                    boxShadow: value === opt ? '0 3px 0 -1px #fff, 0 4px 0 -1px #16110e' : 'none',
                   }}
                 >
                   {opt}
@@ -227,7 +228,7 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt, initialAnsw
                           minWidth: 160,
                           appearance: 'none',
                           border: '1px solid var(--hairline-strong)',
-                          background: 'var(--putih)',
+                          background: 'var(--canvas)',
                           color: 'var(--ink)',
                           font: '600 13px/1.35 var(--font-mono)',
                           padding: '8px 10px',
@@ -299,7 +300,7 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt, initialAnsw
                           minWidth: 160,
                           appearance: 'none',
                           border: '1px solid var(--hairline-strong)',
-                          background: 'var(--putih)',
+                          background: 'var(--canvas)',
                           color: 'var(--ink)',
                           font: '600 13px/1.35 var(--font-mono)',
                           padding: '8px 10px',
@@ -348,7 +349,7 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt, initialAnsw
                       minWidth: 160,
                       appearance: 'none',
                       border: '1px solid var(--hairline-strong)',
-                      background: 'var(--putih)',
+                      background: 'var(--canvas)',
                       color: 'var(--ink)',
                       font: '500 12.5px/1.35 var(--font-sans)',
                       padding: '8px 10px',
@@ -369,11 +370,11 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt, initialAnsw
             disabled={!allAnswered || isSending}
             style={{
               appearance: 'none',
-              border: 0,
               cursor: !allAnswered || isSending ? 'not-allowed' : 'pointer',
               flex: 1,
-              background: !allAnswered || isSending ? 'var(--hairline-strong)' : 'var(--merah)',
-              color: 'var(--putih)',
+              background: !allAnswered || isSending ? 'var(--hairline)' : 'var(--merah)',
+              color: !allAnswered || isSending ? 'var(--body)' : 'var(--putih)',
+              border: !allAnswered || isSending ? '1px solid var(--hairline-strong)' : 0,
               font: '600 13px/1 var(--font-sans)',
               padding: 12,
             }}
@@ -390,11 +391,11 @@ export function ClarifyingQuestions({ uiProps, chatId, onSendPrompt, initialAnsw
             disabled={isSending}
             style={{
               appearance: 'none',
-              border: '1px solid var(--hairline-strong)',
+              border: '1px solid var(--ink)',
               cursor: isSending ? 'not-allowed' : 'pointer',
               background: 'transparent',
-              color: 'var(--body)',
-              font: '500 12.5px/1 var(--font-sans)',
+              color: 'var(--ink)',
+              font: '600 12px/1 var(--font-sans)',
               padding: '12px 14px',
               whiteSpace: 'nowrap',
             }}

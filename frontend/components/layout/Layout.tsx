@@ -12,7 +12,7 @@ export function Layout({ children }: LayoutProps) {
       <NavBar />
       <PriceTicker />
       <main className="flex-1">
-        {children}
+        <div className="page-turn">{children}</div>
       </main>
       <Footer />
     </div>

@@ -1,10 +1,12 @@
 "use client";
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { type Address } from "viem";
 import { useAccount } from "wagmi";
+import { CoinStack } from "@/components/home/CoinStack";
 import { Accordion } from "@/components/ui/Accordion";
 import { Icon } from "@/components/ui/Icon";
 import { PStockMark } from "@/components/ui/PStockMark";
@@ -68,6 +70,7 @@ export function SwapView({ headline }: SwapViewProps) {
 	const [detailsOpen, setDetailsOpen] = useState(true);
 	const [slippage, setSlippage] = useState(0.5);
 	const [showSettings, setShowSettings] = useState(false);
+	const [flipDegrees, setFlipDegrees] = useState(0);
 
 	const inputToken = useMemo(
 		() =>
@@ -111,6 +114,7 @@ export function SwapView({ headline }: SwapViewProps) {
 		setInputTicker(outputToken.ticker);
 		setOutputTicker(inputToken.ticker);
 		setAmount("");
+		setFlipDegrees((degrees) => degrees + 180);
 	}
 
 	function selectToken(token: Token) {
@@ -183,24 +187,24 @@ export function SwapView({ headline }: SwapViewProps) {
 					(inputBalance * pct || 0).toFixed(inputToken.isStable ? 2 : 4),
 				)
 			}
-			className="cursor-pointer appearance-none border border-[var(--hairline-strong)] bg-transparent px-[10px] py-[4px] text-[11px] font-semibold uppercase tracking-[0.08em] [font-family:var(--font-inter,_Inter,_sans-serif)]"
+			className="cursor-pointer appearance-none border border-[var(--hairline-strong)] bg-transparent px-[10px] py-[4px] text-[11px] font-[600] uppercase tracking-[0.08em] [font-family:var(--font-inter,_Inter,_sans-serif)] hover:border-[var(--ink)]"
 		>
 			{pct === 1 ? "Max" : `${pct * 100}%`}
 		</button>
 	);
 
 	return (
-		<div className="grid-2col !px-[24px] !py-[40px]">
+		<div className="mx-auto grid w-full max-w-[1440px] grid-cols-[minmax(0,1fr)_480px] items-start gap-[48px] px-[24px] py-[40px] max-[1023px]:grid-cols-[minmax(0,1fr)] max-[1023px]:gap-[32px] max-[719px]:px-[16px] max-[719px]:py-[24px]">
 			{/* LEFT — Editorial */}
 			<div>
-				<h1 className="display hero-display !m-[0] !text-[70px] !font-normal !leading-[0.96] !tracking-[-0.03em]">
+				<h1 className="display hero-display !m-[0] !text-[70px] !font-[400] !leading-[0.96] !tracking-[-0.03em]">
 					{headline.line1}
 					<br />
 					<span className="display-it">{headline.line2}</span>
 					<br />
 					{headline.line3}
 				</h1>
-				<p className="mt-[28px] max-w-[540px] text-[18px] font-light leading-[1.55] text-[var(--ink-soft)] [font-family:var(--font-fraunces,_Fraunces,_serif)]">
+				<p className="mt-[28px] max-w-[540px] text-[18px] font-[300] leading-[1.55] text-[var(--ink-soft)] [font-family:var(--font-fraunces,_Fraunces,_serif)]">
 					Eight blue-chip equities from the Indonesia Stock Exchange, tokenized
 					1:1 on Arbitrum. Trade{" "}
 					<em className="display-it">BUMIP, BRPTP, BBCAP</em> and others at any
@@ -208,7 +212,7 @@ export function SwapView({ headline }: SwapViewProps) {
 					holds the underlying; arbitrageurs maintain the peg.
 				</p>
 
-				<div className="hairline-top grid-3col mt-[36px] pt-[24px]">
+				<div className="mt-[36px] grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-[18px]">
 					<Stat
 						label="Total Volume"
 						value={protocolStats ? `${fmtIDRXCompact(protocolStats.volume_24h)} IDRX` : "—"}
@@ -226,8 +230,10 @@ export function SwapView({ headline }: SwapViewProps) {
 					/>
 				</div>
 
+				<CoinStack />
+
 				<div className="mt-[36px]">
-					<div className="eyebrow mb-[14px] !text-[var(--body)]">
+					<div className="eyebrow mb-[14px] !leading-[normal] !text-[var(--body)]">
 						Top movers · 24h
 					</div>
 					<MoversList tokens={marketTokens} />
@@ -235,39 +241,43 @@ export function SwapView({ headline }: SwapViewProps) {
 			</div>
 
 			{/* RIGHT — Swap card */}
-			<div className="swap-sticky sticky top-[24px]">
-				<div className="card swap-card-shadow p-[0] shadow-[12px_12px_0_0_rgba(22,17,14,0.08)]">
+			<div className="sticky top-[120px] w-full max-[1023px]:static max-[1023px]:max-w-[560px]">
+				<div className="paper-stack-3 p-[0]">
 					<div className="hairline flex items-center justify-between px-[20px] py-[16px]">
-						<div className="display !text-[22px] !font-medium">
+						<div className="display !text-[22px] !font-[500] !leading-[normal]">
 							Swap
 						</div>
-						<div className="flex items-center gap-[14px]">
+						<div className="flex items-center gap-[10px]">
 							<button
 								type="button"
-								className="btn btn-ghost !p-[4px]"
+								className={`flex h-[30px] w-[30px] cursor-pointer appearance-none items-center justify-center border text-[14px] ${
+									showSettings
+										? "border-[var(--ink)] bg-[var(--ink)] text-[var(--putih)]"
+										: "border-[var(--hairline)] bg-[var(--putih)] text-[var(--ink)]"
+								}`}
 								onClick={() => setShowSettings((s) => !s)}
 								aria-label="Settings"
 							>
-								<Icon name="settings" size={16} />
+								⚙
 							</button>
 						</div>
 					</div>
 
 					{showSettings && (
-						<div className="hairline bg-[var(--canvas)] px-[20px] py-[14px]">
-							<div className="eyebrow mb-[8px] !text-[var(--body)]">
+						<div className="hairline bg-[var(--canvas-soft)] px-[20px] py-[14px]">
+							<div className="eyebrow mb-[8px] !text-[10px] !tracking-[0.14em] !text-[var(--body)]">
 								Slippage Tolerance
 							</div>
-							<div className="flex gap-[8px]">
+							<div className="flex gap-[6px]">
 								{[0.1, 0.5, 1.0].map((s) => (
 									<button
 										type="button"
 										key={s}
 										onClick={() => setSlippage(s)}
-										className={`cursor-pointer appearance-none border border-[var(--ink)] px-[14px] py-[8px] text-[13px] font-semibold [font-family:var(--font-inter,_Inter,_sans-serif)] ${
+										className={`cursor-pointer appearance-none border px-[14px] py-[8px] text-[13px] font-[600] [font-family:var(--font-inter,_Inter,_sans-serif)] ${
 											slippage === s
-												? "bg-[var(--ink)] text-[var(--putih)]"
-												: "bg-transparent text-[var(--ink)]"
+												? "border-[var(--ink)] bg-[var(--ink)] text-[var(--putih)] shadow-[0_3px_0_-1px_#f3f0ea,0_4px_0_-1px_#16110e]"
+												: "border-[var(--hairline-strong)] bg-[var(--putih)] text-[var(--ink)]"
 										}`}
 									>
 										{s}%
@@ -311,14 +321,19 @@ export function SwapView({ headline }: SwapViewProps) {
 							type="button"
 							onClick={flip}
 							aria-label="Flip"
-							className="absolute left-1/2 top-[-18px] flex h-[36px] w-[36px] -translate-x-1/2 cursor-pointer items-center justify-center border border-[var(--ink)] bg-[var(--canvas)] text-[var(--ink)]"
+							className="absolute left-1/2 top-[-18px] z-[3] ml-[-18px] flex h-[36px] w-[36px] cursor-pointer items-center justify-center border border-[var(--ink)] bg-[var(--canvas)] text-[15px] text-[var(--ink)] hover:bg-[var(--ink)] hover:text-[var(--putih)]"
+							style={{
+								transform: `rotate(${flipDegrees}deg)`,
+								transition: "transform .4s cubic-bezier(.2,.7,.3,1), background .15s",
+							}}
 						>
-							<Icon name="swap" size={14} />
+							⇅
 						</button>
 					</div>
 
 					<SwapField
 						label="You receive"
+						tinted
 						token={outputToken ?? STABLES[0]}
 						balance={outputBalance}
 						amount={
@@ -329,13 +344,13 @@ export function SwapView({ headline }: SwapViewProps) {
 						readOnly
 						onSelect={() => setPickerFor("out")}
 						actions={
-							<div className="mono text-[11px] text-[var(--body)]">
+							<div className="mono text-[11px] leading-[normal] text-[var(--body)]">
 								≈ {fmtIDRX(quote.inputAmount * inputToken.price)}
 							</div>
 						}
 					/>
 
-					<div className="px-[20px] pb-[16px] pt-[4px]">
+					<div className="px-[20px] py-[4px]">
 						<Accordion
 							open={detailsOpen}
 							onToggle={() => setDetailsOpen((open) => !open)}
@@ -367,7 +382,7 @@ export function SwapView({ headline }: SwapViewProps) {
 								v={
 									<span className="inline-flex items-center gap-[6px]">
 										<span className="mono">{inputToken.ticker}</span>
-										<Icon name="chevron-right" size={11} />
+										<span>›</span>
 										<span className="mono text-[var(--merah)]">
 											{outputToken?.ticker ?? ""}
 										</span>
@@ -380,14 +395,14 @@ export function SwapView({ headline }: SwapViewProps) {
 						</Accordion>
 					</div>
 
-					<div className="px-[20px] pb-[20px]">
+					<div className="px-[20px] pb-[20px] pt-[8px]">
 						{!isConnected ? (
 							<ConnectButton.Custom>
 								{({ openConnectModal }) => (
 									<button
 										type="button"
 										onClick={openConnectModal}
-										className="btn btn-merah !w-full !px-[20px] !py-[16px] !text-[15px] !tracking-[0.03em]"
+										className="btn btn-merah !w-full !px-[20px] !py-[15px] !text-[15px] !tracking-[0.03em]"
 									>
 										Connect Wallet
 									</button>
@@ -398,7 +413,7 @@ export function SwapView({ headline }: SwapViewProps) {
 								type="button"
 								onClick={ctaAction}
 								disabled={ctaDisabled}
-								className="btn btn-merah !w-full !px-[20px] !py-[16px] !text-[15px] !tracking-[0.03em]"
+								className={`btn btn-merah !w-full !px-[20px] !py-[15px] !text-[15px] !tracking-[0.03em] ${busy ? "is-busy" : ""}`}
 							>
 								{busy && (
 									<span className="mr-[8px] inline-block align-[-2px]">
@@ -416,7 +431,7 @@ export function SwapView({ headline }: SwapViewProps) {
 					</div>
 				</div>
 
-				<div className="mt-[18px] text-[12px] leading-[1.6] text-[var(--body)] [font-family:var(--font-fraunces,_Fraunces,_serif)]">
+				<div className="mt-[34px] text-[12px] leading-[1.6] text-[var(--body)] [font-family:var(--font-fraunces,_Fraunces,_serif)]">
 					By trading, you affirm you are not a resident of restricted
 					jurisdictions and that these tokens are cryptographic receipts fully
 					backed 1:1 by physical IDX-listed equities held in custody by{" "}
@@ -447,6 +462,7 @@ function SwapField({
 	onAmount,
 	onSelect,
 	readOnly,
+	tinted,
 	actions,
 }: {
 	label: string;
@@ -456,10 +472,11 @@ function SwapField({
 	onAmount?: (value: string) => void;
 	onSelect: () => void;
 	readOnly?: boolean;
+	tinted?: boolean;
 	actions?: React.ReactNode;
 }) {
 	return (
-		<div className="hairline px-[20px] pb-[16px] pt-[20px]">
+		<div className={`hairline px-[20px] pb-[16px] pt-[20px] ${tinted ? "bg-[var(--canvas)]" : ""}`}>
 			<div className="mb-[12px] flex items-baseline justify-between">
 				<span className="eyebrow !text-[var(--body)]">
 					{label}
@@ -482,20 +499,24 @@ function SwapField({
 								}
 							: undefined
 					}
-					className="swap-input-amt w-full min-w-0 flex-1 appearance-none border-0 bg-transparent p-[0] text-[36px] font-normal tracking-[-0.02em] text-[var(--ink)] outline-none [font-family:var(--font-fraunces,_Fraunces,_serif)]"
+					className="swap-input-amt w-full min-w-0 flex-1 appearance-none border-0 bg-transparent p-[0] text-[36px] font-[400] tracking-[-0.02em] text-[var(--ink)] outline-none [font-family:var(--font-fraunces,_Fraunces,_serif)] placeholder:text-[#bcb2a3]"
 				/>
 				<button
 					type="button"
 					onClick={onSelect}
-					className="flex cursor-pointer appearance-none items-center gap-[10px] border border-[var(--ink)] bg-[var(--canvas)] py-[8px] pl-[8px] pr-[12px] text-[var(--ink)] [font:inherit]"
+					className={`flex cursor-pointer appearance-none items-center gap-[10px] border border-[var(--ink)] py-[8px] pl-[8px] pr-[12px] text-[var(--ink)] [font:inherit] ${
+						tinted
+							? "bg-[var(--putih)] shadow-[0_3px_0_-1px_#fbfaf7,0_4px_0_-1px_#bcb2a3]"
+							: "bg-[var(--canvas)] shadow-[0_3px_0_-1px_#fff,0_4px_0_-1px_#bcb2a3]"
+					}`}
 				>
 					<PStockMark ticker={token.ticker} size={26} />
-					<span className="text-[14px] font-semibold">{token.ticker}</span>
-					<Icon name="chevron-down" size={14} />
+					<span className="text-[14px] font-[600]">{token.ticker}</span>
+					<span className="text-[10px]">▼</span>
 				</button>
 			</div>
-			<div className="mt-[10px] flex min-h-[22px] items-center justify-between">
-				<span className="mono text-[12px] text-[var(--body)]">
+			<div className={`mt-[10px] flex items-center justify-between ${tinted ? "" : "min-h-[22px]"}`}>
+				<span className="mono text-[12px] leading-[normal] text-[var(--body)]">
 					{token.name}
 				</span>
 				<div>{actions}</div>
@@ -538,11 +559,11 @@ function Stat({
 	sub: string;
 }) {
 	return (
-		<div>
-			<div className="eyebrow !text-[var(--body)]">
+		<div className="stat-paper paper-stack px-[18px] py-[16px]">
+			<div className="eyebrow !leading-[normal] !text-[var(--body)]">
 				{label}
 			</div>
-			<div className="display mt-[6px] !text-[32px] !leading-none !tracking-[-0.02em]">
+			<div className="display mt-[8px] !text-[30px] !leading-none !tracking-[-0.02em]">
 				{value}
 			</div>
 			<div className="mt-[6px] text-[12px] text-[var(--body)]">
@@ -578,7 +599,7 @@ function MoversList({ tokens }: { tokens: MarketToken[] }) {
 				{Array.from({ length: 5 }, (_, skeletonIndex) => (
 					<div
 						key={skeletonIndex}
-						className="hairline mover-row grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-[16px] py-[14px]"
+						className="hairline mover-row grid grid-cols-[auto_minmax(0,1fr)_88px_auto_auto] items-center gap-[16px] px-[10px] py-[14px] max-[719px]:gap-[10px]"
 					>
 						<div className="skeleton h-[32px] w-[32px] shrink-0" />
 						<div>
@@ -599,13 +620,14 @@ function MoversList({ tokens }: { tokens: MarketToken[] }) {
 			{movers.map((token) => {
 				const isPositive = token.change24h >= 0;
 				return (
-					<div
+					<Link
 						key={token.ticker}
-						className="hairline row-hover mover-row grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-[16px] py-[14px]"
+						href={`/stocks/${token.ticker}`}
+						className="hairline mover-paper mover-row grid grid-cols-[auto_minmax(0,1fr)_88px_auto_auto] items-center gap-[16px] px-[10px] py-[14px] text-inherit no-underline max-[719px]:gap-[10px]"
 					>
 						<PStockMark ticker={token.ticker} size={32} />
 						<div className="min-w-0">
-							<div className="text-[14px] font-semibold">{token.ticker}</div>
+							<div className="text-[14px] font-[600]">{token.ticker}</div>
 							<div className="truncate text-[12px] text-[var(--body)]">
 								{token.name} · {token.sector}
 							</div>
@@ -614,19 +636,22 @@ function MoversList({ tokens }: { tokens: MarketToken[] }) {
 							<Sparkline
 								data={sparklineData[token.ticker] ?? []}
 								positive={isPositive}
+								width={88}
+								height={28}
+								strokeWidth={1.4}
 							/>
 						</div>
-						<div className="mono min-w-[80px] text-right text-[14px]">
+						<div className="mono min-w-[80px] text-right text-[14px] max-[719px]:text-[12px]">
 							{fmtIDRX(token.price)}
 						</div>
 						<div
-							className={`mono min-w-[76px] text-right text-[13px] ${
+							className={`mono min-w-[62px] text-right text-[13px] ${
 								isPositive ? "text-[var(--positive)]" : "text-[var(--negative)]"
 							}`}
 						>
 							{fmtPct(token.change24h)}
 						</div>
-					</div>
+					</Link>
 				);
 			})}
 		</div>

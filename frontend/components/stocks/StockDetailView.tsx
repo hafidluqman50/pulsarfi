@@ -7,6 +7,7 @@ import { useReserves } from '@/http/custodian/hooks';
 import { useMarketStocks, useStockHistory, useStockPrice } from '@/http/market/hooks';
 import { STOCK_NEWS, rawTokenToNumber } from '@/lib/stockDetail';
 import { toMarketToken } from '@/lib/swap';
+import { ProofOfReserve } from './ProofOfReserve';
 import { StockDetailChart } from './StockDetailChart';
 import { StockDetailHeader } from './StockDetailHeader';
 import { StockDetailSkeleton } from './StockDetailSkeleton';
@@ -52,32 +53,42 @@ export function StockDetailView(): React.ReactNode {
   const newsItems = STOCK_NEWS[stock.ticker] ?? [];
 
   return (
-    <div className="container pad-x !pb-[64px] !pt-[28px]">
+    <div className="mx-auto w-full max-w-[1440px] px-[32px] pb-[64px] pt-[32px] max-[719px]:px-[16px] max-[719px]:pb-[48px] max-[719px]:pt-[24px]">
       <StockDetailHeader
         stock={stock}
         displayPrice={displayPrice}
         displayChange={displayChange}
-        onTrade={() => setTradeOpen(true)}
       />
 
-      <StockDetailChart
-        chartData={chartData}
-        isHistoryLoading={isHistoryLoading}
-        isReservesLoading={isReservesLoading}
-        selectedTimeframe={selectedTimeframe}
-        stockTicker={stock.ticker}
-        tokenSupply={tokenSupply}
-        onTimeframeChange={setSelectedTimeframe}
-      />
+      <div className="mt-[28px] grid grid-cols-[repeat(auto-fit,minmax(min(100%,520px),1fr))] items-start gap-[40px]">
+        <div>
+          <StockDetailChart
+            chartData={chartData}
+            isHistoryLoading={isHistoryLoading}
+            selectedTimeframe={selectedTimeframe}
+            onTimeframeChange={setSelectedTimeframe}
+          />
 
-      <StockDetailStats
-        stock={stock}
-        displayPrice={displayPrice}
-        poolPrice={poolPrice?.price}
-        tokenSupply={tokenSupply}
-      />
+          <StockDetailStats
+            stock={stock}
+            displayPrice={displayPrice}
+            poolPrice={poolPrice?.price}
+            tokenSupply={tokenSupply}
+          />
 
-      <StockNewsList newsItems={newsItems} />
+          <StockNewsList newsItems={newsItems} />
+        </div>
+
+        <div className="grid gap-[28px]">
+          <ProofOfReserve entry={reserveEntry} isLoading={isReservesLoading} />
+          <button
+            onClick={() => setTradeOpen(true)}
+            className="cursor-pointer appearance-none border-0 bg-[var(--merah)] px-[20px] py-[16px] text-[15px] font-[600] tracking-[0.03em] text-[var(--putih)] shadow-[0_5px_0_-2px_#f0d3cf,0_6px_0_-2px_#c8102e,0_22px_26px_-14px_rgba(154,12,36,0.45)] transition-[transform,background-color] duration-150 hover:-translate-y-[2px] hover:bg-[var(--merah-deep)]"
+          >
+            Trade {stock.ticker}
+          </button>
+        </div>
+      </div>
 
       {tradeOpen && (
         <SwapModal

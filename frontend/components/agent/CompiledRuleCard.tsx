@@ -17,11 +17,11 @@ export function CompiledRuleCard({ lockedSummary, bands }: CompiledRuleCardProps
 
   return (
     <>
-      <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '2px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
+      <div className="rise" style={{ border: '1px solid var(--hairline)', borderLeft: '3px solid var(--ink)', background: 'var(--putih)', padding: '13px 15px' }}>
         <div style={{ fontSize: 14.5, lineHeight: 1.55 }}>{lockedSummary}</div>
       </div>
 
-      <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)' }}>
+      <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
         <button
           onClick={() => setOpen((v) => !v)}
           style={{ width: '100%', appearance: 'none', border: 0, cursor: 'pointer', background: 'var(--canvas-soft)', padding: '11px 13px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 9 }}

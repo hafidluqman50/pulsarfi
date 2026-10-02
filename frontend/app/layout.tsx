@@ -5,7 +5,7 @@ import { Providers } from "./providers";
 
 const fraunces = Fraunces({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600"],
+  axes: ["opsz"],
   variable: "--font-fraunces",
   display: "swap",
 });
@@ -27,7 +27,7 @@ const inter = Inter({
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
-  weight: ["400", "500", "700"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-jetbrains-mono",
   display: "swap",
 });
