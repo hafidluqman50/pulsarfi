@@ -332,12 +332,12 @@ function TownScene({ stacks, autoRotate, reducedMotion }: TownSceneProps) {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
-      style={{ width: '100%', height: Math.round(WRAPPER_HEIGHT * scale), overflow: 'hidden', display: 'grid', placeItems: 'center', perspective: 1600, cursor: 'grab', touchAction: 'pan-y', userSelect: 'none' }}
+      style={{ width: '100%', height: Math.round(WRAPPER_HEIGHT * scale), overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', perspective: 1600, cursor: 'grab', touchAction: 'pan-y', userSelect: 'none' }}
     >
       <div
         ref={sceneRef}
         style={{
-          position: 'relative', width: SCENE_WIDTH, height: SCENE_HEIGHT, transformStyle: 'preserve-3d', willChange: 'transform',
+          position: 'relative', flexShrink: 0, width: SCENE_WIDTH, height: SCENE_HEIGHT, transformStyle: 'preserve-3d', willChange: 'transform',
           marginTop: Math.round(10 * scale), transform: `scale(${scale}) rotateX(60deg) rotateZ(-28deg)`,
         }}
       >
