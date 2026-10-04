@@ -12,6 +12,10 @@ const MARKS: Record<string, { fill: string; glyph: string, icon:string }> = {
   IDRX:  { fill: "#1a7a4a", glyph: "₹", icon: '/logos/IDRX.png' },
 };
 
+export function getStockIcon(ticker: string): string {
+  return MARKS[ticker]?.icon ?? '/logo-only-nobg.png';
+}
+
 export function PStockMark({ ticker, size = 28 }: { ticker: string; size?: number }) {
   const tokenMark = MARKS[ticker] ?? { fill: "#16110e", glyph: ticker?.[0] || "•" };
   return (
