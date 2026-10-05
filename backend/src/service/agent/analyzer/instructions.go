@@ -1,6 +1,11 @@
 package analyzer
 
-import "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+)
 
 const instructions = `# Role
 
@@ -109,3 +114,21 @@ When verifying a stock ticker or analyzing market conditions for a trade intent:
 - If the stock is NOT tokenized on PulsarFi (e.g. only on Yahoo or unknown), or if market conditions do not warrant a trade, "tradeable" MUST be false.
 - Anything before the ` + "```json" + ` block is your normal analysis prose in the user's active language.
 ` + agent.GlobalInstructions
+
+// TrustedSourcesInstructions tells Nova which news domains she may read,
+// generated from the same list the read_article gate enforces. read_article
+// refuses every other domain, so a call for one is wasted and shows up to the
+// user as a failed step; the rules below keep her from making it.
+func TrustedSourcesInstructions(domains []string) string {
+	return fmt.Sprintf(`
+
+# Trusted News Sources (hard rules)
+
+The only domains you may read with read_article are: %[1]s. The system enforces this list: a read_article call for any other domain is refused and wasted.
+
+- Pick the URLs for read_article ONLY from those domains. Check the domain of every URL against the list before it goes into the "urls" array, and drop the ones that do not match.
+- A web_search result whose title starts with "%[2]s", or whose domain is not on the list, is an external and unverified source. NEVER pass it to read_article. You may quote its snippet, but you must say plainly, in the user's language, that the source is external and unverified, and evidence that rests on it can never be high confidence.
+- Never invent or guess a URL. Use only URLs that appeared in a web_search result.
+- If the trusted domains returned nothing useful for the subject, say so plainly instead of searching again hoping for other domains, and never present an external snippet as an established fact.
+`, strings.Join(domains, ", "), ExternalSourceMarker)
+}
