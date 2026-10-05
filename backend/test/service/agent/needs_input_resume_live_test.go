@@ -9,14 +9,13 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
 // TestNeedsInputThenResumeProducesArmCard reproduces the exact live crash:
 // an incomplete scalp buy prompt (missing budget) pauses on needs_input,
 // then the user's next message in the SAME chat answers it. This is the
-// resume path (ChatService.resumeOrRun -> Orchestrator.ResumeRoute) that
+// resume path (ChatService.runForMessage -> Orchestrator.Send) that
 // TestDirectBuyPromptProducesConfirmationCard's single-message prompts never
 // exercise.
 //
@@ -47,7 +46,7 @@ func TestNeedsInputThenResumeProducesArmCard(t *testing.T) {
 	firstPrompt := "Ayo beli BRPT scalping"
 	t.Logf("Turn 1 (should pause on needs_input, missing budget): %q", firstPrompt)
 
-	card1, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, firstPrompt, false, agent.AgentEventCallbacks{})
+	card1, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, firstPrompt, false)
 	if err != nil {
 		t.Fatalf("turn 1 HandleChatMessage failed (this is the live panic if it reoccurs): %v", err)
 	}
@@ -63,7 +62,7 @@ func TestNeedsInputThenResumeProducesArmCard(t *testing.T) {
 	secondPrompt := "5000000"
 	t.Logf("Turn 2 (answers the budget question, same chat, should resume): %q", secondPrompt)
 
-	card2, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, secondPrompt, false, agent.AgentEventCallbacks{})
+	card2, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, secondPrompt, false)
 	if err != nil {
 		t.Fatalf("turn 2 HandleChatMessage failed (THIS is the resume path that panicked live): %v", err)
 	}

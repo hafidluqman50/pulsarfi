@@ -1,25 +1,29 @@
 package agent
 
-import "context"
+import (
+	"context"
 
-// RunContext is threaded via WithRunContext into Nova's/Comet's own nested
-// tool calls (get_portfolio_snapshot, submit_trade) — the only channel that
-// survives the call chain into code the orchestrator treats as a black box
-// (docs/plans/agent-orchestration-graph-rebuild.md §3). Trimmed in v2.7 of
-// that plan to only the fields actually read inside analyzer/executor,
-// confirmed by grep per field, not per file — OnChainTaskID (submit_trade's
-// budget check), Wallet (get_portfolio_snapshot), Recorder (submit_trade's
-// own decide/execute rows), OnSubTaskStarted (submit_trade's live
-// decide/execute-starting signal). TaskID, TriggerDescription,
-// SourceMessageID, NestedToolCalls, OnSubTask, and OnTextDelta were set by
-// orchestrator_service.go but never read back through RunContext by
-// anything live — orchestratorTurn already carries its own copies of that
-// same data and uses those directly instead.
+	"github.com/google/uuid"
+)
+
+// RunContext is threaded via WithRunContext into every tool of the turn —
+// Quasar's own (open_task, ask_user, await_arm) and the nested ones of Nova
+// and Comet (get_portfolio_snapshot, submit_trade). It is the only channel
+// that reaches code the agent runtime treats as a black box. It is rebuilt
+// for every request, never checkpointed: a resumed turn gets its Task back
+// from the database (see Orchestrator.restoreRunContext).
 type RunContext struct {
 	OnChainTaskID *int64
 	Wallet        string
 	Recorder      *SubTaskRecorder
 	Locale        string
+
+	TaskID          int64
+	ChatID          uuid.UUID
+	RawPrompt       string
+	SourceMessageID *int64
+	Decision        RouteDecision
+
 	// OnSubTaskStarted fires the instant a step begins, before its actual
 	// work runs — never persisted (SubTaskRecorder only ever writes a step
 	// once it's done, so the hash chain stays exactly as before), purely an
@@ -28,16 +32,16 @@ type RunContext struct {
 	OnSubTaskStarted func(agentName, stepName, label string)
 	// OnSubTaskFailed fires when WrapToolGraceful catches a tool error —
 	// read by gracefulTool.InvokableRun via RunContextFrom(ctx), which has
-	// no other way to reach the turn's callbacks (a tool only ever receives
-	// ctx, never the orchestratorTurn itself). Never persisted, same as
-	// OnSubTaskStarted.
+	// no other way to reach the live sub-task list. Never persisted.
 	OnSubTaskFailed func(agentName, stepName, reason string)
 	// CurrentAgent/CurrentStepName identify which step is currently running
-	// its tool-calling loop, set right before runRoleAgent is invoked — the
-	// only way gracefulTool.InvokableRun (which only knows the failing
-	// tool's own name) can attribute a caught failure to the right step.
+	// its tool-calling loop — the only way gracefulTool.InvokableRun (which
+	// only knows the failing tool's own name) can attribute a caught
+	// failure to the right step.
 	CurrentAgent    string
 	CurrentStepName string
+
+	live *liveSubTasks
 }
 
 type runContextKey struct{}

@@ -9,10 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
-	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -48,40 +46,18 @@ func TestOrchestratorLiveConversation(t *testing.T) {
 	chatID := uuid.New()
 	wallet := "0x000000000000000000000000000000LiveTest"
 
-	var deltas []string
 	card, err := registry.AgentChat.HandleChatMessage(
 		context.Background(),
 		chatID,
 		wallet,
 		"Eh lu kabarnya gimana, hari ini hari apa?",
 		false,
-		agent.AgentEventCallbacks{
-			OnSubTask: func(row model.AgentSubTask) {
-				fmt.Printf("\n[sub_task] %s / %s: %s\n", row.Agent, row.StepName, row.Reasoning)
-			},
-			OnSubTaskStarted: func(agentName, stepName, label string) {
-				fmt.Printf("\n[sub_task_started] %s / %s: %s\n", agentName, stepName, label)
-			},
-			OnTextDelta: func(delta string) {
-				deltas = append(deltas, delta)
-				fmt.Print(delta)
-			},
-			OnToolCall: func(agentName, toolName, phase string) {
-				fmt.Printf("\n[tool_call] %s / %s: %s\n", agentName, toolName, phase)
-			},
-			OnThinking: func(agentName, delta string) {
-				fmt.Printf("[thinking:%s]%s", agentName, delta)
-			},
-		},
 	)
 	if err != nil {
 		t.Fatalf("HandleChatMessage failed: %v", err)
 	}
 	fmt.Println()
 
-	if len(deltas) < 2 {
-		t.Fatalf("expected multiple streamed chunks (real token-by-token streaming), got %d — streaming is not actually incremental", len(deltas))
-	}
 	if card.Reply == "" {
 		t.Fatal("final reply is empty")
 	}
@@ -89,7 +65,7 @@ func TestOrchestratorLiveConversation(t *testing.T) {
 		t.Fatalf("pure conversation should never open a Task, got TaskID=%d", card.TaskID)
 	}
 
-	t.Logf("Reply (%d chars, streamed in %d chunks): %s", len(card.Reply), len(deltas), card.Reply)
+	t.Logf("Reply (%d chars): %s", len(card.Reply), card.Reply)
 }
 
 func TestDirectSellPromptWithNovaOptOutProducesConfirmationCard(t *testing.T) {
@@ -124,7 +100,6 @@ func TestDirectSellPromptWithNovaOptOutProducesConfirmationCard(t *testing.T) {
 		wallet,
 		prompt,
 		false,
-		agent.AgentEventCallbacks{},
 	)
 	if err != nil {
 		t.Fatalf("HandleChatMessage failed: %v", err)
@@ -214,7 +189,6 @@ func TestDirectBuyPromptProducesConfirmationCard(t *testing.T) {
 		wallet,
 		prompt,
 		false,
-		agent.AgentEventCallbacks{},
 	)
 	if err != nil {
 		t.Fatalf("HandleChatMessage failed: %v", err)

@@ -198,6 +198,7 @@ type MessageListProps = {
   toolActivityByAgent: Record<string, string>;
   thinkingByAgent: Record<string, string>;
   isFinalizing: boolean;
+  statusText: string;
   chartPending: boolean;
   streamingReplyText: string;
   onRetry: () => void;
@@ -230,7 +231,7 @@ function parseIntakeAnswer(content: string): Record<string, string> {
 // supervisor reply doing its own data fetching, on every single keystroke,
 // as a chat's history grows. Now this only re-renders when its own props
 // (real content) actually change, not when the user is just typing.
-const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, toolActivityByAgent, thinkingByAgent, isFinalizing, chartPending, streamingReplyText, onRetry, onSendPrompt }: MessageListProps) {
+const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, toolActivityByAgent, thinkingByAgent, isFinalizing, statusText, chartPending, streamingReplyText, onRetry, onSendPrompt }: MessageListProps) {
   const threadRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -367,7 +368,7 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
       {isStreaming && liveSubTasks.length === 0 && !streamingReplyText && (
         <div className="rise" style={{ border: '1px solid var(--hairline)', background: 'var(--putih)', padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 10, boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
           <span className="pulsar" />
-          <span style={{ fontSize: 12.5, color: 'var(--body)', fontFamily: 'var(--font-mono)' }}>Quasar is thinking…</span>
+          {statusText && <span style={{ fontSize: 12.5, color: 'var(--body)', fontFamily: 'var(--font-mono)' }}>{statusText}</span>}
         </div>
       )}
     </div>
@@ -390,6 +391,7 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
   const [toolActivityByAgent, setToolActivityByAgent] = useState<Record<string, string>>({});
   const [thinkingByAgent, setThinkingByAgent] = useState<Record<string, string>>({});
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [statusText, setStatusText] = useState('');
   const [chartPending, setChartPending] = useState(false);
   const [streamingReplyText, setStreamingReplyText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -413,6 +415,9 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
     }
     if (event.type === 'thinking') {
       setThinkingByAgent((prev) => ({ ...prev, [event.data.agent]: (prev[event.data.agent] ?? '') + event.data.delta }));
+    }
+    if (event.type === 'status') {
+      setStatusText(event.data.text);
     }
     if (event.type === 'finalizing') {
       setIsFinalizing(true);
@@ -441,6 +446,7 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
     setLiveSubTasks([]);
     setToolActivityByAgent({});
     setThinkingByAgent({});
+    setStatusText('');
     setIsFinalizing(false);
     setChartPending(false);
     setStreamingReplyText('');
@@ -492,6 +498,7 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
     setLiveSubTasks([]);
     setToolActivityByAgent({});
     setThinkingByAgent({});
+    setStatusText('');
     setIsFinalizing(false);
     setChartPending(false);
     setStreamingReplyText('');
@@ -526,6 +533,7 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
         toolActivityByAgent={toolActivityByAgent}
         thinkingByAgent={thinkingByAgent}
         isFinalizing={isFinalizing}
+        statusText={statusText}
         chartPending={chartPending}
         streamingReplyText={streamingReplyText}
         onRetry={handleRetry}

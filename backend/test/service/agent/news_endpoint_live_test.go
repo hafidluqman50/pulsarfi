@@ -15,10 +15,8 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	agentHandler "github.com/horizonlabs/pulsarfi-backend/src/http/handlers/agent"
 	usermw "github.com/horizonlabs/pulsarfi-backend/src/http/middleware/user"
-	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -50,23 +48,6 @@ func TestLiveNewsQueryEndpoint(t *testing.T) {
 		wallet,
 		"Check berita IHSG hari ini dong",
 		false,
-		agent.AgentEventCallbacks{
-			OnSubTask: func(row model.AgentSubTask) {
-				fmt.Printf("\n[sub_task] %s / %s: %s\n", row.Agent, row.StepName, row.Reasoning)
-			},
-			OnSubTaskStarted: func(agentName, stepName, label string) {
-				fmt.Printf("\n[sub_task_started] %s / %s: %s\n", agentName, stepName, label)
-			},
-			OnSubTaskFailed: func(agentName, stepName, reason string) {
-				fmt.Printf("\n[sub_task_failed] %s / %s: %s\n", agentName, stepName, reason)
-			},
-			OnToolCall: func(agentName, toolName, phase string) {
-				fmt.Printf("\n[tool_call] %s / %s: %s\n", agentName, toolName, phase)
-			},
-			OnTextDelta: func(delta string) {
-				fmt.Print(delta)
-			},
-		},
 	)
 	if err != nil {
 		t.Fatalf("HandleChatMessage returned ERROR: %v", err)
