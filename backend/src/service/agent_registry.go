@@ -11,6 +11,7 @@ import (
 	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/analyzer"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/executor"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/supervisor"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
 	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
@@ -63,13 +64,10 @@ func (a balanceAdapter) IDRXBalance(ctx context.Context, wallet string) (*big.In
 // logs instead of failing NewRegistry outright — same "disabled, not fatal"
 // pattern as the rest of NewRegistry's optional integrations.
 //
-// The old supervisor package (supervisor.New, an adk.ChatModelAgent with
-// analyzer_agent/executor_agent/create_task as LLM-callable tools) is no
-// longer built here — Quasar is now two plain LLM calls owned directly by
-// the Orchestrator (see docs/plans/agent-orchestration-graph-rebuild.md),
-// specifically because adk.ChatModelAgent can never stream. Quick/deep
-// Analyzer model tiering is also not carried over yet (single Analyzer
-// instance) — tracked as an open item in that same plan, not lost.
+// Quasar is an adk.ChatModelAgent again (service/agent/supervisor) with
+// Nova and Comet as its tools, run by the Orchestrator over an adk.Runner
+// (docs/plans/agent-as-tool-orchestration.md): ChatModelAgent does stream,
+// the earlier belief that it cannot was wrong.
 func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.PortfolioChartReader) (*agentsvc.ChatService, *agentsvc.TaskService, *agentsvc.TaskScheduler) {
 	ctx := context.Background()
 
@@ -126,27 +124,26 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		return nil, nil, nil
 	}
 
-	// supervisorModel is used for both Quasar calls (route, reply) — a plain
-	// stateless API client wrapper, safe to reuse for two logically separate
-	// calls, no need to construct it twice.
 	checkpointStore := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 
-	orchestrator, err := agentsvc.NewOrchestrator(ctx, &agentsvc.Orchestrator{
-		Tasks:             repos.AgentTask,
-		SubTasks:          repos.AgentSubTask,
-		ChatMessages:      repos.AgentChatMessage,
-		Chain:             contractClient,
-		CheckPointStore:   checkpointStore,
-		RouteModel:        supervisorModel,
-		ReplyModel:        supervisorModel,
-		Analyzer:          analyzerAgent,
-		Executor:          executorAgent,
-		RouteModelName:    external.ModelFlash,
-		ReplyModelName:    external.ModelFlash,
-		AnalyzerModelName: external.ModelFlash,
-		ExecutorModelName: external.ModelFlash,
-		Stocks:            repos.Stock,
-	})
+	// Two steps because Quasar's tools open Tasks through the Orchestrator
+	// (supervisor.TaskOpener) while the Orchestrator runs Quasar.
+	orchestrator := &agentsvc.Orchestrator{
+		Tasks:           repos.AgentTask,
+		SubTasks:        repos.AgentSubTask,
+		ChatMessages:    repos.AgentChatMessage,
+		Chain:           contractClient,
+		CheckPointStore: checkpointStore,
+		ReplyModel:      supervisorModel,
+		Stocks:          repos.Stock,
+	}
+	supervisorAgent, err := supervisor.New(ctx, supervisorModel, analyzerAgent, executorAgent, orchestrator, repos.AgentTask)
+	if err != nil {
+		log.Printf("agent task service disabled: build supervisor agent: %v", err)
+		return nil, nil, nil
+	}
+	orchestrator.Quasar = supervisorAgent
+	orchestrator, err = agentsvc.NewOrchestrator(ctx, orchestrator)
 	if err != nil {
 		log.Printf("agent task service disabled: build orchestrator: %v", err)
 		return nil, nil, nil

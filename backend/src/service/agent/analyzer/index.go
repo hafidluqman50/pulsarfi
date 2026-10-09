@@ -35,7 +35,7 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, chartReader 
 	analyzerAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        "analyzer_agent",
 		Description: "Gathers news and/or technical evidence for a Task's trigger condition and concludes whether it is satisfied, citing the specific evidence that drove the conclusion. Also answers portfolio/chart questions.",
-		Instruction: instructions,
+		Instruction: instructions + TrustedSourcesInstructions(TrustedNewsDomains),
 		Model:       chatModel,
 		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agent.WrapToolsGraceful(tools)}},
 		// Bounded at 8 iterations: strictly well below 20 to conserve on-chain

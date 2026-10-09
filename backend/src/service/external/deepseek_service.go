@@ -33,6 +33,8 @@ const requestTimeout = 90 * time.Second
 // ModelPro constant to name.
 const ModelFlash = "deepseek-flash" // used for every role — no tiering, one model
 
+const defaultBaseURL = "https://api.deepseek.com/v1"
+
 // NewDeepSeekChatModelFromEnv builds an Eino-native ToolCallingChatModel
 // backed by DeepSeek's OpenAI-compatible API — the model each role's
 // adk.NewChatModelAgent (service/agent/supervisor, .../analyzer, .../executor)
@@ -50,10 +52,16 @@ func NewDeepSeekChatModel(ctx context.Context, model string) (einomodel.ToolCall
 	if key == "" {
 		return nil, fmt.Errorf("deepseek: missing DEEPSEEK_API_KEY")
 	}
+	// DEEPSEEK_BASE_URL lets tests point the same client at another
+	// OpenAI-compatible provider; unset means DeepSeek itself.
+	baseURL := strings.TrimSpace(os.Getenv("DEEPSEEK_BASE_URL"))
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
 	return einoopenai.NewChatModel(ctx, &einoopenai.ChatModelConfig{
 		APIKey:  key,
 		Model:   model,
-		BaseURL: "https://api.deepseek.com/v1",
+		BaseURL: baseURL,
 		Timeout: requestTimeout,
 	})
 }

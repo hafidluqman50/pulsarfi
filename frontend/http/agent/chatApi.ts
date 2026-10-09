@@ -80,6 +80,7 @@ export type ChatStreamEvent =
   | { type: 'thinking'; data: ThinkingEvent }
   | { type: 'finalizing'; data: Record<string, never> }
   | { type: 'reply_delta'; data: { delta: string } }
+  | { type: 'status'; data: { text: string } }
   | { type: 'final'; data: WorkflowCard }
   | { type: 'error'; data: { message: string } };
 

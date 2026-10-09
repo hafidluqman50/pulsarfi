@@ -25,17 +25,22 @@ import (
 // their respective agent's tools — no splitting an agent's tools away from
 // the agent itself.
 
-// TrustedNewsDomains is the hard allowlist read_article enforces. Keep this
-// in sync with the Trusted Sources list hardcoded into instructions.go —
-// the instructions tell the model which domains to prefer searching, this
-// is what actually gates what it can fetch.
+// TrustedNewsDomains is the hard allowlist read_article enforces and the
+// domain filter web_search sends. Nova's prompt is generated from this same
+// list (TrustedSourcesInstructions), so there is exactly one place to edit
+// and the prompt can never disagree with what the gate actually allows.
 var TrustedNewsDomains = []string{
 	"liputan6.com",
 	"kompas.com",
-	"market.bisnis.com",
-	"bisnis.com",
 	"cnbcindonesia.com",
+	"bloomberg.com",
+	"msci.com",
 }
+
+// ExternalSourceMarker prefixes the title of every result that came from the
+// fallback search without the domain filter. The prompt tells Nova what it
+// means, so tool and prompt share this one constant.
+const ExternalSourceMarker = "[Sumber Eksternal]"
 
 type searchRequest struct {
 	Query string `json:"query" jsonschema_description:"The search query — the trigger condition's exact subject, not a paraphrase."`
@@ -57,7 +62,6 @@ type tavilySearchRequestBody struct {
 	MaxResults     int      `json:"max_results"`
 	IncludeDomains []string `json:"include_domains,omitempty"`
 	Topic          string   `json:"topic"`
-	IncludeImages  bool     `json:"include_images"`
 }
 
 // NewSearchTool replaces the previous DuckDuckGo-backed tool (no stable
@@ -94,7 +98,7 @@ func tavilySearch(ctx context.Context, apiKey, query string, maxResults int, inc
 			return resp, nil
 		}
 		for i := range fallbackResp.Results {
-			fallbackResp.Results[i].Title = "[Sumber Eksternal] " + fallbackResp.Results[i].Title
+			fallbackResp.Results[i].Title = ExternalSourceMarker + " " + fallbackResp.Results[i].Title
 		}
 		return fallbackResp, nil
 	}
@@ -108,7 +112,6 @@ func executeTavilySearch(ctx context.Context, apiKey, query string, maxResults i
 		MaxResults:     maxResults,
 		IncludeDomains: includeDomains,
 		Topic:          "news",
-		IncludeImages:  true,
 	})
 	if err != nil {
 		return searchResponse{}, fmt.Errorf("web_search: marshal request: %w", err)
@@ -138,15 +141,9 @@ func executeTavilySearch(ctx context.Context, apiKey, query string, maxResults i
 
 	var parsed struct {
 		Results []searchResultItem `json:"results"`
-		Images  []string           `json:"images"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return searchResponse{}, fmt.Errorf("web_search: parse response: %w", err)
-	}
-	for i := range parsed.Results {
-		if parsed.Results[i].ImageURL == "" && i < len(parsed.Images) {
-			parsed.Results[i].ImageURL = parsed.Images[i]
-		}
 	}
 	return searchResponse{Results: parsed.Results}, nil
 }

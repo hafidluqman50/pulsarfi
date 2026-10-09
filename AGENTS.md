@@ -140,7 +140,7 @@ When asked to create an implementation plan (Planning Mode), follow these rules 
    - Bump MINOR for any content revision (wording, detail, ordering, a fixed mistake). Bump MAJOR only when the approach/scope changes enough that the prior plan is no longer valid.
    - Every changelog row states which section changed and what changed in it, specific enough that a reader never has to diff the file to know what happened.
 3. **English only.** Plan documents are written entirely in English.
-4. **Required Sections:** Problem Statement, Definition of Done, Feature Description, Impacted Files, UI/UX Changes (Lo-Fi), Flowchart, Verification Plan.
+4. **Required Sections:** Problem Statement, Definition of Done, Feature Description, Impacted Files, Code Shape (see item 6, required whenever the plan changes code), UI/UX Changes (Lo-Fi), Flowchart, Verification Plan.
 5. Header format, immediately followed by the changelog table (present from `1.0` onward, not just once the document reaches its second revision):
    ```markdown
    # <Feature Name>
@@ -156,3 +156,11 @@ When asked to create an implementation plan (Planning Mode), follow these rules 
    |---|---|---|
    | 1.0 | YYYY-MM-DD | Initial draft |
    ```
+6. **Code Shape section (mandatory for any plan that changes code).** A plan must show what the code will look like after the change, not only list the files that change. The user reviews the shape before any implementation starts, so it must be concrete enough to judge. It must contain:
+   - **Before/After** snippets for every modified function or type (signature plus the essential body shape; elide unrelated lines with `// ...`).
+   - **New** types, interfaces and functions, with full signatures and a one-line responsibility each.
+   - **Call flow** after the change: who calls what, as a short call tree or sequence.
+   - **Deleted** symbols, listed by name.
+   - Snippets are contracts, not final code. Anything not yet verified against library source or a running test is marked `UNVERIFIED`, and the verification plan must name the test that will resolve it.
+   - Editing the Code Shape of an existing plan is a content revision: it bumps the version and adds a changelog row like any other edit (item 2).
+7. **Reuse check (mandatory for every `[NEW]` item in Impacted Files).** Read the existing code before proposing anything new. For each `[NEW]` file, type, interface or table, the plan states what existing code was checked and why it could not serve. Follow the naming and layout of sibling files (for example, an agent role is a package with `index.go`, `instructions.go` and `tools_service.go`, like `analyzer/` and `executor/`). Do not add a table, migration, interface or abstraction where an existing one already works; if it works, use it as it is.

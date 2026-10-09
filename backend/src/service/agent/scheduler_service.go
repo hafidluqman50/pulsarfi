@@ -184,19 +184,12 @@ func (s *TaskScheduler) dispatchHorizonNotice(ctx context.Context, t dbmodel.Age
 
 	// Dynamically generate notice content and card labels matching the user's active conversation language
 	if s.Model != nil {
-		var chatHistory []*schema.Message
+		var recentHistory []*schema.Message
 		if chatMsgs, err := s.ChatMessages.FindByChatID(ctx, chatID); err == nil && len(chatMsgs) > 0 {
-			limit := 10
-			if len(chatMsgs) < limit {
-				limit = len(chatMsgs)
+			if len(chatMsgs) > 10 {
+				chatMsgs = chatMsgs[len(chatMsgs)-10:]
 			}
-			for _, m := range chatMsgs[len(chatMsgs)-limit:] {
-				if m.Sender == "user" {
-					chatHistory = append(chatHistory, schema.UserMessage(m.Content))
-				} else {
-					chatHistory = append(chatHistory, schema.AssistantMessage(m.Content, nil))
-				}
-			}
+			recentHistory = chatHistory(chatMsgs)
 		}
 
 		prompt := fmt.Sprintf(`You are Quasar, PulsarFi's AI trading assistant.
@@ -227,7 +220,7 @@ Respond with ONLY a single JSON object, no prose, no markdown fences:
   }
 }`, ticker, hoursLeft, ticker, hoursLeft, ticker)
 
-		llmMsgs := append([]*schema.Message{schema.SystemMessage(prompt)}, chatHistory...)
+		llmMsgs := append([]*schema.Message{schema.SystemMessage(prompt)}, recentHistory...)
 		if resp, err := s.Model.Generate(ctx, llmMsgs); err == nil && resp != nil {
 			cleanJSON := strings.TrimSpace(resp.Content)
 			cleanJSON = strings.TrimPrefix(cleanJSON, "```json")

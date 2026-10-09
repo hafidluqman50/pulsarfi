@@ -10,7 +10,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -46,7 +45,7 @@ func TestAmbiguousTradeDoesNotAskSizingUntilSideKnown(t *testing.T) {
 	turn1Prompt := "Aku mau kamu trading BMRI"
 	t.Logf("Turn 1 prompt: %q", turn1Prompt)
 
-	card1, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, turn1Prompt, false, agent.AgentEventCallbacks{})
+	card1, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, turn1Prompt, false)
 	if err != nil {
 		t.Fatalf("turn 1 HandleChatMessage failed: %v", err)
 	}
@@ -78,7 +77,7 @@ func TestAmbiguousTradeDoesNotAskSizingUntilSideKnown(t *testing.T) {
 	turn2Prompt := "beli dan scalping"
 	t.Logf("Turn 2 prompt: %q", turn2Prompt)
 
-	card2, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, turn2Prompt, false, agent.AgentEventCallbacks{})
+	card2, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, turn2Prompt, false)
 	if err != nil {
 		t.Fatalf("turn 2 HandleChatMessage failed: %v", err)
 	}
@@ -109,7 +108,7 @@ func TestAmbiguousTradeDoesNotAskSizingUntilSideKnown(t *testing.T) {
 	turn3Prompt := "1000000"
 	t.Logf("Turn 3 prompt: %q", turn3Prompt)
 
-	card3, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, turn3Prompt, false, agent.AgentEventCallbacks{})
+	card3, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, turn3Prompt, false)
 	if err != nil {
 		t.Fatalf("turn 3 HandleChatMessage failed: %v", err)
 	}
@@ -150,7 +149,7 @@ func TestDualNewsAndChartQuery(t *testing.T) {
 	prompt := "Tarik berita terkini tentang IHSG dan tampilkan chart IHSG"
 	t.Logf("Testing dual query: %q", prompt)
 
-	card, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, prompt, false, agent.AgentEventCallbacks{})
+	card, err := registry.AgentChat.HandleChatMessage(ctx, chatID, wallet, prompt, false)
 	if err != nil {
 		t.Fatalf("HandleChatMessage failed: %v", err)
 	}
