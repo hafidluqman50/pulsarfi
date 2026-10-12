@@ -52,11 +52,16 @@ func NewDeepSeekChatModel(ctx context.Context, model string) (einomodel.ToolCall
 	if key == "" {
 		return nil, fmt.Errorf("deepseek: missing DEEPSEEK_API_KEY")
 	}
-	// DEEPSEEK_BASE_URL lets tests point the same client at another
-	// OpenAI-compatible provider; unset means DeepSeek itself.
+	// DEEPSEEK_BASE_URL and DEEPSEEK_MODEL point the same client at another
+	// OpenAI-compatible provider (Command Code serves DeepSeek under its own
+	// model names, e.g. deepseek/deepseek-v4.1-flash); all three variables unset
+	// means DeepSeek itself, exactly as before.
 	baseURL := strings.TrimSpace(os.Getenv("DEEPSEEK_BASE_URL"))
 	if baseURL == "" {
 		baseURL = defaultBaseURL
+	}
+	if override := strings.TrimSpace(os.Getenv("DEEPSEEK_MODEL")); override != "" {
+		model = override
 	}
 	return einoopenai.NewChatModel(ctx, &einoopenai.ChatModelConfig{
 		APIKey:  key,
