@@ -2,15 +2,16 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
-| **Status** | Implemented |
+| **Version** | 1.2 |
+| **Status** | Superseded |
 | **Date Created** | 2026-09-16 |
-| **Last Updated** | 2026-09-16 |
+| **Last Updated** | 2026-10-20 |
 
 | Version | Date | Change |
 |---|---|---|
-| 1.0 | 2026-09-16 | Initial draft |
-| 1.1 | 2026-09-16 | Status updated to Implemented — `pendingNewChatId` + `pendingDraft` + `initialMessage` prop shipped in `QuasarPanel.tsx` and `ChatThread.tsx` |
+| 1.2 | 2026-10-20 | **Superseded by `docs/plans/agent-new-chat-model-simplification.md` (v1.0).** The `pendingNewChatId` + `pendingDraft` + `initialMessage` hand-off this plan introduced is removed in favour of "New Chat == Active Chat": `handleNewChat` sets `activeChatId` directly, the intro moves into `ChatThread`'s empty state, and `ChatService.GetChatMessages` returns an empty list for a chat with no row yet (so mounting a fresh chat no longer 500s) — which removes the reason this lazy-mount split existed. The Goal and Failure Chain below remain the accurate description of the state this plan is leaving behind. |
+| 1.1 | 2026-09-16 | Status updated to Implemented — `pendingNewChatId` + `pendingDraft` + `initialMessage` prop shipped in `QuasarPanel.tsx` and `ChatThread.tsx`. |
+| 1.0 | 2026-09-16 | Initial draft. |
 
 ---
 
@@ -20,7 +21,7 @@ When a user clicks the **`+ new chat`** button in `QuasarPanel`, a new chat sess
 
 ### Root Cause Analysis
 
-1. In `QuasarPanel.tsx` (lines 38–42):
+1. In `QuasarPanel.tsx` (lines 38-42):
    ```typescript
    function handleNewChat() {
      setActiveChatId(crypto.randomUUID());

@@ -95,4 +95,16 @@ func TestChatServiceDecomposition(t *testing.T) {
 	if err != agentsvc.ErrWalletMismatch {
 		t.Errorf("expected ErrWalletMismatch, got %v", err)
 	}
+
+	// 4. Verify a chat with no row yet reads as an empty list, not an error
+	// (idempotent read) — this is what lets a freshly opened chat mount and
+	// fetch without a 500.
+	unknownID := uuid.New()
+	empty, err := registry.AgentChat.GetChatMessages(ctx, unknownID, testWallet)
+	if err != nil {
+		t.Fatalf("expected nil error for an unknown chat, got %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected 0 messages for an unknown chat, got %d", len(empty))
+	}
 }

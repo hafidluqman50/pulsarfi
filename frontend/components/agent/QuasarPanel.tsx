@@ -25,50 +25,36 @@ export function QuasarPanel() {
 function QuasarPanelContent() {
   const [expanded, setExpanded] = useState(false);
   const [destination, setDestination] = useState<QuasarDestination>('chat');
+  // activeChatId is the single source of truth for "which chat is open". A new
+  // chat is just a fresh client UUID: ChatThread mounts for it and reads an
+  // empty message list until the first message is sent (GetChatMessages treats
+  // a chat with no row yet as empty, not an error) — there is no separate
+  // "pending" chat and no message hand-off.
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
-  // A chat the user has asked to start but not sent a first message into
-  // yet — no chat row exists in the DB for this id, so ChatThread must not
-  // mount (and fire GET /agent/chats/<id>/messages against it) until the
-  // user actually submits something.
-  const [pendingNewChatId, setPendingNewChatId] = useState<string | null>(null);
-  const [pendingDraft, setPendingDraft] = useState('');
-  const [initialMessageForActiveChat, setInitialMessageForActiveChat] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
   const [activityKind, setActivityKind] = useState<ActivityKind>('all');
   const isSheet = useViewportWidth() < SHEET_BREAKPOINT;
 
-  const { data: chats = [] } = useAgentChats();
+  const { data: chats = [], isSuccess: chatsLoaded } = useAgentChats();
   const { data: tasks = [] } = useAgentTasks();
   const { data: activity = [] } = useAgentActivity();
 
   useEffect(() => {
-    if (activeChatId || pendingNewChatId || chats.length === 0) return;
-    setActiveChatId(chats[0].id);
-  }, [chats, activeChatId, pendingNewChatId]);
+    if (activeChatId || !chatsLoaded) return;
+    // Newest chat first (the API orders created_at DESC), or start a fresh one
+    // when the user has no chats at all.
+    setActiveChatId(chats.length > 0 ? chats[0].id : crypto.randomUUID());
+  }, [chats, chatsLoaded, activeChatId]);
 
   function handleNewChat() {
-    setActiveChatId(null);
-    setPendingNewChatId(crypto.randomUUID());
-    setPendingDraft('');
+    setActiveChatId(crypto.randomUUID());
     setActiveTaskId(null);
     setDestination('chat');
   }
 
   function handleSelectChat(chatId: string) {
-    setPendingNewChatId(null);
-    setPendingDraft('');
     setActiveChatId(chatId);
     setDestination('chat');
-  }
-
-  function handleSendPending() {
-    const trimmed = pendingDraft.trim();
-    if (!trimmed) return;
-    const targetChatId = pendingNewChatId ?? crypto.randomUUID();
-    setInitialMessageForActiveChat(trimmed);
-    setActiveChatId(targetChatId);
-    setPendingNewChatId(null);
-    setPendingDraft('');
   }
 
   if (!expanded) {
@@ -265,46 +251,22 @@ function QuasarPanelContent() {
 
       <div style={{ display: destination === 'chat' ? 'flex' : 'none', flex: 1, minHeight: 0, flexDirection: 'column' }}>
         {!activeChatId && (
-          <>
-            <div className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div className="rise" style={{ maxWidth: '92%' }}>
-                <div style={{ font: '600 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', marginBottom: 5 }}>Quasar</div>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, lineHeight: 1.5, color: 'var(--ink-soft)', border: '1px solid var(--hairline)', borderLeft: '3px solid var(--merah)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
-                  I am Quasar. Write the instruction in your own words — a fast trade or a long mandate, I read the horizon out of what you wrote. Standing
-                  instructions I turn into a rule with named sources, a number and hard caps, and show you every step before anything is armed.
-                </div>
+          // A single frame, until the auto-select effect has picked (or created)
+          // the active chat. Rendered here rather than inside ChatThread so the
+          // panel never flashes empty.
+          <div className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div className="rise" style={{ maxWidth: '92%' }}>
+              <div style={{ font: '600 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', marginBottom: 5 }}>Quasar</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, lineHeight: 1.5, color: 'var(--ink-soft)', border: '1px solid var(--hairline)', borderLeft: '3px solid var(--merah)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
+                I am Quasar. Write the instruction in your own words — a fast trade or a long mandate, I read the horizon out of what you wrote. Standing
+                instructions I turn into a rule with named sources, a number and hard caps, and show you every step before anything is armed.
               </div>
-              <RosterCard />
             </div>
-            <div style={{ flex: 'none', borderTop: '1px solid var(--ink)', background: 'var(--putih)', padding: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
-                <textarea
-                  value={pendingDraft}
-                  onChange={(e) => setPendingDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSendPending();
-                    }
-                  }}
-                  rows={2}
-                  placeholder="Ask or instruct Quasar…"
-                  style={{ flex: 1, border: '1px solid var(--hairline-strong)', background: 'var(--canvas)', padding: '10px 12px', font: '400 13.5px/1.5 var(--font-sans)', color: 'var(--ink)', outline: 'none', resize: 'none' }}
-                />
-                <button
-                  onClick={handleSendPending}
-                  disabled={!pendingDraft.trim()}
-                  style={{ appearance: 'none', border: 0, cursor: !pendingDraft.trim() ? 'not-allowed' : 'pointer', background: 'var(--ink)', color: 'var(--putih)', font: '600 12px/1 var(--font-sans)', letterSpacing: '.06em', padding: '0 16px', flex: 'none', opacity: !pendingDraft.trim() ? 0.5 : 1 }}
-                >
-                  Send
-                </button>
-              </div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ticker)', marginTop: 7 }}>only this box is treated as a command</div>
-            </div>
-          </>
+            <RosterCard />
+          </div>
         )}
         {activeChatId && (
-          <ChatThread key={activeChatId} chatId={activeChatId} initialMessage={initialMessageForActiveChat ?? undefined} />
+          <ChatThread key={activeChatId} chatId={activeChatId} />
         )}
       </div>
       </div>
