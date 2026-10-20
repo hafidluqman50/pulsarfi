@@ -10,17 +10,17 @@ import { HorizonNoticeCard } from './HorizonNoticeCard';
 import { NewsBrief } from './NewsBrief';
 import { PlanCard } from './PlanCard';
 import { PortfolioChart } from './PortfolioChart';
+import { RosterCard } from './RosterCard';
 import { agentDisplayName, humanizeKey, MessageMarkdown, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
 import { useChatMessages } from '@/http/agent/hooks';
 
 type ChatThreadProps = {
+  // activeChatId is the single source of truth for "which chat is open" (see
+  // QuasarPanel) — a brand-new chat is just a fresh client UUID whose row does
+  // not exist yet, so it reads as an empty message list until the first send.
+  // There is no message hand-off prop: the thread renders its own intro while
+  // it has no messages.
   chatId: string;
-  // Set only when ChatThread is mounted for the very first message of a
-  // brand-new chat (QuasarPanel's lazy-mount flow) — the chat row and its
-  // first message do not exist in the DB yet, so this is dispatched via the
-  // normal handleSend path on mount, rather than requiring the user to
-  // retype what they already typed into the pending-chat textarea.
-  initialMessage?: string;
 };
 
 // Tool names that produce chart-shaped output (matches classifyReply's own
@@ -225,6 +225,21 @@ function parseIntakeAnswer(content: string): Record<string, string> {
   return answers;
 }
 
+// The thread's own empty state — a brand-new chat (a fresh client UUID with no
+// row yet) reads as an empty message list, and this is what it shows instead
+// of the old panel-owned "welcome" view.
+function EmptyThreadIntro() {
+  return (
+    <div className="rise" style={{ maxWidth: '92%' }}>
+      <div style={{ font: '600 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', marginBottom: 5 }}>Quasar</div>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, lineHeight: 1.5, color: 'var(--ink-soft)', border: '1px solid var(--hairline)', borderLeft: '3px solid var(--merah)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
+        I am Quasar. Write the instruction in your own words — a fast trade or a long mandate, I read the horizon out of what you wrote. Standing
+        instructions I turn into a rule with named sources, a number and hard caps, and show you every step before anything is armed.
+      </div>
+    </div>
+  );
+}
+
 // Memoized and pulled out of ChatThread on purpose: draft (the textarea's
 // own state) used to live in the same component that renders this whole
 // list — ReactMarkdown re-parsing every message, plus a PlanCard per
@@ -260,9 +275,18 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
     return map;
   }, [messages]);
 
+  const showEmptyIntro = messages.length === 0 && !isLoading && !isStreaming && !pendingText;
+
   return (
     <div ref={threadRef} className="thread" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
       {isLoading && <div className="skeleton" style={{ height: 80, width: '100%' }} />}
+
+      {showEmptyIntro && (
+        <>
+          <EmptyThreadIntro />
+          <RosterCard />
+        </>
+      )}
 
       {messages.map((message, index) => {
         // Real chat history, fed to the LLM as context, but never rendered
@@ -375,14 +399,8 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
   );
 });
 
-export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
-  // A freshly-promoted chat (initialMessage set) has no row in the database
-  // yet — GET /agent/chats/:id/messages would 404/return empty and briefly
-  // flash the loading skeleton for nothing. Disabled until the first send
-  // settles (docs/plans/fix-new-chat-first-message-loading-flash.md); an
-  // existing chat (no initialMessage) is unaffected, enabled from mount.
-  const [messagesQueryEnabled, setMessagesQueryEnabled] = useState(!initialMessage);
-  const { data: messages = [], isLoading } = useChatMessages(chatId, { enabled: messagesQueryEnabled });
+export function ChatThread({ chatId }: ChatThreadProps) {
+  const { data: messages = [], isLoading } = useChatMessages(chatId);
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState('');
   const [pendingText, setPendingText] = useState<string | null>(null);
@@ -453,10 +471,6 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
     if (!overrideText) setDraft('');
     try {
       await sendChatMessage(chatId, trimmed, hidden);
-      // The chat row is guaranteed to exist now (FindOrCreate ran inside the
-      // send above) — safe to enable the messages query from here on, a
-      // no-op if it was already enabled.
-      setMessagesQueryEnabled(true);
       // Awaited on purpose: the streaming bubble below is cleared in
       // `finally` right after this. If the persisted message list hasn't
       // actually refetched yet by then, there's a gap where neither the
@@ -464,6 +478,10 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
       // visibly disappears for a beat before popping back in once the
       // refetch lands. Awaiting here makes the swap atomic instead.
       await queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
+      // A brand-new chat has no row in the list until its first message lands
+      // (FindOrCreate runs inside the send above) — refresh the list so it
+      // shows up in History.
+      queryClient.invalidateQueries({ queryKey: ['agent-chats'] });
       queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
@@ -477,18 +495,6 @@ export function ChatThread({ chatId, initialMessage }: ChatThreadProps) {
       setIsStreaming(false);
     }
   }
-
-  // Fires exactly once, on mount, only for a freshly-promoted new chat that
-  // was typed into QuasarPanel's pending-chat textarea before ChatThread
-  // (and its WebSocket subscription) existed to send it directly.
-  const hasSentInitialMessageRef = useRef(false);
-  useEffect(() => {
-    if (initialMessage && !hasSentInitialMessageRef.current) {
-      hasSentInitialMessageRef.current = true;
-      handleSend(initialMessage);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const handleRetry = useCallback(async () => {
     if (isSendingRef.current) return;

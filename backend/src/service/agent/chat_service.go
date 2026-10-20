@@ -52,6 +52,13 @@ func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID, wallet stri
 
 func (s *ChatService) GetChatMessages(ctx context.Context, chatID uuid.UUID, wallet string) ([]model.AgentChatMessage, error) {
 	_, messages, err := s.GetChat(ctx, chatID, wallet)
+	if errors.Is(err, ErrChatNotFound) {
+		// A chat with no row yet has no messages — QuasarPanel's "+ new chat"
+		// opens one before the first message is sent, so reading it must be an
+		// empty list, not an error. Ownership is unchanged: a chat that exists
+		// and belongs to someone else still returns ErrWalletMismatch.
+		return []model.AgentChatMessage{}, nil
+	}
 	return messages, err
 }
 
@@ -167,14 +174,10 @@ func (s *ChatService) runForMessage(ctx context.Context, chatID uuid.UUID, userM
 		SourceMessageID: &sourceMessageID,
 	})
 	if err != nil {
-		if _, persistErr := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
-			ChatID:      chatID,
-			Sender:      "supervisor",
-			ContentType: "text",
-			Content:     "Failed to process request. Please try again.",
-		}); persistErr != nil {
-			slog.ErrorContext(ctx, "agent: persist error message failed", "error", persistErr)
-		}
+		// No failure bubble is persisted. The HTTP 500 (and the chat-stream
+		// error event) already carry the failure, and leaving the user's own
+		// message as the chat's last row keeps RetryLastMessage — and the
+		// frontend's Retry button — working for exactly this chat id.
 		return WorkflowCard{}, fmt.Errorf("agent: orchestrator run failed: %w", err)
 	}
 
