@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
@@ -141,6 +142,17 @@ func (o *Orchestrator) Send(ctx context.Context, in OrchestratorInput) (Orchestr
 	rc := o.newRunContext(in.ChatID, in.Wallet, in.RawPrompt, in.SourceMessageID)
 	ctx = WithRunContext(ctx, rc)
 
+	result, err := o.runTurn(ctx, rc, in)
+	if errors.Is(err, errToolBudgetExhausted) {
+		o.finishOnBudget(ctx, in, &result)
+		return result, nil
+	}
+	return result, err
+}
+
+// runTurn is the turn's dispatch: resume a pending questions card, or run a
+// fresh turn (keeping the Arm pause alive when one is pending).
+func (o *Orchestrator) runTurn(ctx context.Context, rc *RunContext, in OrchestratorInput) (OrchestratorResult, error) {
 	pending, hasPending := o.pending(ctx, in.ChatID)
 	if hasPending && pending.kind == interruptQuestions {
 		if err := o.restoreFromChat(ctx, rc); err != nil {
@@ -183,6 +195,10 @@ func (o *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, wallet s
 		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume arm pause: %w", err)
 	}
 	result, err := o.consume(ctx, rc, iter, false)
+	if errors.Is(err, errToolBudgetExhausted) {
+		// The budget is not a failure: return what the turn produced.
+		return ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
+	}
 	if err != nil {
 		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume execute failed: %w", err)
 	}
@@ -224,4 +240,29 @@ func (o *Orchestrator) resolveChatID(ctx context.Context, task dbmodel.AgentTask
 		return msg.ChatID
 	}
 	return uuid.Nil
+}
+
+const finalAnswerTimeout = 30 * time.Second
+
+// toolBudgetInstructions names no language: the model mirrors the user's.
+const toolBudgetInstructions = `You have reached your tool-call budget for this turn. Answer the user now using only the evidence you already have: do not call any more tools. Be honest about anything you could not verify. Reply in the same language as the user's message.`
+
+// finishOnBudget turns a budget-exhausted turn into a normal one. It keeps the
+// agent's own text when there is any; otherwise it asks the model once, with no
+// tools, for an answer from the evidence already gathered. No hardcoded reply
+// is written here.
+func (o *Orchestrator) finishOnBudget(ctx context.Context, in OrchestratorInput, result *OrchestratorResult) {
+	if strings.TrimSpace(result.Reply) != "" || o.ReplyModel == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, finalAnswerTimeout)
+	defer cancel()
+
+	messages := append([]*schema.Message{schema.SystemMessage(toolBudgetInstructions)}, in.Messages...)
+	resp, err := o.ReplyModel.Generate(ctx, messages)
+	if err != nil || resp == nil || strings.TrimSpace(resp.Content) == "" {
+		return
+	}
+	result.Reply = strings.TrimSpace(resp.Content)
+	PublishChatEvent(in.ChatID, "reply_delta", map[string]any{"delta": result.Reply})
 }
