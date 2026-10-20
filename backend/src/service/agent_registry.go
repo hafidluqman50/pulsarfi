@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"os"
 
+	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/analyzer"
@@ -16,8 +16,8 @@ import (
 	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
 
-// spotPriceAdapter closes over the env vars PriceService.GetOnchainPriceV4
-// itself needs (PULSAR_PROTOCOL/ALCHEMY_RPC_URL, same pattern already used
+// spotPriceAdapter closes over the on-chain config PriceService.GetOnchainPriceV4
+// itself needs (PulsarProtocol/RPCURL, same pattern already used
 // by public/stock_service.go's own market-listing call site) — keeps
 // executor.SpotPriceReader's own interface free of env-var/wiring
 // knowledge (ISP), matching every other adapter in this file.
@@ -40,7 +40,7 @@ func (a spotPriceAdapter) QuoteStockToIdrx(ctx context.Context, ticker string, s
 }
 
 // balanceAdapter reads the owner's IDRX balance on-chain, closing over the
-// same env wiring as spotPriceAdapter (IDRX_ADDRESS/ALCHEMY_RPC_URL) so
+// same on-chain config as spotPriceAdapter (IDRXAddress/RPCURL) so
 // executor.BalanceReader stays free of it.
 type balanceAdapter struct {
 	price    *publicsvc.PriceService
@@ -87,9 +87,14 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 	// its place. StubAgentContractClient (the old fake) has been deleted
 	// entirely, not just unused (v2.7) — there is no fallback type left to
 	// reach for by mistake.
-	contractClient, chainErr := agentsvc.NewClient(ctx)
+	onchainCfg, cfgErr := config.LoadOnchain()
+	if cfgErr != nil {
+		log.Printf("agent task service disabled: on-chain config: %v", cfgErr)
+		return nil, nil, nil
+	}
+	contractClient, chainErr := external.NewOnchainService(ctx, onchainCfg)
 	if chainErr != nil {
-		log.Printf("agent task service disabled: on-chain client: %v", chainErr)
+		log.Printf("agent task service disabled: on-chain service: %v", chainErr)
 		return nil, nil, nil
 	}
 
@@ -115,9 +120,9 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 	// retired from this wiring; a failed ExecuteTrade call fails loudly on
 	// its own merits (a real, in-flight chain error), never a stub standing
 	// in for one.
-	prices := spotPriceAdapter{price: chartReader.Price, protocolAddr: os.Getenv("PULSAR_PROTOCOL"), rpcURL: os.Getenv("ALCHEMY_RPC_URL")}
-	balances := balanceAdapter{price: chartReader.Price, idrxAddr: os.Getenv("IDRX_ADDRESS"), rpcURL: os.Getenv("ALCHEMY_RPC_URL")}
-	executorAgent, err := executor.New(ctx, executorModel, &executor.DBPortfolioReader{Transactions: repos.StockTransaction}, contractClient, repos.Stock, prices, balances, repos.AgentTrade, repos.StockTransaction)
+	prices := spotPriceAdapter{price: chartReader.Price, protocolAddr: onchainCfg.PulsarProtocol, rpcURL: onchainCfg.RPCURL}
+	balances := balanceAdapter{price: chartReader.Price, idrxAddr: onchainCfg.IDRXAddress, rpcURL: onchainCfg.RPCURL}
+	executorAgent, err := executor.New(ctx, executorModel, &executor.DBPortfolioReader{Transactions: repos.StockTransaction}, contractClient, repos.Stock, prices, balances, onchainCfg.IDRXAddress, repos.AgentTrade, repos.StockTransaction)
 
 	if err != nil {
 		log.Printf("agent task service disabled: build executor agent: %v", err)

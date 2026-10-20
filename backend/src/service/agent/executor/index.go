@@ -19,6 +19,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/ethereum/go-ethereum/common"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	dbmodel "github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
@@ -46,7 +47,7 @@ type TaskExecutor interface {
 	// TradeRecord). contracts.TradeIntent.Amount (a string, IDRX-equivalent) is
 	// Comet's own original decision, kept for audit/display only — it is
 	// never what actually gets sent on-chain, `amount` is.
-	ExecuteTrade(ctx context.Context, onChainTaskID uint64, subTaskID uint64, token common.Address, ticker string, side contracts.TradeSide, amount, minimumOutputAmount *big.Int, summary string, reasoningHash [32]byte) (out *agent.ExecuteTradeOutput, err error)
+	ExecuteTrade(ctx context.Context, onChainTaskID uint64, subTaskID uint64, token common.Address, ticker string, side contracts.TradeSide, amount, minimumOutputAmount *big.Int, summary string, reasoningHash [32]byte) (out *agentcore.ExecuteTradeOutput, err error)
 	// TradePermissionRemaining reads totalBudget - usedBudget for the armed
 	// Task — submit_trade's real ceiling, replacing the old off-chain
 	// AmountBpsCap. LogDecision is gone entirely: a hold is just the
@@ -107,12 +108,12 @@ type StockTransactionRecorder interface {
 // always ship (this role's own required tools); extraTools lets a caller
 // add more (e.g. an indicator-aware price tool for technical conditions),
 // the same composition pattern used across every role in this package.
-func New(ctx context.Context, chatModel model.ToolCallingChatModel, portfolio PortfolioReader, exec TaskExecutor, stocks StockLookup, prices SpotPriceReader, balances BalanceReader, trades TradeRecorder, stockTransactions StockTransactionRecorder, extraTools ...tool.BaseTool) (adk.Agent, error) {
+func New(ctx context.Context, chatModel model.ToolCallingChatModel, portfolio PortfolioReader, exec TaskExecutor, stocks StockLookup, prices SpotPriceReader, balances BalanceReader, idrxAddress string, trades TradeRecorder, stockTransactions StockTransactionRecorder, extraTools ...tool.BaseTool) (adk.Agent, error) {
 	holdingsTool, err := newHoldingsTool(portfolio)
 	if err != nil {
 		return nil, fmt.Errorf("executor: build holdings tool: %w", err)
 	}
-	submitTool, err := newSubmitTradeTool(exec, stocks, prices, trades, stockTransactions)
+	submitTool, err := newSubmitTradeTool(exec, stocks, prices, trades, stockTransactions, idrxAddress)
 	if err != nil {
 		return nil, fmt.Errorf("executor: build submit_trade tool: %w", err)
 	}

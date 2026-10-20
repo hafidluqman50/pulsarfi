@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"math"
 	"math/big"
-	"os"
 	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -249,7 +248,7 @@ func clampToRemaining(amount, remaining string) string {
 // real stock catalog (StockLookup) before it ever reaches ExecuteTrade —
 // the same prompt-injection hardening applied to the chart lens catalog
 // (docs/plans/agent-task-manager-code-implementation.md §7.G).
-func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceReader, trades TradeRecorder, stockTransactions StockTransactionRecorder) (tool.InvokableTool, error) {
+func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceReader, trades TradeRecorder, stockTransactions StockTransactionRecorder, idrxAddress string) (tool.InvokableTool, error) {
 	return utils.InferTool(
 		"submit_trade",
 		"Submits a trade on-chain against the current Task's armed TradePermission. Call this only once you've decided the trigger is confirmed and an action should fire now — you supply ticker, side, and amount yourself, none of it is pre-set on the Task.",
@@ -368,11 +367,10 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 			var reasoningHash [32]byte = common.HexToHash(decideRow.DecisionHash)
 			var token common.Address
 			if side == contracts.TradeSideBuy {
-				idrxHex := os.Getenv("IDRX_ADDRESS")
-				if idrxHex == "" {
-					return submitTradeResponse{}, fmt.Errorf("submit_trade: IDRX_ADDRESS environment variable not set")
+				if idrxAddress == "" {
+					return submitTradeResponse{}, fmt.Errorf("submit_trade: IDRX address not configured")
 				}
-				token = common.HexToAddress(idrxHex)
+				token = common.HexToAddress(idrxAddress)
 			} else {
 				token = common.HexToAddress(*stock.ContractAddress)
 			}
