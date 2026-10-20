@@ -3,15 +3,15 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { sendChatMessage, retryLastMessage, chatStreamTopic, type AgentChatMessage, type ChatStreamEvent, type LiveSubTask } from '@/http/agent/chatApi';
-import { useRealtimeTopic } from '@/http/realtime/useRealtimeSocket';
+import { sendChatMessage, retryLastMessage, getTurnStatus, type AgentChatMessage, type LiveSubTask } from '@/http/agent/chatApi';
 import { ClarifyingQuestions } from './ClarifyingQuestions';
 import { HorizonNoticeCard } from './HorizonNoticeCard';
 import { NewsBrief } from './NewsBrief';
 import { PlanCard } from './PlanCard';
 import { PortfolioChart } from './PortfolioChart';
 import { RosterCard } from './RosterCard';
-import { agentDisplayName, humanizeKey, MessageMarkdown, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
+import { agentDisplayName, MessageMarkdown, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
+import { beginTurn, clearTurnLive, failTurn, getChatSession, markTurnEnded, markTurnStarted, useChatSession } from './chatSession';
 import { useChatMessages } from '@/http/agent/hooks';
 
 // The thinking indicator is a fixed English UI-chrome label — global for every
@@ -43,13 +43,6 @@ type ChatThreadProps = {
   // it has no messages.
   chatId: string;
 };
-
-// Tool names that produce chart-shaped output (matches classifyReply's own
-// check, orchestrator_service.go) — used here purely to know, the instant
-// the tool_call event fires, that a chart is on its way, so a skeleton can
-// appear immediately instead of only once the whole turn finishes and the
-// real chart shows up in the persisted message.
-const CHART_TOOLS = new Set(['get_portfolio_snapshot', 'get_stock_chart']);
 
 function ChartSkeletonCard() {
   return (
@@ -412,7 +405,7 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
 
       {isStreaming && chartPending && <ChartSkeletonCard />}
 
-      {isStreaming && streamingReplyText && (
+      {streamingReplyText && (
         <div className="rise" style={{ maxWidth: '92%' }}>
           <div style={{ font: '600 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--merah)', marginBottom: 5 }}>Quasar</div>
           <div style={{ fontFamily: 'var(--font-display)', color: 'var(--ink-soft)', border: '1px solid var(--hairline)', borderLeft: '3px solid var(--merah)', background: 'var(--putih)', padding: '13px 15px', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
@@ -434,124 +427,99 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
 export function ChatThread({ chatId }: ChatThreadProps) {
   const { data: messages = [], isLoading } = useChatMessages(chatId);
   const queryClient = useQueryClient();
+  const session = useChatSession(chatId);
   const [draft, setDraft] = useState('');
   const [pendingText, setPendingText] = useState<string | null>(null);
-  const [failedMessage, setFailedMessage] = useState<{ text: string; description: string } | null>(null);
-  const [liveSubTasks, setLiveSubTasks] = useState<LiveSubTask[]>([]);
-  const [toolActivityByAgent, setToolActivityByAgent] = useState<Record<string, string>>({});
-  const [thinkingByAgent, setThinkingByAgent] = useState<Record<string, string>>({});
-  const [isFinalizing, setIsFinalizing] = useState(false);
-  const [chartPending, setChartPending] = useState(false);
-  const [streamingReplyText, setStreamingReplyText] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
   const [showReasoning, setShowReasoning] = useReasoningVisibility();
   const isSendingRef = useRef(false);
 
-  // Live progress (sub_tasks/reply_delta) arrives over the shared WebSocket
-  // now, not the HTTP response body — subscribed here, unconditionally, for
-  // as long as this chat is open, independent of whether *this* tab is the
-  // one that sent the message (docs/plans/agent-orchestration-graph-rebuild.md
-  // v2.6: "no SSE, disini pake socket"). sub_tasks always carries the
-  // turn's full, current list (backend/src/http/handlers/agent/chats.go's
-  // liveSubTasks) — this is a plain state replace, no matching/merging of
-  // any kind (docs/plans/fix-sub-task-attempt-lifecycle-events.md).
-  useRealtimeTopic<ChatStreamEvent>(chatStreamTopic(chatId), (event) => {
-    if (event.type === 'sub_tasks') {
-      setLiveSubTasks(event.data);
-    }
-    if (event.type === 'tool_call' && event.data.phase === 'start') {
-      setToolActivityByAgent((prev) => ({ ...prev, [event.data.agent]: humanizeKey(event.data.tool) }));
-      if (CHART_TOOLS.has(event.data.tool)) setChartPending(true);
-    }
-    if (event.type === 'thinking') {
-      setThinkingByAgent((prev) => ({ ...prev, [event.data.agent]: (prev[event.data.agent] ?? '') + event.data.delta }));
-    }
-    if (event.type === 'finalizing') {
-      setIsFinalizing(true);
-    }
-    if (event.type === 'reply_delta') {
-      setStreamingReplyText((prev) => prev + event.data.delta);
-    }
-  });
+  // A client that mounts mid-turn (reload, route return, second tab) cannot
+  // know locally that a turn is running: ChatThread's own state was just
+  // created. The server is the source of truth. Without this, the UI would
+  // offer Retry for a turn that is still running and start a second one.
+  useEffect(() => {
+    let cancelled = false;
+    getTurnStatus(chatId)
+      .then((status) => {
+        if (cancelled) return;
+        if (status.running) {
+          markTurnStarted(chatId);
+        } else if (getChatSession(chatId).running) {
+          markTurnEnded(chatId);
+        }
+      })
+      .catch(() => {
+        /* status is best effort; the 409 guard is the backstop */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatId]);
+
+  // When a turn ends, wait for the persisted messages to land before dropping
+  // the live bubbles, so the reply does not blink out.
+  const endedAt = session.endedAt;
+  useEffect(() => {
+    if (!endedAt) return;
+    let cancelled = false;
+    void queryClient
+      .invalidateQueries({ queryKey: ['agent-chat-messages', chatId] })
+      .then(() => queryClient.invalidateQueries({ queryKey: ['agent-tasks'] }))
+      .then(() => {
+        if (!cancelled) clearTurnLive(chatId);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [endedAt, chatId, queryClient]);
 
   // Derived at render time, not via a setState-in-effect: once the real
   // persisted message shows up in `messages`, the optimistic bubble below
-  // is redundant and hides itself immediately — no extra render tick spent
-  // holding a stale copy, and no effect needed to reconcile the two.
+  // is redundant and hides itself immediately.
   const pendingBubbleText = pendingText && !messages.some((m) => m.sender === 'user' && m.content === pendingText) ? pendingText : null;
 
   async function handleSend(overrideText?: string, hidden?: boolean) {
     const trimmed = (overrideText ?? draft).trim();
     if (!trimmed || isSendingRef.current) return;
     isSendingRef.current = true;
-    setIsStreaming(true);
+    beginTurn(chatId);
     // A hidden send (a clarifying-questions card's compiled answer) never
-    // shows the optimistic bubble either — it must never appear in the UI
-    // at all, live or persisted.
+    // shows the optimistic bubble either — it must never appear in the UI at
+    // all, live or persisted.
     if (!hidden) setPendingText(trimmed);
-    setFailedMessage(null);
-    setLiveSubTasks([]);
-    setToolActivityByAgent({});
-    setThinkingByAgent({});
-    setIsFinalizing(false);
-    setChartPending(false);
-    setStreamingReplyText('');
     if (!overrideText) setDraft('');
     try {
       await sendChatMessage(chatId, trimmed, hidden);
-      // Awaited on purpose: the streaming bubble below is cleared in
-      // `finally` right after this. If the persisted message list hasn't
-      // actually refetched yet by then, there's a gap where neither the
-      // streaming bubble nor the real message is on screen — the reply
-      // visibly disappears for a beat before popping back in once the
-      // refetch lands. Awaiting here makes the swap atomic instead.
-      await queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
-      // A brand-new chat has no row in the list until its first message lands
-      // (FindOrCreate runs inside the send above) — refresh the list so it
-      // shows up in History.
-      queryClient.invalidateQueries({ queryKey: ['agent-chats'] });
-      queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
+      // The blocking response means the turn finished and the reply is
+      // persisted; endedAt then refetches before the live bubbles are dropped.
+      markTurnEnded(chatId);
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
-      setFailedMessage({ text: trimmed, description });
+      failTurn(chatId, trimmed, description);
       toast.error('Message failed to send', { description });
     } finally {
       isSendingRef.current = false;
       setPendingText(null);
-      setLiveSubTasks([]);
-      setStreamingReplyText('');
-      setIsStreaming(false);
     }
   }
 
   const handleRetry = useCallback(async () => {
     if (isSendingRef.current) return;
     isSendingRef.current = true;
-    setIsStreaming(true);
-    setFailedMessage(null);
-    setLiveSubTasks([]);
-    setToolActivityByAgent({});
-    setThinkingByAgent({});
-    setIsFinalizing(false);
-    setChartPending(false);
-    setStreamingReplyText('');
+    beginTurn(chatId);
     try {
       await retryLastMessage(chatId);
-      // Same reasoning as handleSend: await so the message list already has
-      // the real reply before the streaming bubble is cleared below.
-      await queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
-      queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
+      markTurnEnded(chatId);
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
-      setFailedMessage({ text: messages[messages.length - 1]?.content ?? '', description });
+      failTurn(chatId, messages[messages.length - 1]?.content ?? '', description);
       toast.error('Message failed to send', { description });
     } finally {
       isSendingRef.current = false;
-      setLiveSubTasks([]);
-      setStreamingReplyText('');
-      setIsStreaming(false);
     }
-  }, [chatId, messages, queryClient]);
+  }, [chatId, messages]);
+
+  const isBusy = session.running || pendingText != null;
 
   return (
     <>
@@ -559,16 +527,16 @@ export function ChatThread({ chatId }: ChatThreadProps) {
         chatId={chatId}
         messages={messages}
         isLoading={isLoading}
-        isStreaming={isStreaming}
+        isStreaming={session.running}
         pendingText={pendingBubbleText}
-        failedMessage={failedMessage}
-        liveSubTasks={liveSubTasks}
-        toolActivityByAgent={toolActivityByAgent}
-        thinkingByAgent={thinkingByAgent}
-        isFinalizing={isFinalizing}
+        failedMessage={session.failedMessage}
+        liveSubTasks={session.liveSubTasks}
+        toolActivityByAgent={session.toolActivityByAgent}
+        thinkingByAgent={session.thinkingByAgent}
+        isFinalizing={session.isFinalizing}
         showReasoning={showReasoning}
-        chartPending={chartPending}
-        streamingReplyText={streamingReplyText}
+        chartPending={session.chartPending}
+        streamingReplyText={session.streamingReplyText}
         onRetry={handleRetry}
         onToggleReasoning={() => setShowReasoning(!showReasoning)}
         onSendPrompt={handleSend}
@@ -591,8 +559,8 @@ export function ChatThread({ chatId }: ChatThreadProps) {
           />
           <button
             onClick={() => handleSend()}
-            disabled={!draft.trim() || isStreaming || pendingText != null}
-            style={{ appearance: 'none', border: 0, cursor: !draft.trim() || isStreaming || pendingText != null ? 'not-allowed' : 'pointer', background: 'var(--ink)', color: 'var(--putih)', font: '600 12px/1 var(--font-sans)', letterSpacing: '.06em', padding: '0 16px', flex: 'none', opacity: !draft.trim() || isStreaming || pendingText != null ? 0.5 : 1 }}
+            disabled={!draft.trim() || isBusy}
+            style={{ appearance: 'none', border: 0, cursor: !draft.trim() || isBusy ? 'not-allowed' : 'pointer', background: 'var(--ink)', color: 'var(--putih)', font: '600 12px/1 var(--font-sans)', letterSpacing: '.06em', padding: '0 16px', flex: 'none', opacity: !draft.trim() || isBusy ? 0.5 : 1 }}
           >
             Send
           </button>

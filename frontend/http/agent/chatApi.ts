@@ -85,6 +85,7 @@ export type ChatStreamEvent =
   // (docs/plans/quasar-thinking-label-and-reasoning-toggle.md). Kept so older
   // payloads still type-check.
   | { type: 'status'; data: { text: string } }
+  | { type: 'turn'; data: { status: 'running' | 'done' | 'failed' } }
   | { type: 'final'; data: WorkflowCard }
   | { type: 'error'; data: { message: string } };
 
@@ -112,4 +113,19 @@ export async function sendChatMessage(chatId: string, message: string, hidden?: 
 export async function retryLastMessage(chatId: string): Promise<WorkflowCard> {
   const res = await client.post(`/agent/chats/${chatId}/messages/retry`, {});
   return res.data.data as WorkflowCard;
+}
+
+// getTurnStatus is the authoritative "is a turn running for this chat" answer
+// for a client that has just mounted (reload, route return, second tab). The
+// `turn` WebSocket event is only a live signal; the hub's replay cache cannot
+// carry state (docs/plans/agent-chat-turn-lifecycle.md).
+export interface TurnStatus {
+  running: boolean;
+  started_at?: string;
+}
+
+export async function getTurnStatus(chatId: string): Promise<TurnStatus> {
+  const res = await client.get(`/agent/chats/${chatId}/turn`);
+  const data = res.data?.data ?? {};
+  return { running: Boolean(data.running), started_at: data.started_at };
 }

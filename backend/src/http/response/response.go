@@ -28,6 +28,10 @@ func Forbidden(c *gin.Context, message string) {
 	c.AbortWithStatusJSON(403, Body{StatusCode: 403, Message: message, Data: nil})
 }
 
+func Conflict(c *gin.Context, message string) {
+	c.AbortWithStatusJSON(409, Body{StatusCode: 409, Message: message, Data: nil})
+}
+
 func NotFound(c *gin.Context, message string) {
 	c.AbortWithStatusJSON(404, Body{StatusCode: 404, Message: message, Data: nil})
 }
