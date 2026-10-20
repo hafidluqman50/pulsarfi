@@ -143,7 +143,7 @@ func TestToolBudget_TruncatesInsteadOfFailing(t *testing.T) {
 		Wallet:    "0xtest",
 		RawPrompt: "cari berita IHSG",
 		Messages:  []*schema.Message{schema.UserMessage("cari berita IHSG")},
-	})
+	}, agentsvc.FreshTurnIntent())
 	if err != nil {
 		t.Fatalf("a tool-budget cap must not fail the turn, got: %v", err)
 	}

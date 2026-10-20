@@ -25,11 +25,36 @@ var ErrTurnInFlight = errors.New("agent: a turn is already running for this chat
 // the longest a live client can wait for the blocking response.
 const turnTimeout = 5 * time.Minute
 
+// turnKind is what a chat message turns out to be, once the chat's pending
+// interrupt is taken into account. It is the single answer to "where does this
+// message go?" — see ChatService.resolveTurn.
+type turnKind int
+
+const (
+	freshTurn             turnKind = iota // no pause -> start a new turn
+	answerQuestions                       // paused on ask_user -> this message IS the answer
+	sideQuestionDuringArm                 // paused on await_arm -> new turn, arm pause stays alive
+	cancelTurn                            // paused + explicit cancellation
+)
+
+// turnIntent is the resolved message: its kind, plus the interrupt it answers
+// when it answers one (so the pending marker is read exactly once).
+type turnIntent struct {
+	kind        turnKind
+	interruptID string
+}
+
+// FreshTurnIntent is the intent for a message that starts a new turn. Exported
+// so a caller outside this package (a test, a tool) can drive a turn without
+// going through ChatService's session resolution.
+func FreshTurnIntent() turnIntent { return turnIntent{kind: freshTurn} }
+
 // ChatService manages chat threads, user messages, and supervisor replies.
-// It delegates the entire turn to Orchestrator — pause and resume are
-// handled by Eino's checkpoint store inside Orchestrator.Send, never by any
-// hand-rolled state of ChatService's own. This package never builds LLM
-// prompts or invokes an agent directly.
+// It decides what each incoming message is (resolveTurn) and persists the
+// user message and the supervisor reply, then delegates the whole turn to
+// Orchestrator — pause and resume are handled by Eino's checkpoint store
+// inside Orchestrator.Send, and every word the user reads is written by the
+// model, never here: this type builds no LLM prompt.
 type ChatService struct {
 	Chats           *repository.AgentChatRepository
 	ChatMessages    *repository.AgentChatMessageRepository
@@ -40,12 +65,12 @@ type ChatService struct {
 	Turns *TurnRegistry
 }
 
-func (s *ChatService) ListChats(ctx context.Context, wallet string) ([]model.AgentChat, error) {
-	return s.Chats.FindByOwnerWallet(ctx, strings.ToLower(wallet))
+func (svc *ChatService) ListChats(ctx context.Context, wallet string) ([]model.AgentChat, error) {
+	return svc.Chats.FindByOwnerWallet(ctx, strings.ToLower(wallet))
 }
 
-func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID, wallet string) (model.AgentChat, []model.AgentChatMessage, error) {
-	chat, found, err := s.Chats.FindByID(ctx, chatID)
+func (svc *ChatService) GetChat(ctx context.Context, chatID uuid.UUID, wallet string) (model.AgentChat, []model.AgentChatMessage, error) {
+	chat, found, err := svc.Chats.FindByID(ctx, chatID)
 	if err != nil {
 		return model.AgentChat{}, nil, err
 	}
@@ -55,15 +80,15 @@ func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID, wallet stri
 	if !strings.EqualFold(chat.OwnerWallet, wallet) {
 		return model.AgentChat{}, nil, ErrWalletMismatch
 	}
-	messages, err := s.ChatMessages.FindByChatID(ctx, chatID)
+	messages, err := svc.ChatMessages.FindByChatID(ctx, chatID)
 	if err != nil {
 		return model.AgentChat{}, nil, err
 	}
 	return chat, messages, nil
 }
 
-func (s *ChatService) GetChatMessages(ctx context.Context, chatID uuid.UUID, wallet string) ([]model.AgentChatMessage, error) {
-	_, messages, err := s.GetChat(ctx, chatID, wallet)
+func (svc *ChatService) GetChatMessages(ctx context.Context, chatID uuid.UUID, wallet string) ([]model.AgentChatMessage, error) {
+	_, messages, err := svc.GetChat(ctx, chatID, wallet)
 	if errors.Is(err, ErrChatNotFound) {
 		// A chat with no row yet has no messages — QuasarPanel's "+ new chat"
 		// opens one before the first message is sent, so reading it must be an
@@ -74,31 +99,47 @@ func (s *ChatService) GetChatMessages(ctx context.Context, chatID uuid.UUID, wal
 	return messages, err
 }
 
-// HandleChatMessage persists the user's message and runs the turn. hidden
-// marks a message as real chat history (still persisted, still fed to the
-// LLM as context, still returned by every read) that must never render as a
-// bubble in the UI — the compiled answer a clarifying-questions card sends,
-// not something the user typed by hand.
+// resolveTurn is the single decision point: what is this message, given the
+// chat's pending interrupt? It reads the pending marker exactly once; Send
+// then switches on the result instead of asking again.
+func (svc *ChatService) resolveTurn(ctx context.Context, chatID uuid.UUID, message string) turnIntent {
+	pending, paused := svc.interrupts().pending(ctx, chatID)
+	if !paused {
+		return turnIntent{kind: freshTurn}
+	}
+	if isCancellationAction(message) {
+		return turnIntent{kind: cancelTurn}
+	}
+	if pending.kind == interruptQuestions {
+		return turnIntent{kind: answerQuestions, interruptID: pending.id}
+	}
+	return turnIntent{kind: sideQuestionDuringArm}
+}
+
 // HandleChatMessage takes the chat's single turn slot, then runs the turn on a
 // context that does not belong to the caller's connection: a refresh or a
-// closed tab must not cancel work already committed to.
-func (s *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, hidden bool) (card WorkflowCard, err error) {
-	release, ok := s.tryStartTurn(chatID)
+// closed tab must not cancel work already committed to. hidden marks a message
+// as real chat history (still persisted, still fed to the LLM as context,
+// still returned by every read) that must never render as a bubble — the
+// compiled answer a clarifying-questions card sends, not something the user
+// typed by hand.
+func (svc *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, hidden bool) (card WorkflowCard, err error) {
+	release, ok := svc.tryStartTurn(chatID)
 	if !ok {
 		return WorkflowCard{}, ErrTurnInFlight
 	}
 	defer release()
 
-	s.announceTurn(chatID, "running")
-	defer func() { s.announceTurn(chatID, turnStatus(err)) }()
+	svc.announceTurn(chatID, "running")
+	defer func() { svc.announceTurn(chatID, turnStatus(err)) }()
 
 	turnCtx, cancel := turnContext(ctx)
 	defer cancel()
-	return s.handleChatMessage(turnCtx, chatID, wallet, message, hidden)
+	return svc.handleChatMessage(turnCtx, chatID, wallet, message, hidden)
 }
 
-func (s *ChatService) handleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, hidden bool) (WorkflowCard, error) {
-	chat, err := s.Chats.FindOrCreate(ctx, chatID, strings.ToLower(wallet), truncateRunes(message, 50))
+func (svc *ChatService) handleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, hidden bool) (WorkflowCard, error) {
+	chat, err := svc.Chats.FindOrCreate(ctx, chatID, strings.ToLower(wallet), truncateRunes(message, 50))
 	if err != nil {
 		return WorkflowCard{}, err
 	}
@@ -106,11 +147,12 @@ func (s *ChatService) handleChatMessage(ctx context.Context, chatID uuid.UUID, w
 		return WorkflowCard{}, ErrWalletMismatch
 	}
 
-	if s.hasActiveCheckpoint(ctx, chatID) && isCancellationAction(message) {
-		return s.handleCancellation(ctx, chatID, message)
+	intent := svc.resolveTurn(ctx, chatID, message)
+	if intent.kind == cancelTurn {
+		return svc.handleCancellation(ctx, chatID, message)
 	}
 
-	existingMessages, err := s.ChatMessages.FindByChatID(ctx, chatID)
+	existingMessages, err := svc.ChatMessages.FindByChatID(ctx, chatID)
 	if err != nil {
 		return WorkflowCard{}, err
 	}
@@ -123,35 +165,35 @@ func (s *ChatService) handleChatMessage(ctx context.Context, chatID uuid.UUID, w
 	if hidden {
 		uiProps = datatypes.JSON(`{"hidden":true}`)
 	}
-	userMessage, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+	userMessage, err := svc.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
 		ChatID: chatID, Sender: "user", ContentType: "text", Content: message, UIProps: uiProps,
 	})
 	if err != nil {
 		return WorkflowCard{}, fmt.Errorf("agent: persist user message: %w", err)
 	}
 
-	return s.runForMessage(ctx, chatID, userMessage, append(existingMessages, userMessage), strings.ToLower(wallet))
+	return svc.runForMessage(ctx, chatID, userMessage, append(existingMessages, userMessage), strings.ToLower(wallet), intent)
 }
 
 // RetryLastMessage takes the same turn slot: a retry issued while the original
 // turn is still running would otherwise start a second turn concurrently.
-func (s *ChatService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string) (card WorkflowCard, err error) {
-	release, ok := s.tryStartTurn(chatID)
+func (svc *ChatService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string) (card WorkflowCard, err error) {
+	release, ok := svc.tryStartTurn(chatID)
 	if !ok {
 		return WorkflowCard{}, ErrTurnInFlight
 	}
 	defer release()
 
-	s.announceTurn(chatID, "running")
-	defer func() { s.announceTurn(chatID, turnStatus(err)) }()
+	svc.announceTurn(chatID, "running")
+	defer func() { svc.announceTurn(chatID, turnStatus(err)) }()
 
 	turnCtx, cancel := turnContext(ctx)
 	defer cancel()
-	return s.retryLastMessage(turnCtx, chatID, wallet)
+	return svc.retryLastMessage(turnCtx, chatID, wallet)
 }
 
-func (s *ChatService) retryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string) (WorkflowCard, error) {
-	chat, found, err := s.Chats.FindByID(ctx, chatID)
+func (svc *ChatService) retryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string) (WorkflowCard, error) {
+	chat, found, err := svc.Chats.FindByID(ctx, chatID)
 	if err != nil {
 		return WorkflowCard{}, err
 	}
@@ -162,28 +204,25 @@ func (s *ChatService) retryLastMessage(ctx context.Context, chatID uuid.UUID, wa
 		return WorkflowCard{}, ErrWalletMismatch
 	}
 
-	existingMessages, err := s.ChatMessages.FindByChatID(ctx, chatID)
+	existingMessages, err := svc.ChatMessages.FindByChatID(ctx, chatID)
 	if err != nil {
 		return WorkflowCard{}, err
 	}
-	if len(existingMessages) == 0 {
-		return WorkflowCard{}, ErrNothingToRetry
-	}
-	lastMessage := existingMessages[len(existingMessages)-1]
-	if lastMessage.Sender != "user" {
+	lastMessage, ok := lastUserMessage(existingMessages)
+	if !ok {
 		return WorkflowCard{}, ErrNothingToRetry
 	}
 
-	return s.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet))
+	return svc.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet), svc.resolveTurn(ctx, chatID, lastMessage.Content))
 }
 
 // tryStartTurn claims the chat's single turn slot. A nil registry (unit tests
 // that build ChatService directly) means "no guard", not a panic.
-func (s *ChatService) tryStartTurn(chatID uuid.UUID) (func(), bool) {
-	if s.Turns == nil {
+func (svc *ChatService) tryStartTurn(chatID uuid.UUID) (func(), bool) {
+	if svc.Turns == nil {
 		return func() {}, true
 	}
-	return s.Turns.TryStart(chatID)
+	return svc.Turns.TryStart(chatID)
 }
 
 func turnStatus(err error) string {
@@ -193,7 +232,7 @@ func turnStatus(err error) string {
 	return "done"
 }
 
-func (s *ChatService) announceTurn(chatID uuid.UUID, status string) {
+func (svc *ChatService) announceTurn(chatID uuid.UUID, status string) {
 	PublishChatEvent(chatID, "turn", map[string]any{"status": status})
 }
 
@@ -205,8 +244,8 @@ func turnContext(parent context.Context) (context.Context, context.CancelFunc) {
 
 // TurnStatus is the authoritative "is a turn running for this chat" answer for
 // a client that has just mounted. A chat with no row yet is simply idle.
-func (s *ChatService) TurnStatus(ctx context.Context, chatID uuid.UUID, wallet string) (running bool, startedAt time.Time, err error) {
-	chat, found, err := s.Chats.FindByID(ctx, chatID)
+func (svc *ChatService) TurnStatus(ctx context.Context, chatID uuid.UUID, wallet string) (running bool, startedAt time.Time, err error) {
+	chat, found, err := svc.Chats.FindByID(ctx, chatID)
 	if err != nil {
 		return false, time.Time{}, err
 	}
@@ -216,31 +255,40 @@ func (s *ChatService) TurnStatus(ctx context.Context, chatID uuid.UUID, wallet s
 	if !strings.EqualFold(chat.OwnerWallet, wallet) {
 		return false, time.Time{}, ErrWalletMismatch
 	}
-	if s.Turns == nil {
+	if svc.Turns == nil {
 		return false, time.Time{}, nil
 	}
-	running, startedAt = s.Turns.Status(chatID)
+	running, startedAt = svc.Turns.Status(chatID)
 	return running, startedAt, nil
 }
 
-func (s *ChatService) hasActiveCheckpoint(ctx context.Context, chatID uuid.UUID) bool {
-	has, _ := s.CheckPointStore.Has(ctx, chatID.String())
-	return has
+// lastUserMessage is the message a retry re-runs: the chat's most recent row,
+// but only when it is the user's own. A failed turn deliberately persists no
+// supervisor bubble (see runForMessage), so this stays true after a failure.
+func lastUserMessage(messages []model.AgentChatMessage) (model.AgentChatMessage, bool) {
+	if len(messages) == 0 {
+		return model.AgentChatMessage{}, false
+	}
+	last := messages[len(messages)-1]
+	if last.Sender != "user" {
+		return model.AgentChatMessage{}, false
+	}
+	return last, true
 }
 
-func (s *ChatService) handleCancellation(ctx context.Context, chatID uuid.UUID, message string) (WorkflowCard, error) {
-	_ = s.CheckPointStore.Delete(ctx, chatID.String())
+func (svc *ChatService) handleCancellation(ctx context.Context, chatID uuid.UUID, message string) (WorkflowCard, error) {
+	svc.interrupts().clear(ctx, chatID)
 
-	if _, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+	if _, err := svc.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
 		ChatID: chatID, Sender: "user", ContentType: "text", Content: message,
 	}); err != nil {
 		slog.ErrorContext(ctx, "agent: persist user cancel message failed", "error", err)
 	}
 
-	existingMessages, _ := s.ChatMessages.FindByChatID(ctx, chatID)
-	cancelReply := s.generateCancellationReply(ctx, "the asset", existingMessages)
+	existingMessages, _ := svc.ChatMessages.FindByChatID(ctx, chatID)
+	cancelReply := svc.Orchestrator.CancellationReply(ctx, "the asset", existingMessages)
 
-	if _, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+	if _, err := svc.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
 		ChatID:      chatID,
 		Sender:      "supervisor",
 		ContentType: "text",
@@ -253,28 +301,35 @@ func (s *ChatService) handleCancellation(ctx context.Context, chatID uuid.UUID, 
 	return WorkflowCard{Reply: cancelReply, ContentType: "text"}, nil
 }
 
-// runForMessage delegates the whole turn to Orchestrator.Send, which decides
-// by itself whether the message answers a pending questions card or starts a
-// fresh turn.
-func (s *ChatService) runForMessage(ctx context.Context, chatID uuid.UUID, userMessage model.AgentChatMessage, allMessages []model.AgentChatMessage, wallet string) (WorkflowCard, error) {
+// runForMessage delegates the whole turn to Orchestrator.Send and publishes
+// the terminal chat event itself — "error" on a failed turn, "final" once the
+// reply is persisted — so the HTTP handler only maps errors to status codes.
+// Validation errors (wallet mismatch, nothing to retry) return before this,
+// so they never publish.
+func (svc *ChatService) runForMessage(ctx context.Context, chatID uuid.UUID, userMessage model.AgentChatMessage, allMessages []model.AgentChatMessage, wallet string, intent turnIntent) (WorkflowCard, error) {
 	sourceMessageID := userMessage.ID
 
-	result, err := s.Orchestrator.Send(ctx, OrchestratorInput{
+	result, err := svc.Orchestrator.Send(ctx, OrchestratorInput{
 		ChatID:          chatID,
 		Wallet:          wallet,
 		RawPrompt:       userMessage.Content,
 		Messages:        chatHistory(allMessages),
 		SourceMessageID: &sourceMessageID,
-	})
+	}, intent)
 	if err != nil {
-		// No failure bubble is persisted. The HTTP 500 (and the chat-stream
-		// error event) already carry the failure, and leaving the user's own
-		// message as the chat's last row keeps RetryLastMessage — and the
-		// frontend's Retry button — working for exactly this chat id.
+		// No failure bubble is persisted. The HTTP 500 (and this event) already
+		// carry the failure, and leaving the user's own message as the chat's
+		// last row keeps RetryLastMessage — and the frontend's Retry button —
+		// working for exactly this chat id.
+		PublishChatEvent(chatID, "error", map[string]any{"message": "Failed to process chat message"})
 		return WorkflowCard{}, fmt.Errorf("agent: orchestrator run failed: %w", err)
 	}
 
-	return s.persistSupervisorReply(ctx, chatID, result)
+	card, err := svc.persistSupervisorReply(ctx, chatID, result)
+	if err == nil {
+		PublishChatEvent(chatID, "final", card)
+	}
+	return card, err
 }
 
 // chatHistory turns stored chat messages into the conversation the model
@@ -291,7 +346,7 @@ func chatHistory(messages []model.AgentChatMessage) []*schema.Message {
 	return history
 }
 
-func (s *ChatService) persistSupervisorReply(ctx context.Context, chatID uuid.UUID, result OrchestratorResult) (WorkflowCard, error) {
+func (svc *ChatService) persistSupervisorReply(ctx context.Context, chatID uuid.UUID, result OrchestratorResult) (WorkflowCard, error) {
 	card := WorkflowCard{TaskID: result.TaskID, Reply: result.Reply, ContentType: result.ContentType, UIProps: result.UIProps}
 	if result.UIComponent != "" {
 		component := result.UIComponent
@@ -306,7 +361,7 @@ func (s *ChatService) persistSupervisorReply(ctx context.Context, chatID uuid.UU
 	if result.TaskID != 0 {
 		refTaskID = &result.TaskID
 	}
-	if _, err := s.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+	if _, err := svc.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
 		ChatID:      chatID,
 		Sender:      "supervisor",
 		ContentType: card.ContentType,
@@ -319,38 +374,6 @@ func (s *ChatService) persistSupervisorReply(ctx context.Context, chatID uuid.UU
 	}
 
 	return card, nil
-}
-
-func (s *ChatService) generateCancellationReply(ctx context.Context, ticker string, history []model.AgentChatMessage) string {
-	if s.Orchestrator == nil || s.Orchestrator.ReplyModel == nil {
-		return ""
-	}
-
-	recent := history
-	if len(recent) > 10 {
-		recent = recent[len(recent)-10:]
-	}
-
-	target := ticker
-	if target == "" {
-		target = "the asset"
-	}
-
-	systemPrompt := fmt.Sprintf(`You are Quasar, PulsarFi's AI trading assistant.
-The user has explicitly cancelled the pending trade confirmation for %s.
-
-CRITICAL USER-DRIVEN LANGUAGE POLICY:
-Detect and mirror 100%% the user's active language from the chat history (Indonesian, English, Javanese, Turkish, Japanese, etc.).
-NEVER hardcode or assume any single language. Do NOT use em dashes.
-Produce a single friendly, professional confirmation sentence stating that the trade plan for %s has been cancelled and no orders or on-chain transactions were executed.
-Return ONLY the confirmation sentence, with no markdown fences, greetings, or extra commentary.`, target, target)
-
-	msgs := append([]*schema.Message{schema.SystemMessage(systemPrompt)}, chatHistory(recent)...)
-	resp, err := s.Orchestrator.ReplyModel.Generate(ctx, msgs)
-	if err == nil && resp != nil && strings.TrimSpace(resp.Content) != "" {
-		return strings.TrimSpace(resp.Content)
-	}
-	return ""
 }
 
 // isCancellationAction detects whether a user message signals intent to

@@ -25,9 +25,9 @@ type SubTaskRecorder struct {
 	nextOrder     int
 	prevHash      string
 	// OnRecord, if set, fires synchronously right after a row is persisted
-	// — the hook HandleChatMessage uses to stream each Sub Task out over
-	// SSE the moment it's created, instead of the frontend only learning
-	// about the whole run once it fully finishes.
+	// — the turn's turnStream.StepDone republishes the live sub-task list
+	// over the chat WebSocket the moment the row exists, instead of the
+	// frontend only learning about the whole run once it fully finishes.
 	OnRecord func(model.AgentSubTask)
 }
 

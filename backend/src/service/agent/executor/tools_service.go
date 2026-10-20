@@ -72,7 +72,7 @@ func convertTradeAmounts(side contracts.TradeSide, rawInputAmount *big.Int, idrx
 // from RunContext, never from the model: Comet is never told the address in
 // its prompt (so it cannot supply a correct one), and letting it name an
 // arbitrary address would mean prompt-injected text could read a stranger's
-// holdings. Same reasoning as submit_trade reading rc.OnChainTaskID rather
+// holdings. Same reasoning as submit_trade reading run.OnChainTaskID rather
 // than accepting a task id argument.
 type holdingsRequest struct{}
 
@@ -88,11 +88,11 @@ func newHoldingsTool(portfolio PortfolioReader) (tool.InvokableTool, error) {
 		"get_portfolio_holdings",
 		"Returns every ticker the owner's wallet currently holds a position in, so you can weigh concentration/diversification before sizing an action. Takes no arguments — the wallet is resolved server-side.",
 		func(ctx context.Context, _ holdingsRequest) (holdingsResponse, error) {
-			rc, ok := agent.RunContextFrom(ctx)
-			if !ok || rc.Wallet == "" {
+			run, ok := agent.RunContextFrom(ctx)
+			if !ok || run.Wallet == "" {
 				return holdingsResponse{}, fmt.Errorf("get_portfolio_holdings: no wallet bound to this run")
 			}
-			holdings, err := portfolio.Holdings(ctx, rc.Wallet)
+			holdings, err := portfolio.Holdings(ctx, run.Wallet)
 			if err != nil {
 				return holdingsResponse{}, err
 			}
@@ -180,16 +180,16 @@ func newBalanceTool(balances BalanceReader) (tool.InvokableTool, error) {
 		"get_idrx_balance",
 		"Returns the owner's spendable IDRX balance right now, read on-chain. Call this before sizing a buy — a trade larger than the real balance cannot execute, regardless of what the Task's budget allows. Takes no arguments — the wallet is resolved server-side.",
 		func(ctx context.Context, _ balanceRequest) (balanceResponse, error) {
-			rc, ok := agent.RunContextFrom(ctx)
-			if !ok || rc.Wallet == "" {
+			run, ok := agent.RunContextFrom(ctx)
+			if !ok || run.Wallet == "" {
 				return balanceResponse{}, fmt.Errorf("get_idrx_balance: no wallet bound to this run")
 			}
-			raw, err := balances.IDRXBalance(ctx, rc.Wallet)
+			raw, err := balances.IDRXBalance(ctx, run.Wallet)
 			if err != nil {
 				return balanceResponse{}, fmt.Errorf("get_idrx_balance: %w", err)
 			}
 			display := new(big.Float).Quo(new(big.Float).SetInt(raw), big.NewFloat(math.Pow10(idrxDecimals)))
-			return balanceResponse{Wallet: rc.Wallet, IdrxTotal: display.Text('f', idrxDecimals)}, nil
+			return balanceResponse{Wallet: run.Wallet, IdrxTotal: display.Text('f', idrxDecimals)}, nil
 		},
 	)
 }
@@ -254,11 +254,11 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 		"submit_trade",
 		"Submits a trade on-chain against the current Task's armed TradePermission. Call this only once you've decided the trigger is confirmed and an action should fire now — you supply ticker, side, and amount yourself, none of it is pre-set on the Task.",
 		func(ctx context.Context, req submitTradeRequest) (submitTradeResponse, error) {
-			rc, ok := agent.RunContextFrom(ctx)
+			run, ok := agent.RunContextFrom(ctx)
 			if !ok {
 				return submitTradeResponse{}, fmt.Errorf("submit_trade: no run context bound to this call")
 			}
-			if rc.OnChainTaskID == nil {
+			if run.OnChainTaskID == nil {
 				return submitTradeResponse{}, fmt.Errorf("submit_trade: task is not armed, no TradePermission exists yet")
 			}
 
@@ -278,7 +278,7 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 				side = contracts.TradeSideBuy
 			}
 
-			remaining, err := exec.TradePermissionRemaining(ctx, uint(*rc.OnChainTaskID))
+			remaining, err := exec.TradePermissionRemaining(ctx, uint(*run.OnChainTaskID))
 			if err != nil {
 				return submitTradeResponse{}, fmt.Errorf("submit_trade: read remaining TradePermission: %w", err)
 			}
@@ -331,10 +331,10 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 
 			intent := contracts.TradeIntent{Ticker: stock.Ticker, Side: side, Amount: clampedAmount}
 
-			if rc.OnSubTaskStarted != nil {
-				rc.OnSubTaskStarted("executor", "decide", req.Label)
+			if run.Stream != nil {
+				run.Stream.StepStarted("executor", "decide", req.Label)
 			}
-			decideRow, err := rc.Recorder.Record(ctx, "executor", "decide", "done", req.Reasoning, req.Label, map[string]any{
+			decideRow, err := run.Recorder.Record(ctx, "executor", "decide", "done", req.Reasoning, req.Label, map[string]any{
 				"ticker": intent.Ticker,
 				"side":   intent.Side,
 				"amount": intent.Amount,
@@ -362,8 +362,8 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 				return submitTradeResponse{}, fmt.Errorf("submit_trade: convert trade amounts: %w", err)
 			}
 
-			if rc.OnSubTaskStarted != nil {
-				rc.OnSubTaskStarted("executor", "execute", req.Label)
+			if run.Stream != nil {
+				run.Stream.StepStarted("executor", "execute", req.Label)
 			}
 			var reasoningHash [32]byte = common.HexToHash(decideRow.DecisionHash)
 			var token common.Address
@@ -376,13 +376,13 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 			} else {
 				token = common.HexToAddress(*stock.ContractAddress)
 			}
-			tradeOut, err := exec.ExecuteTrade(ctx, uint64(*rc.OnChainTaskID), uint64(*decideRow.OnChainSubTaskID), token, stock.Ticker, side, chainAmount, minimumOutputAmount, req.Label, reasoningHash)
+			tradeOut, err := exec.ExecuteTrade(ctx, uint64(*run.OnChainTaskID), uint64(*decideRow.OnChainSubTaskID), token, stock.Ticker, side, chainAmount, minimumOutputAmount, req.Label, reasoningHash)
 			if err != nil {
-				_, _ = rc.Recorder.Record(ctx, "executor", "execute", "failed", err.Error(), req.Label, nil)
+				_, _ = run.Recorder.Record(ctx, "executor", "execute", "failed", err.Error(), req.Label, nil)
 				return submitTradeResponse{}, fmt.Errorf("submit_trade: execute: %w", err)
 			}
 
-			if _, err := rc.Recorder.Record(ctx, "executor", "execute", "done", "on-chain execution submitted", req.Label, map[string]any{
+			if _, err := run.Recorder.Record(ctx, "executor", "execute", "done", "on-chain execution submitted", req.Label, map[string]any{
 				"tx_hash":  tradeOut.TxHash,
 				"trade_id": tradeOut.TradeID,
 			}); err != nil {
@@ -391,7 +391,7 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 
 			onChainTradeID := int64(tradeOut.TradeID)
 			if _, err := trades.Create(ctx, dbmodel.AgentTrade{
-				TaskID:         rc.Recorder.TaskID(),
+				TaskID:         run.Recorder.TaskID(),
 				SubTaskID:      decideRow.ID,
 				OnChainTradeID: &onChainTradeID,
 				TxHash:         &tradeOut.TxHash,
@@ -404,7 +404,7 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 			}
 
 			// Also persist to stock_transactions for portfolio activity feed, stats, and holdings calculation
-			if stockTransactions != nil && rc.Wallet != "" {
+			if stockTransactions != nil && run.Wallet != "" {
 				idrxAmount := tradeOut.Amount.String()
 				stockAmount := tradeOut.ReceivedAmount.String()
 				if side == contracts.TradeSideSell {
@@ -417,7 +417,7 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 				}
 				if _, err := stockTransactions.Create(ctx, repository.StockTransactionCreateInput{
 					StockID:         stock.ID,
-					WalletAddress:   strings.ToLower(strings.TrimSpace(rc.Wallet)),
+					WalletAddress:   strings.ToLower(strings.TrimSpace(run.Wallet)),
 					Side:            string(side),
 					IdrxAmount:      idrxAmount,
 					StockAmount:     stockAmount,
@@ -429,7 +429,7 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 					slog.WarnContext(ctx, "submit_trade: failed to record in stock_transactions", "tx_hash", tradeOut.TxHash, "error", err)
 				} else {
 					dbReasoning := fmt.Sprintf("Transaction on-chain data (%s) successfully recorded to database (agent_trades & stock_transactions) and portfolio activity.", tradeOut.TxHash)
-					if _, err := rc.Recorder.Record(ctx, "executor", "sync_database", "done", dbReasoning, "Database Sync & Portfolio Activity", map[string]any{
+					if _, err := run.Recorder.Record(ctx, "executor", "sync_database", "done", dbReasoning, "Database Sync & Portfolio Activity", map[string]any{
 						"tx_hash":           tradeOut.TxHash,
 						"stock_id":          stock.ID,
 						"database_synced":   true,
@@ -437,7 +437,7 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 					}); err != nil {
 						slog.WarnContext(ctx, "submit_trade: failed to record sync_database subtask", "error", err)
 					}
-					realtime.Publish(fmt.Sprintf("stock-transactions:%s", strings.ToLower(strings.TrimSpace(rc.Wallet))), map[string]any{
+					realtime.Publish(fmt.Sprintf("stock-transactions:%s", strings.ToLower(strings.TrimSpace(run.Wallet))), map[string]any{
 						"tx_hash": tradeOut.TxHash,
 					})
 				}

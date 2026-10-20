@@ -62,17 +62,17 @@ type liveSubTasks struct {
 	entries []liveSubTaskEntry
 }
 
-func (l *liveSubTasks) publish() {
-	snapshot := make([]liveSubTaskEntry, len(l.entries))
-	copy(snapshot, l.entries)
-	publishChatEvent(l.topic, "sub_tasks", snapshot)
+func (live *liveSubTasks) publish() {
+	snapshot := make([]liveSubTaskEntry, len(live.entries))
+	copy(snapshot, live.entries)
+	publishChatEvent(live.topic, "sub_tasks", snapshot)
 }
 
-func (l *liveSubTasks) started(agentName, stepName, label string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.entries = append(l.entries, liveSubTaskEntry{Agent: agentName, StepName: stepName, Label: label, Status: "in_progress"})
-	l.publish()
+func (live *liveSubTasks) started(agentName, stepName, label string) {
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	live.entries = append(live.entries, liveSubTaskEntry{Agent: agentName, StepName: stepName, Label: label, Status: "in_progress"})
+	live.publish()
 }
 
 // lastInProgress finds the most recent still-in_progress entry for
@@ -80,42 +80,81 @@ func (l *liveSubTasks) started(agentName, stepName, label string) {
 // step can legitimately run more than once in one turn (a retry after a
 // graceful failure), so the *last* match, not the first, is always the
 // right one.
-func (l *liveSubTasks) lastInProgress(agentName, stepName string) int {
-	for i := len(l.entries) - 1; i >= 0; i-- {
-		if l.entries[i].Status == "in_progress" && l.entries[i].Agent == agentName && l.entries[i].StepName == stepName {
+func (live *liveSubTasks) lastInProgress(agentName, stepName string) int {
+	for i := len(live.entries) - 1; i >= 0; i-- {
+		if live.entries[i].Status == "in_progress" && live.entries[i].Agent == agentName && live.entries[i].StepName == stepName {
 			return i
 		}
 	}
 	return -1
 }
 
-func (l *liveSubTasks) failed(agentName, stepName, reason string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if i := l.lastInProgress(agentName, stepName); i != -1 {
-		l.entries[i].Status = "failed"
-		l.entries[i].Reason = reason
+func (live *liveSubTasks) failed(agentName, stepName, reason string) {
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	if i := live.lastInProgress(agentName, stepName); i != -1 {
+		live.entries[i].Status = "failed"
+		live.entries[i].Reason = reason
 	} else {
-		l.entries = append(l.entries, liveSubTaskEntry{Agent: agentName, StepName: stepName, Status: "failed", Reason: reason})
+		live.entries = append(live.entries, liveSubTaskEntry{Agent: agentName, StepName: stepName, Status: "failed", Reason: reason})
 	}
-	l.publish()
+	live.publish()
 }
 
-func (l *liveSubTasks) done(row dbmodel.AgentSubTask) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func (live *liveSubTasks) done(row dbmodel.AgentSubTask) {
+	live.mu.Lock()
+	defer live.mu.Unlock()
 	label := ""
 	if row.Label != nil {
 		label = *row.Label
 	}
-	if i := l.lastInProgress(row.Agent, row.StepName); i != -1 {
-		l.entries[i].Status = "done"
-		l.entries[i].Label = label
-		l.entries[i].Row = &row
+	if i := live.lastInProgress(row.Agent, row.StepName); i != -1 {
+		live.entries[i].Status = "done"
+		live.entries[i].Label = label
+		live.entries[i].Row = &row
 	} else {
-		l.entries = append(l.entries, liveSubTaskEntry{Agent: row.Agent, StepName: row.StepName, Label: label, Status: "done", Row: &row})
+		live.entries = append(live.entries, liveSubTaskEntry{Agent: row.Agent, StepName: row.StepName, Label: label, Status: "done", Row: &row})
 	}
-	l.publish()
+	live.publish()
+}
+
+// turnStream owns everything live about one turn: the sub-task list the
+// frontend sees, and which agent/step is currently working (so a caught tool
+// failure can be attributed to the right row). It is built once per turn, by
+// newRunContext, and reached by every tool through RunContext.Stream — this
+// is the one file to read for "how does the UI get sub_tasks".
+type turnStream struct {
+	chatID uuid.UUID
+	live   *liveSubTasks
+	agent  string
+	step   string
+}
+
+func newTurnStream(chatID uuid.UUID) *turnStream {
+	return &turnStream{chatID: chatID, live: &liveSubTasks{topic: ChatStreamTopic(chatID)}}
+}
+
+// StepStarted announces a step the instant it begins, before its work runs.
+func (s *turnStream) StepStarted(agentName, stepName, label string) {
+	s.live.started(agentName, stepName, label)
+}
+
+// SetCurrent records which agent/step is running its tool-calling loop, so a
+// failure caught in between — gracefulTool only knows the failing tool's own
+// name — can be attributed to it.
+func (s *turnStream) SetCurrent(agentName, stepName string) {
+	s.agent, s.step = agentName, stepName
+}
+
+// StepFailed marks the currently running step failed.
+func (s *turnStream) StepFailed(reason string) {
+	s.live.failed(s.agent, s.step, reason)
+}
+
+// StepDone publishes a step that finished; SubTaskRecorder.OnRecord is wired
+// to it.
+func (s *turnStream) StepDone(row dbmodel.AgentSubTask) {
+	s.live.done(row)
 }
 
 // errToolBudgetExhausted is not a failure to report: the agent used its whole
@@ -150,11 +189,11 @@ type interruptOutcome struct {
 // Comet all arrive here, told apart by AgentName: Eino forwards the events of
 // the agents Quasar calls into Quasar's own iterator. Every live signal the
 // frontend gets is published from this loop (or from the Sub Task recorder).
-func (o *Orchestrator) consume(ctx context.Context, rc *RunContext, iter *adk.AsyncIterator[*adk.AgentEvent], keepCheckpoint bool) (OrchestratorResult, error) {
-	topic := ChatStreamTopic(rc.ChatID)
+func (orch *Orchestrator) consume(ctx context.Context, run *RunContext, events *adk.AsyncIterator[*adk.AgentEvent], keepCheckpoint bool) (OrchestratorResult, error) {
+	topic := ChatStreamTopic(run.ChatID)
 	var outcome turnOutcome
 	for {
-		event, ok := iter.Next()
+		event, ok := events.Next()
 		if !ok {
 			break
 		}
@@ -162,7 +201,7 @@ func (o *Orchestrator) consume(ctx context.Context, rc *RunContext, iter *adk.As
 			if isToolBudgetExhausted(event.Err) {
 				// The cap is a budget, not an error: keep whatever the turn
 				// produced and let Send ("dapat gak dapat") finalize it.
-				return o.finish(ctx, rc, &outcome, keepCheckpoint), errToolBudgetExhausted
+				return orch.finish(ctx, run, &outcome, keepCheckpoint), errToolBudgetExhausted
 			}
 			return OrchestratorResult{}, event.Err
 		}
@@ -177,33 +216,48 @@ func (o *Orchestrator) consume(ctx context.Context, rc *RunContext, iter *adk.As
 			return OrchestratorResult{}, err
 		}
 	}
-	return o.finish(ctx, rc, &outcome, keepCheckpoint), nil
+	return orch.finish(ctx, run, &outcome, keepCheckpoint), nil
 }
 
-func (o *Orchestrator) finish(ctx context.Context, rc *RunContext, outcome *turnOutcome, keepCheckpoint bool) OrchestratorResult {
-	result := OrchestratorResult{TaskID: rc.TaskID, OnChainTaskID: rc.OnChainTaskID, Reply: outcome.reply.String()}
+// finish turns a completed event loop into the turn's result: first what
+// happened to the pause (finishInterrupt), then what the frontend renders
+// (finalizeResult).
+func (orch *Orchestrator) finish(ctx context.Context, run *RunContext, outcome *turnOutcome, keepCheckpoint bool) OrchestratorResult {
+	result := OrchestratorResult{TaskID: run.TaskID, OnChainTaskID: run.OnChainTaskID, Reply: outcome.reply.String()}
+	orch.finishInterrupt(ctx, run, outcome.interrupt, keepCheckpoint, &result)
+	orch.finalizeResult(ctx, run, outcome, &result)
+	return result
+}
 
-	switch {
-	case outcome.interrupt != nil:
-		o.storeInterrupt(ctx, rc.ChatID, outcome.interrupt.kind, outcome.interrupt.id)
-		if outcome.interrupt.kind == interruptQuestions {
-			result.PendingQuestions = outcome.interrupt.questions
+// finishInterrupt records the pause the turn ended on, or clears the chat's
+// checkpoint when a finished turn is over. It is the only writer of the
+// interrupt marker.
+func (orch *Orchestrator) finishInterrupt(ctx context.Context, run *RunContext, interrupt *interruptOutcome, keepCheckpoint bool, result *OrchestratorResult) {
+	if interrupt != nil {
+		orch.interrupts().record(ctx, run.ChatID, interrupt.kind, interrupt.id)
+		if interrupt.kind == interruptQuestions {
+			result.PendingQuestions = interrupt.questions
 		}
 		// A card needs a sentence above it. The pause carries one; use it
 		// only when the model did not already write text this turn.
-		if strings.TrimSpace(result.Reply) == "" && outcome.interrupt.message != "" {
-			result.Reply = outcome.interrupt.message
-			PublishChatEvent(rc.ChatID, "reply_delta", map[string]any{"delta": outcome.interrupt.message})
+		if strings.TrimSpace(result.Reply) == "" && interrupt.message != "" {
+			result.Reply = interrupt.message
+			PublishChatEvent(run.ChatID, "reply_delta", map[string]any{"delta": interrupt.message})
 		}
-	case !keepCheckpoint && rc.ChatID != uuid.Nil:
-		_ = o.CheckPointStore.Delete(ctx, rc.ChatID.String())
+		return
 	}
+	if !keepCheckpoint {
+		orch.interrupts().clear(ctx, run.ChatID)
+	}
+}
 
-	result.ContentType, result.UIProps = classifyReply(result.PendingQuestions, o.cardOfTask(ctx, rc.TaskID), outcome.novaCalls)
+// finalizeResult decides what the frontend renders: plain text, a chart, news,
+// or the clarifying-questions card.
+func (orch *Orchestrator) finalizeResult(ctx context.Context, run *RunContext, outcome *turnOutcome, result *OrchestratorResult) {
+	result.ContentType, result.UIProps = classifyReply(result.PendingQuestions, orch.cardOfTask(ctx, run.TaskID), outcome.novaCalls)
 	if result.ContentType == "workflow_card" {
 		result.UIComponent = "clarifying_questions"
 	}
-	return result
 }
 
 func interruptFrom(info *adk.InterruptInfo) *interruptOutcome {
@@ -353,4 +407,3 @@ func publishToolResult(topic, agentName string, output *adk.MessageVariant, outc
 	}
 	return nil
 }
-
