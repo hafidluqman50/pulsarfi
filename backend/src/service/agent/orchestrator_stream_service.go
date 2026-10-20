@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
@@ -356,37 +354,3 @@ func publishToolResult(topic, agentName string, output *adk.MessageVariant, outc
 	return nil
 }
 
-const statusTimeout = 4 * time.Second
-
-// statusInstructions states the task only and names no language: the
-// language comes from the user's own message, never from code.
-const statusInstructions = `Write at most four words that mean "Quasar is thinking", in the same language as the user's message below. Output only those words with a trailing ellipsis: no quotes, no explanation, nothing else.`
-
-// announceStatus runs beside the turn and gives the chat's placeholder its
-// words in the user's language. It is best effort: a missing model, a
-// failure or a timeout just leaves the placeholder as a bare dot, and never
-// touches the turn itself.
-func (o *Orchestrator) announceStatus(ctx context.Context, chatID uuid.UUID, userMessage string) {
-	if o.ReplyModel == nil || strings.TrimSpace(userMessage) == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statusTimeout)
-	defer cancel()
-
-	reply, err := o.ReplyModel.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(statusInstructions),
-		schema.UserMessage(userMessage),
-	})
-	if err != nil {
-		slog.DebugContext(ctx, "orchestrator: status phrase failed", "error", err)
-		return
-	}
-	text := ""
-	if reply != nil {
-		text = strings.TrimSpace(reply.Content)
-	}
-	if text == "" {
-		return
-	}
-	PublishChatEvent(chatID, "status", map[string]any{"text": text})
-}

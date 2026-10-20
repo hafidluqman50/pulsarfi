@@ -61,6 +61,8 @@ Never violate the repository directory structure or place files in unauthorized 
    - Smart contract reverts, low-level RPC/network errors, database failures, transaction toast notifications, wallet errors, and non-chat modal UI errors MUST remain in standard English.
 4. **No Language Mixing:**
    - Never force a single static language or mix languages outside the boundaries specified above.
+5. **Static UI-chrome labels (English by design):**
+   - Fixed interface labels that are not agentic responses — for example the thinking indicator (`Quasar is thinking`) and its show/hide control — are written once in English and are outside the dynamic-language rule above. See `docs/plans/quasar-thinking-label-and-reasoning-toggle.md`.
 
 ---
 

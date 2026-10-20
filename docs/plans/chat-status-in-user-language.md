@@ -2,15 +2,19 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
-| **Status** | Approved |
+| **Version** | 1.2 |
+| **Status** | Deprecated (Superseded) |
 | **Date Created** | 2026-10-05 |
-| **Last Updated** | 2026-10-05 |
+| **Last Updated** | 2026-10-20 |
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2 | 2026-10-20 | **Deprecated / superseded by `docs/plans/quasar-thinking-label-and-reasoning-toggle.md` (v1.0).** The maintainer chose a fixed English UI-chrome label, `Quasar is thinking`, used globally regardless of the user's language. The dynamic `status` path this plan introduced is therefore removed: `Orchestrator.announceStatus`, `statusInstructions`, `statusTimeout` and the `status` event are deleted, and the frontend keeps `statusText` no longer. AGENTS.md §3 gains a carve-out recording that static UI-chrome labels are English by design. This document is retained for history only. |
 | 1.1 | 2026-10-05 | **Implemented and verified.** Backend: `Orchestrator.Send` starts `announceStatus` beside the turn (`orchestrator_service.go`, `orchestrator_stream_service.go`); frontend: `status` event type, `statusText` state reset on every send and retry, and the placeholder shows it instead of the English sentence (`chatApi.ts`, `ChatThread.tsx`); `tsc --noEmit` is clean. Offline tests (`chat_status_test.go`, with `-race`): the phrase is the model's output trimmed, the prompt carries the user's message and names no language, a failing model and a missing model leave the turn untouched. Live, real DeepSeek: a Japanese greeting produced "クエーサーは考え中...", an Indonesian one "Quasar lagi berpikir...", a Turkish one "Quasar düşünüyor...", exactly one status event each. Not checked: the placeholder itself in a browser (the frontend typechecks, nothing was rendered). |
 | 1.0 | 2026-10-05 | Initial draft, approved by the maintainer in the same exchange (option "a"). Scope: only the placeholder shown before the first live event; the other panel labels ("Working", "Composing reply", "sub tasks so far", "IN PROGRESS") are the same problem and are left for a later plan. |
+
+> [!WARNING]
+> **Deprecated.** The behavior described below was replaced on 2026-10-20. Do not implement it. See `docs/plans/quasar-thinking-label-and-reasoning-toggle.md`.
 
 > [!IMPORTANT]
 > **No language is written in code.** The words the user sees while Quasar starts working are produced by the model in the language of the user's own message (AGENTS.md §3). Until they arrive, the placeholder shows only the pulsing dot, never a stand-in sentence.
@@ -136,7 +140,7 @@ After, for a Japanese message:
 [ (•)  Quasarが考えています…            ]   about a second later, the model's words
 ```
 
-Then the live panel replaces it, exactly as today.
+Then the live panel replaces the placeholder, exactly as today.
 
 ---
 

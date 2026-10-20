@@ -137,8 +137,6 @@ type pendingInterrupt struct {
 // questions card, the message is the answer and the paused turn resumes;
 // the Arm pause is never resumed by a chat message, only by ResumeExecute.
 func (o *Orchestrator) Send(ctx context.Context, in OrchestratorInput) (OrchestratorResult, error) {
-	go o.announceStatus(ctx, in.ChatID, in.RawPrompt)
-
 	rc := o.newRunContext(in.ChatID, in.Wallet, in.RawPrompt, in.SourceMessageID)
 	ctx = WithRunContext(ctx, rc)
 
