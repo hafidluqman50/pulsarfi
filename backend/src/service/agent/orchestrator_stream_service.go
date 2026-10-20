@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -119,6 +120,21 @@ func (l *liveSubTasks) done(row dbmodel.AgentSubTask) {
 	l.publish()
 }
 
+// errToolBudgetExhausted is not a failure to report: the agent used its whole
+// tool-call budget without writing a final answer. consume returns it together
+// with the partial result so Send can finish the turn instead of failing it.
+var errToolBudgetExhausted = errors.New("agent: tool budget exhausted")
+
+// isToolBudgetExhausted reports whether err is Eino's "exceeds max iterations",
+// bare or wrapped by the node/run error types.
+func isToolBudgetExhausted(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, adk.ErrExceedMaxIterations) ||
+		strings.Contains(err.Error(), adk.ErrExceedMaxIterations.Error())
+}
+
 type turnOutcome struct {
 	reply     strings.Builder
 	novaCalls []toolCallResult
@@ -145,6 +161,11 @@ func (o *Orchestrator) consume(ctx context.Context, rc *RunContext, iter *adk.As
 			break
 		}
 		if event.Err != nil {
+			if isToolBudgetExhausted(event.Err) {
+				// The cap is a budget, not an error: keep whatever the turn
+				// produced and let Send ("dapat gak dapat") finalize it.
+				return o.finish(ctx, rc, &outcome, keepCheckpoint), errToolBudgetExhausted
+			}
 			return OrchestratorResult{}, event.Err
 		}
 		if event.Action != nil && event.Action.Interrupted != nil {
