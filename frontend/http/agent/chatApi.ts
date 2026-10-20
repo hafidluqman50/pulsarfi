@@ -80,6 +80,10 @@ export type ChatStreamEvent =
   | { type: 'thinking'; data: ThinkingEvent }
   | { type: 'finalizing'; data: Record<string, never> }
   | { type: 'reply_delta'; data: { delta: string } }
+  // Reserved: the backend no longer publishes this — the thinking label is a
+  // fixed English UI-chrome constant now
+  // (docs/plans/quasar-thinking-label-and-reasoning-toggle.md). Kept so older
+  // payloads still type-check.
   | { type: 'status'; data: { text: string } }
   | { type: 'final'; data: WorkflowCard }
   | { type: 'error'; data: { message: string } };

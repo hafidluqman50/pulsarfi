@@ -14,6 +14,27 @@ import { RosterCard } from './RosterCard';
 import { agentDisplayName, humanizeKey, MessageMarkdown, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
 import { useChatMessages } from '@/http/agent/hooks';
 
+// The thinking indicator is a fixed English UI-chrome label — global for every
+// user, regardless of the conversation's language — plus a remembered
+// show/hide control for the reasoning trace behind it
+// (docs/plans/quasar-thinking-label-and-reasoning-toggle.md; AGENTS.md §3.5).
+const QUASAR_THINKING_LABEL = 'Quasar is thinking';
+const REASONING_VISIBILITY_KEY = 'pulsar.agent.showReasoning';
+
+function useReasoningVisibility(): [boolean, (value: boolean) => void] {
+  const [show, setShow] = useState(() =>
+    typeof window === 'undefined' ? true : window.localStorage.getItem(REASONING_VISIBILITY_KEY) !== 'false');
+  const update = useCallback((value: boolean) => {
+    setShow(value);
+    try {
+      window.localStorage.setItem(REASONING_VISIBILITY_KEY, value ? 'true' : 'false');
+    } catch {
+      /* localStorage unavailable (private mode); the toggle still works for this session */
+    }
+  }, []);
+  return [show, update];
+}
+
 type ChatThreadProps = {
   // activeChatId is the single source of truth for "which chat is open" (see
   // QuasarPanel) — a brand-new chat is just a fresh client UUID whose row does
@@ -52,11 +73,15 @@ function LiveSubTasks({
   toolActivityByAgent,
   thinkingByAgent,
   isFinalizing,
+  showReasoning,
+  onToggleReasoning,
 }: {
   subTasks: LiveSubTask[];
   toolActivityByAgent: Record<string, string>;
   thinkingByAgent: Record<string, string>;
   isFinalizing: boolean;
+  showReasoning: boolean;
+  onToggleReasoning: () => void;
 }) {
   const [openRow, setOpenRow] = useState<number | null>(null);
   if (subTasks.length === 0) return null;
@@ -68,13 +93,19 @@ function LiveSubTasks({
   // the one real, possibly multi-second stretch that previously had no
   // signal reaching the UI at all ("semua done, tapi no info").
   const anyInProgress = subTasks.some((subTask) => subTask.status === 'in_progress');
-  const label = isFinalizing ? 'Finalizing on-chain' : anyInProgress ? 'Working' : 'Composing reply';
+  const label = isFinalizing ? 'Finalizing on-chain' : anyInProgress ? QUASAR_THINKING_LABEL : 'Composing reply';
   return (
     <div className="rise" style={{ border: '1px solid var(--ink)', background: 'var(--putih)', boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 11px 0 -4px #fbfaf7, 0 12px 0 -4px #e3ddd2, 0 20px 24px -14px rgba(22,17,14,.3)' }}>
       <div style={{ background: 'var(--ink)', color: 'var(--canvas)', padding: '10px 13px', display: 'flex', alignItems: 'center', gap: 9 }}>
         <span className="pulsar" />
         <span style={{ font: '700 10px/1 var(--font-sans)', letterSpacing: '.14em', textTransform: 'uppercase' }}>{label}</span>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--hairline-strong)' }}>{subTasks.length} sub tasks so far</span>
+        <button
+          onClick={onToggleReasoning}
+          style={{ marginLeft: 'auto', appearance: 'none', border: '1px solid var(--ink-line)', cursor: 'pointer', background: 'transparent', color: 'var(--canvas)', font: '500 10px/1 var(--font-mono)', letterSpacing: '.06em', padding: '5px 7px', flex: 'none', whiteSpace: 'nowrap' }}
+        >
+          {showReasoning ? 'hide thinking' : 'show thinking'}
+        </button>
       </div>
       {subTasks.map((subTask, i) => {
         const color = statusColor(subTask.status);
@@ -117,15 +148,15 @@ function LiveSubTasks({
                     // reasoning (thinking events) and the tool it's currently
                     // calling, both sourced from actual events, never a
                     // stand-in sentence invented for the gap before the first
-                    // one arrives. Deliberately blank in that brief gap rather
-                    // than a fake "sedang memproses…" placeholder.
+                    // one arrives. The reasoning markdown itself respects the
+                    // user's show/hide preference.
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {toolActivityByAgent[subTask.agent] && (
                         <span style={{ font: '600 9px/1.3 var(--font-mono)', letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--ticker)' }}>
                           {toolActivityByAgent[subTask.agent]}
                         </span>
                       )}
-                      {thinkingByAgent[subTask.agent] && (
+                      {showReasoning && thinkingByAgent[subTask.agent] && (
                         <div style={{ color: 'var(--ink-soft)' }}>
                           <MessageMarkdown content={thinkingByAgent[subTask.agent]} fontSize={12.5} />
                         </div>
@@ -198,10 +229,11 @@ type MessageListProps = {
   toolActivityByAgent: Record<string, string>;
   thinkingByAgent: Record<string, string>;
   isFinalizing: boolean;
-  statusText: string;
+  showReasoning: boolean;
   chartPending: boolean;
   streamingReplyText: string;
   onRetry: () => void;
+  onToggleReasoning: () => void;
   onSendPrompt?: (text: string, hidden?: boolean) => void | Promise<void>;
 };
 
@@ -246,7 +278,7 @@ function EmptyThreadIntro() {
 // supervisor reply doing its own data fetching, on every single keystroke,
 // as a chat's history grows. Now this only re-renders when its own props
 // (real content) actually change, not when the user is just typing.
-const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, toolActivityByAgent, thinkingByAgent, isFinalizing, statusText, chartPending, streamingReplyText, onRetry, onSendPrompt }: MessageListProps) {
+const MessageList = memo(function MessageList({ chatId, messages, isLoading, isStreaming, pendingText, failedMessage, liveSubTasks, toolActivityByAgent, thinkingByAgent, isFinalizing, showReasoning, chartPending, streamingReplyText, onRetry, onToggleReasoning, onSendPrompt }: MessageListProps) {
   const threadRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -376,7 +408,7 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
         </div>
       )}
 
-      {isStreaming && <LiveSubTasks subTasks={liveSubTasks} toolActivityByAgent={toolActivityByAgent} thinkingByAgent={thinkingByAgent} isFinalizing={isFinalizing} />}
+      {isStreaming && <LiveSubTasks subTasks={liveSubTasks} toolActivityByAgent={toolActivityByAgent} thinkingByAgent={thinkingByAgent} isFinalizing={isFinalizing} showReasoning={showReasoning} onToggleReasoning={onToggleReasoning} />}
 
       {isStreaming && chartPending && <ChartSkeletonCard />}
 
@@ -392,7 +424,7 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
       {isStreaming && liveSubTasks.length === 0 && !streamingReplyText && (
         <div className="rise" style={{ border: '1px solid var(--hairline)', background: 'var(--putih)', padding: '13px 15px', display: 'flex', alignItems: 'center', gap: 10, boxShadow: '0 5px 0 -2px #fbfaf7, 0 6px 0 -2px #e3ddd2, 0 18px 22px -14px rgba(22,17,14,.25)' }}>
           <span className="pulsar" />
-          {statusText && <span style={{ fontSize: 12.5, color: 'var(--body)', fontFamily: 'var(--font-mono)' }}>{statusText}</span>}
+          <span style={{ fontSize: 12.5, color: 'var(--body)', fontFamily: 'var(--font-mono)' }}>{QUASAR_THINKING_LABEL}</span>
         </div>
       )}
     </div>
@@ -409,10 +441,10 @@ export function ChatThread({ chatId }: ChatThreadProps) {
   const [toolActivityByAgent, setToolActivityByAgent] = useState<Record<string, string>>({});
   const [thinkingByAgent, setThinkingByAgent] = useState<Record<string, string>>({});
   const [isFinalizing, setIsFinalizing] = useState(false);
-  const [statusText, setStatusText] = useState('');
   const [chartPending, setChartPending] = useState(false);
   const [streamingReplyText, setStreamingReplyText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [showReasoning, setShowReasoning] = useReasoningVisibility();
   const isSendingRef = useRef(false);
 
   // Live progress (sub_tasks/reply_delta) arrives over the shared WebSocket
@@ -433,9 +465,6 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     }
     if (event.type === 'thinking') {
       setThinkingByAgent((prev) => ({ ...prev, [event.data.agent]: (prev[event.data.agent] ?? '') + event.data.delta }));
-    }
-    if (event.type === 'status') {
-      setStatusText(event.data.text);
     }
     if (event.type === 'finalizing') {
       setIsFinalizing(true);
@@ -464,7 +493,6 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     setLiveSubTasks([]);
     setToolActivityByAgent({});
     setThinkingByAgent({});
-    setStatusText('');
     setIsFinalizing(false);
     setChartPending(false);
     setStreamingReplyText('');
@@ -504,7 +532,6 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     setLiveSubTasks([]);
     setToolActivityByAgent({});
     setThinkingByAgent({});
-    setStatusText('');
     setIsFinalizing(false);
     setChartPending(false);
     setStreamingReplyText('');
@@ -539,10 +566,11 @@ export function ChatThread({ chatId }: ChatThreadProps) {
         toolActivityByAgent={toolActivityByAgent}
         thinkingByAgent={thinkingByAgent}
         isFinalizing={isFinalizing}
-        statusText={statusText}
+        showReasoning={showReasoning}
         chartPending={chartPending}
         streamingReplyText={streamingReplyText}
         onRetry={handleRetry}
+        onToggleReasoning={() => setShowReasoning(!showReasoning)}
         onSendPrompt={handleSend}
       />
 

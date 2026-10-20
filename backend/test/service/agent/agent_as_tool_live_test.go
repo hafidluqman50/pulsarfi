@@ -81,7 +81,6 @@ type liveSummary struct {
 	reasoning   map[string]int
 	toolCalls   []string
 	subTasks    []string
-	status      []string
 	eventTypes  map[string]int
 }
 
@@ -112,12 +111,6 @@ func summarize(frames []string) liveSummary {
 			}
 			_ = json.Unmarshal(outer.Data.Data, &payload)
 			summary.thinking[payload.Agent]++
-		case "status":
-			var payload struct {
-				Text string `json:"text"`
-			}
-			_ = json.Unmarshal(outer.Data.Data, &payload)
-			summary.status = append(summary.status, payload.Text)
 		case "tool_call":
 			var payload struct{ Agent, Tool, Phase string }
 			_ = json.Unmarshal(outer.Data.Data, &payload)
@@ -309,24 +302,6 @@ func liveHarness(t *testing.T) (*service.Registry, *captureConn) {
 	go realtime.Default().Serve(conn, &auth.Claims{WalletAddress: liveDemoWallet, Role: "user"})
 	t.Cleanup(func() { close(conn.incoming) })
 	return registry, conn
-}
-
-// The placeholder words must come from the model in the user's own language.
-func TestLiveAgentAsTool_StatusFollowsTheUsersLanguage(t *testing.T) {
-	registry, conn := liveHarness(t)
-	for _, message := range []string{"こんにちは、元気ですか？", "Halo, lagi apa nih?", "Merhaba, nasılsın?"} {
-		chatID := uuid.New()
-		conn.subscribe(agentsvc.ChatStreamTopic(chatID))
-		card, err := registry.AgentChat.HandleChatMessage(context.Background(), chatID, liveDemoWallet, message, false)
-		if err != nil {
-			t.Fatalf("HandleChatMessage(%q): %v", message, err)
-		}
-		summary := summarize(conn.drain())
-		t.Logf("[%q] status=%q | reply=%q", message, summary.status, strings.TrimSpace(card.Reply))
-		if len(summary.status) != 1 || strings.TrimSpace(summary.status[0]) == "" {
-			t.Errorf("expected exactly one status phrase for %q, got %q", message, summary.status)
-		}
-	}
 }
 
 // Nova must stay on the trusted domains: every read_article refusal shows up
