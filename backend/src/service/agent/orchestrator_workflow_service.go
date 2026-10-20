@@ -8,69 +8,10 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	dbmodel "github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 )
-
-func (o *Orchestrator) newRunContext(chatID uuid.UUID, wallet, rawPrompt string, sourceMessageID *int64) *RunContext {
-	live := &liveSubTasks{topic: ChatStreamTopic(chatID)}
-	return &RunContext{
-		Wallet:           wallet,
-		ChatID:           chatID,
-		RawPrompt:        rawPrompt,
-		SourceMessageID:  sourceMessageID,
-		OnSubTaskStarted: live.started,
-		OnSubTaskFailed:  live.failed,
-		live:             live,
-	}
-}
-
-// restoreFromChat gives a resumed questions turn its Task back: the chat's
-// most recent Task, found through the messages it was born from.
-func (o *Orchestrator) restoreFromChat(ctx context.Context, rc *RunContext) error {
-	messages, err := o.ChatMessages.FindByChatID(ctx, rc.ChatID)
-	if err != nil {
-		return fmt.Errorf("orchestrator: load chat messages: %w", err)
-	}
-	messageIDs := make([]int64, len(messages))
-	for i, message := range messages {
-		messageIDs[i] = message.ID
-	}
-	task, found, err := o.Tasks.FindByChatMessageIDs(ctx, messageIDs)
-	if err != nil {
-		return fmt.Errorf("orchestrator: find chat task: %w", err)
-	}
-	if !found {
-		return fmt.Errorf("%w: chat %s is paused but has no task", ErrNoOpenTask, rc.ChatID)
-	}
-	return o.restoreRunContext(ctx, rc, task)
-}
-
-// restoreRunContext rebuilds what RunContext cannot carry across requests
-// (it holds a live recorder): the Task identifiers, the recorder continuing
-// the same hash chain, and the decision stored on the Task row.
-func (o *Orchestrator) restoreRunContext(ctx context.Context, rc *RunContext, task dbmodel.AgentTask) error {
-	var onChainID uint64
-	if task.OnChainTaskID != nil {
-		onChainID = uint64(*task.OnChainTaskID)
-	}
-	summary := ""
-	if task.Summary != nil {
-		summary = *task.Summary
-	}
-	recorder, err := NewSubTaskRecorder(ctx, o.SubTasks, o.Chain, onChainID, task.ID, summary, rc.Wallet)
-	if err != nil {
-		return fmt.Errorf("orchestrator: rebuild subtask recorder: %w", err)
-	}
-	recorder.OnRecord = rc.live.done
-	rc.TaskID = task.ID
-	rc.OnChainTaskID = task.OnChainTaskID
-	rc.Recorder = recorder
-	rc.Decision = decisionFromTask(task)
-	return nil
-}
 
 func decisionFromTask(task dbmodel.AgentTask) RouteDecision {
 	decision := RouteDecision{IsActionable: task.IsActionable}
@@ -101,11 +42,11 @@ func decisionFromTask(task dbmodel.AgentTask) RouteDecision {
 	return decision
 }
 
-func (o *Orchestrator) cardOfTask(ctx context.Context, taskID int64) *contracts.CardContract {
-	if taskID == 0 || o.Tasks == nil {
+func (orch *Orchestrator) cardOfTask(ctx context.Context, taskID int64) *contracts.CardContract {
+	if taskID == 0 || orch.Tasks == nil {
 		return nil
 	}
-	task, found, err := o.Tasks.FindByID(ctx, taskID)
+	task, found, err := orch.Tasks.FindByID(ctx, taskID)
 	if err != nil || !found {
 		return nil
 	}
@@ -116,29 +57,29 @@ func (o *Orchestrator) cardOfTask(ctx context.Context, taskID int64) *contracts.
 // Sub Task recorder — the first time Quasar recognizes an intent, even while
 // parameters are still missing. Every Task is on-chain, so this runs for
 // every request except plain conversation. Later rounds only UpdateTask.
-func (o *Orchestrator) CommitTask(ctx context.Context, rc *RunContext, decision RouteDecision) error {
+func (orch *Orchestrator) CommitTask(ctx context.Context, run *RunContext, decision RouteDecision) error {
 	decision = withCardDefaults(decision)
 
-	triggerDescription, err := o.buildDecisionTrigger(ctx, rc.RawPrompt, decision)
+	triggerDescription, err := orch.buildDecisionTrigger(ctx, run.RawPrompt, decision)
 	if err != nil {
 		return err
 	}
-	task, err := o.persistTask(ctx, rc, decision, triggerDescription)
+	task, err := orch.persistTask(ctx, run, decision, triggerDescription)
 	if err != nil {
 		return err
 	}
-	rc.TaskID = task.ID
+	run.TaskID = task.ID
 
-	onChainTaskID, err := o.armOnChain(ctx, rc, decision, task.ID)
+	onChainTaskID, err := orch.armOnChain(ctx, run, decision, task.ID)
 	if err != nil {
 		return err
 	}
-	if err := o.attachRecorder(ctx, rc, decision, onChainTaskID, task.ID); err != nil {
+	if err := orch.attachRecorder(ctx, run, decision, onChainTaskID, task.ID); err != nil {
 		return err
 	}
-	rc.Decision = decision
+	run.Decision = decision
 
-	if recErr := o.recordDecision(ctx, rc, decision, true); recErr != nil {
+	if recErr := orch.recordDecision(ctx, run, decision, true); recErr != nil {
 		slog.WarnContext(ctx, "orchestrator: record understand/route sub tasks failed", "error", recErr)
 	}
 	return nil
@@ -148,28 +89,28 @@ func (o *Orchestrator) CommitTask(ctx context.Context, rc *RunContext, decision 
 // answers complete them — never a second on-chain createTask, only the
 // Postgres summary, trigger description and is_actionable are refreshed, and
 // the on-chain actionable flag is flipped the first time a round settles.
-func (o *Orchestrator) UpdateTask(ctx context.Context, rc *RunContext, decision RouteDecision) error {
-	if rc.TaskID == 0 {
+func (orch *Orchestrator) UpdateTask(ctx context.Context, run *RunContext, decision RouteDecision) error {
+	if run.TaskID == 0 {
 		return ErrNoOpenTask
 	}
-	wasActionable := rc.Decision.IsActionable
+	wasActionable := run.Decision.IsActionable
 	if decision.MentionedTicker == "" {
-		decision.MentionedTicker = rc.Decision.MentionedTicker
+		decision.MentionedTicker = run.Decision.MentionedTicker
 	}
 	if decision.Card == nil {
-		decision.Card = rc.Decision.Card
+		decision.Card = run.Decision.Card
 	}
 	decision = withCardDefaults(decision)
 
-	task, found, err := o.Tasks.FindByID(ctx, rc.TaskID)
+	task, found, err := orch.Tasks.FindByID(ctx, run.TaskID)
 	if err != nil || !found {
-		return fmt.Errorf("orchestrator: load task %d: %w", rc.TaskID, err)
+		return fmt.Errorf("orchestrator: load task %d: %w", run.TaskID, err)
 	}
-	rawPrompt := rc.RawPrompt
+	rawPrompt := run.RawPrompt
 	if task.RawPrompt != nil {
 		rawPrompt = *task.RawPrompt
 	}
-	triggerDescription, err := o.buildDecisionTrigger(ctx, rawPrompt, decision)
+	triggerDescription, err := orch.buildDecisionTrigger(ctx, rawPrompt, decision)
 	if err != nil {
 		return err
 	}
@@ -177,17 +118,17 @@ func (o *Orchestrator) UpdateTask(ctx context.Context, rc *RunContext, decision 
 	// The Task's on-chain isActionable flag is set once, at createTask, and
 	// has no other setter besides markActionable — flip it the first time a
 	// round settles into an actionable decision, never again afterward.
-	if decision.IsActionable && !wasActionable && o.Chain != nil && rc.OnChainTaskID != nil {
-		if err := o.Chain.MarkActionable(ctx, uint64(*rc.OnChainTaskID)); err != nil {
+	if decision.IsActionable && !wasActionable && orch.Chain != nil && run.OnChainTaskID != nil {
+		if err := orch.Chain.MarkActionable(ctx, uint64(*run.OnChainTaskID)); err != nil {
 			return fmt.Errorf("orchestrator: on-chain markActionable: %w", err)
 		}
 	}
-	if err := o.Tasks.UpdateDecision(ctx, rc.TaskID, decision.Summary, triggerDescription, decision.IsActionable); err != nil {
+	if err := orch.Tasks.UpdateDecision(ctx, run.TaskID, decision.Summary, triggerDescription, decision.IsActionable); err != nil {
 		return fmt.Errorf("orchestrator: update task decision: %w", err)
 	}
-	rc.Decision = decision
+	run.Decision = decision
 
-	if recErr := o.recordDecision(ctx, rc, decision, false); recErr != nil {
+	if recErr := orch.recordDecision(ctx, run, decision, false); recErr != nil {
 		slog.WarnContext(ctx, "orchestrator: record route sub task failed", "error", recErr)
 	}
 	return nil
@@ -203,11 +144,11 @@ func withCardDefaults(decision RouteDecision) RouteDecision {
 	return decision
 }
 
-func (o *Orchestrator) buildDecisionTrigger(ctx context.Context, rawPrompt string, decision RouteDecision) (string, error) {
+func (orch *Orchestrator) buildDecisionTrigger(ctx context.Context, rawPrompt string, decision RouteDecision) (string, error) {
 	if decision.Summary == "" {
 		decision.Summary = defaultSummary(decision.Side, decision, decision.MentionedTicker)
 	}
-	stockContractAddress := o.resolveStockContractAddress(ctx, decision.Side, decision.MentionedTicker)
+	stockContractAddress := orch.resolveStockContractAddress(ctx, decision.Side, decision.MentionedTicker)
 	triggerDescription, err := buildTriggerDescription(rawPrompt, decision, stockContractAddress)
 	if err != nil {
 		return "", fmt.Errorf("orchestrator: marshal trigger description: %w", err)
@@ -219,13 +160,13 @@ func (o *Orchestrator) buildDecisionTrigger(ctx context.Context, rawPrompt strin
 // tied to the Task — "understand_request" fires exactly once, the first time
 // an intent is recognized; "route_decision" fires every round, so the
 // on-chain trail shows how the Task evolved as the user answered.
-func (o *Orchestrator) recordDecision(ctx context.Context, rc *RunContext, decision RouteDecision, isFirst bool) error {
-	if rc.Recorder == nil {
+func (orch *Orchestrator) recordDecision(ctx context.Context, run *RunContext, decision RouteDecision, isFirst bool) error {
+	if run.Recorder == nil {
 		return nil
 	}
 	if isFirst {
-		rc.OnSubTaskStarted("supervisor", "understand_request", decision.Label)
-		if _, err := rc.Recorder.Record(ctx, "supervisor", "understand_request", "done", decision.Summary, decision.Label, nil); err != nil {
+		run.Stream.StepStarted("supervisor", "understand_request", decision.Label)
+		if _, err := run.Recorder.Record(ctx, "supervisor", "understand_request", "done", decision.Summary, decision.Label, nil); err != nil {
 			return fmt.Errorf("orchestrator: record understand_request: %w", err)
 		}
 	}
@@ -233,8 +174,8 @@ func (o *Orchestrator) recordDecision(ctx context.Context, rc *RunContext, decis
 	if isFirst {
 		verb = "Task opened"
 	}
-	rc.OnSubTaskStarted("supervisor", "route_decision", decision.Label)
-	if _, err := rc.Recorder.Record(ctx, "supervisor", "route_decision", "done", fmt.Sprintf("%s. Actionable: %t", verb, decision.IsActionable), decision.Label, nil); err != nil {
+	run.Stream.StepStarted("supervisor", "route_decision", decision.Label)
+	if _, err := run.Recorder.Record(ctx, "supervisor", "route_decision", "done", fmt.Sprintf("%s. Actionable: %t", verb, decision.IsActionable), decision.Label, nil); err != nil {
 		return fmt.Errorf("orchestrator: record route_decision: %w", err)
 	}
 	return nil
@@ -252,11 +193,11 @@ func defaultSummary(side string, decision RouteDecision, ticker string) string {
 // empty, the ticker is not in the catalog, or the stock has no deployed
 // contract yet. The caller writes the result into trigger_description only
 // when non-empty.
-func (o *Orchestrator) resolveStockContractAddress(ctx context.Context, side, ticker string) string {
-	if side != "sell" || ticker == "" || o.Stocks == nil {
+func (orch *Orchestrator) resolveStockContractAddress(ctx context.Context, side, ticker string) string {
+	if side != "sell" || ticker == "" || orch.Stocks == nil {
 		return ""
 	}
-	stock, found, err := o.Stocks.FindByTickerOrIdxTicker(ctx, ticker)
+	stock, found, err := orch.Stocks.FindByTickerOrIdxTicker(ctx, ticker)
 	if err != nil || !found || stock.ContractAddress == nil || *stock.ContractAddress == "" {
 		return ""
 	}
@@ -315,22 +256,22 @@ func buildTriggerDescription(rawPrompt string, decision RouteDecision, stockCont
 	return string(triggerBytes), nil
 }
 
-func (o *Orchestrator) persistTask(ctx context.Context, rc *RunContext, decision RouteDecision, triggerDescription string) (dbmodel.AgentTask, error) {
-	if o.Tasks == nil {
+func (orch *Orchestrator) persistTask(ctx context.Context, run *RunContext, decision RouteDecision, triggerDescription string) (dbmodel.AgentTask, error) {
+	if orch.Tasks == nil {
 		return dbmodel.AgentTask{}, nil
 	}
-	rawPrompt := rc.RawPrompt
+	rawPrompt := run.RawPrompt
 	summary := decision.Summary
 	if summary == "" {
 		summary = defaultSummary(decision.Side, decision, decision.MentionedTicker)
 	}
-	task, err := o.Tasks.Create(ctx, repository.AgentTaskCreateInput{
-		WalletAddress:      rc.Wallet,
+	task, err := orch.Tasks.Create(ctx, repository.AgentTaskCreateInput{
+		WalletAddress:      run.Wallet,
 		RawPrompt:          &rawPrompt,
 		Summary:            summary,
 		TriggerDescription: &triggerDescription,
 		IsActionable:       decision.IsActionable,
-		SourceMessageID:    rc.SourceMessageID,
+		SourceMessageID:    run.SourceMessageID,
 	})
 	if err != nil {
 		return dbmodel.AgentTask{}, fmt.Errorf("orchestrator: create task in db: %w", err)
@@ -338,38 +279,38 @@ func (o *Orchestrator) persistTask(ctx context.Context, rc *RunContext, decision
 	return task, nil
 }
 
-func (o *Orchestrator) armOnChain(ctx context.Context, rc *RunContext, decision RouteDecision, taskID int64) (uint64, error) {
-	if o.Chain == nil {
+func (orch *Orchestrator) armOnChain(ctx context.Context, run *RunContext, decision RouteDecision, taskID int64) (uint64, error) {
+	if orch.Chain == nil {
 		return 0, nil
 	}
-	promptHash := crypto.Keccak256Hash([]byte(rc.RawPrompt))
+	promptHash := crypto.Keccak256Hash([]byte(run.RawPrompt))
 	summary := decision.Summary
 	if summary == "" {
 		summary = defaultSummary(decision.Side, decision, decision.MentionedTicker)
 	}
-	onChainTaskID, err := o.Chain.CreateTask(ctx, rc.Wallet, decision.IsActionable, summary, promptHash)
+	onChainTaskID, err := orch.Chain.CreateTask(ctx, run.Wallet, decision.IsActionable, summary, promptHash)
 	if err != nil {
 		return 0, fmt.Errorf("orchestrator: on-chain createTask: %w", err)
 	}
-	if o.Tasks != nil {
-		if err := o.Tasks.SetOnChainTaskID(ctx, taskID, int64(onChainTaskID)); err != nil {
+	if orch.Tasks != nil {
+		if err := orch.Tasks.SetOnChainTaskID(ctx, taskID, int64(onChainTaskID)); err != nil {
 			return 0, fmt.Errorf("orchestrator: persist onChainTaskID: %w", err)
 		}
 	}
 	return onChainTaskID, nil
 }
 
-func (o *Orchestrator) attachRecorder(ctx context.Context, rc *RunContext, decision RouteDecision, onChainTaskID uint64, taskID int64) error {
-	recorder, err := NewSubTaskRecorder(ctx, o.SubTasks, o.Chain, onChainTaskID, taskID, decision.Summary, rc.Wallet)
+func (orch *Orchestrator) attachRecorder(ctx context.Context, run *RunContext, decision RouteDecision, onChainTaskID uint64, taskID int64) error {
+	recorder, err := NewSubTaskRecorder(ctx, orch.SubTasks, orch.Chain, onChainTaskID, taskID, decision.Summary, run.Wallet)
 	if err != nil {
 		return fmt.Errorf("orchestrator: build subtask recorder: %w", err)
 	}
-	recorder.OnRecord = rc.live.done
+	recorder.OnRecord = run.Stream.StepDone
 	if onChainTaskID != 0 {
 		onChainID := int64(onChainTaskID)
-		rc.OnChainTaskID = &onChainID
+		run.OnChainTaskID = &onChainID
 	}
-	rc.Recorder = recorder
+	run.Recorder = recorder
 	return nil
 }
 

@@ -28,10 +28,22 @@ var (
 	ErrNoPendingExecution = errors.New("agent: task has no pending arm pause to resume")
 )
 
-// Orchestrator runs one Quasar agent (Nova and Comet are called by it) over
-// an adk.Runner. Pauses are Eino interrupts raised by Quasar's tools: the
-// questions card (ask_user) and the Arm Card (await_arm). Both are persisted
-// in CheckPointStore and resumed in a later HTTP request.
+// Reading map for this file.
+//
+// A chat message arrives at ChatService.HandleChatMessage, which resolves a
+// turnIntent (see chat_service.go) and calls Orchestrator.Send with it. Send
+// is the router: it runs the turn and, through consume/finish, publishes the
+// live events and records any pause.
+//
+//   - answerQuestions       -> resumeQuestionsTurn: the message IS the answer.
+//   - sideQuestionDuringArm -> runFreshTurn(keepCheckpoint=true): a new turn,
+//     the pending Arm pause stays alive.
+//   - freshTurn             -> runFreshTurn(keepCheckpoint=false).
+//
+// What raises an interrupt is never decided here: Quasar's own tools do it
+// (ask_user -> questions, await_arm -> arm). Pauses are Eino interrupts
+// persisted in CheckPointStore and resumed in a later HTTP request.
+// See docs/plans/agent-turn-pipeline-refactor.md.
 type Orchestrator struct {
 	Tasks        *repository.AgentTaskRepository
 	SubTasks     *repository.AgentSubTaskRepository
@@ -63,16 +75,16 @@ type StockCatalog interface {
 	FindMarketReady(ctx context.Context) ([]dbmodel.Stock, error)
 }
 
-func NewOrchestrator(ctx context.Context, o *Orchestrator) (*Orchestrator, error) {
-	if o.Quasar == nil {
+func NewOrchestrator(ctx context.Context, orch *Orchestrator) (*Orchestrator, error) {
+	if orch.Quasar == nil {
 		return nil, fmt.Errorf("orchestrator: Quasar agent is required")
 	}
-	o.runner = adk.NewRunner(ctx, adk.RunnerConfig{
-		Agent:           o.Quasar,
+	orch.runner = adk.NewRunner(ctx, adk.RunnerConfig{
+		Agent:           orch.Quasar,
 		EnableStreaming: true,
-		CheckPointStore: o.CheckPointStore,
+		CheckPointStore: orch.CheckPointStore,
 	})
-	return o, nil
+	return orch, nil
 }
 
 type OrchestratorInput struct {
@@ -128,71 +140,83 @@ const (
 	interruptArm       = "arm"
 )
 
-type pendingInterrupt struct {
-	kind string
-	id   string
-}
+// Send runs one turn for a chat message, routed by the intent ChatService
+// already resolved — including which pause it answers, so the pending marker
+// is read exactly once, in ChatService.resolveTurn. A tool-budget cap is not a
+// failure: the turn is finalized from whatever it produced.
+func (orch *Orchestrator) Send(ctx context.Context, in OrchestratorInput, intent turnIntent) (OrchestratorResult, error) {
+	run := orch.newRunContext(in.ChatID, in.Wallet, in.RawPrompt, in.SourceMessageID)
+	ctx = WithRunContext(ctx, run)
 
-// Send runs one turn for a chat message. If the chat is paused on a
-// questions card, the message is the answer and the paused turn resumes;
-// the Arm pause is never resumed by a chat message, only by ResumeExecute.
-func (o *Orchestrator) Send(ctx context.Context, in OrchestratorInput) (OrchestratorResult, error) {
-	rc := o.newRunContext(in.ChatID, in.Wallet, in.RawPrompt, in.SourceMessageID)
-	ctx = WithRunContext(ctx, rc)
-
-	result, err := o.runTurn(ctx, rc, in)
+	result, err := orch.dispatchTurn(ctx, run, in, intent)
 	if errors.Is(err, errToolBudgetExhausted) {
-		o.finishOnBudget(ctx, in, &result)
+		orch.finishOnBudget(ctx, in, &result)
 		return result, nil
 	}
 	return result, err
 }
 
-// runTurn is the turn's dispatch: resume a pending questions card, or run a
-// fresh turn (keeping the Arm pause alive when one is pending).
-func (o *Orchestrator) runTurn(ctx context.Context, rc *RunContext, in OrchestratorInput) (OrchestratorResult, error) {
-	pending, hasPending := o.pending(ctx, in.ChatID)
-	if hasPending && pending.kind == interruptQuestions {
-		if err := o.restoreFromChat(ctx, rc); err != nil {
-			return OrchestratorResult{}, err
-		}
-		iter, err := o.runner.ResumeWithParams(ctx, in.ChatID.String(), &adk.ResumeParams{Targets: map[string]any{pending.id: in.RawPrompt}})
-		if err != nil {
-			return OrchestratorResult{}, fmt.Errorf("orchestrator: resume questions pause: %w", err)
-		}
-		return o.consume(ctx, rc, iter, false)
+func (orch *Orchestrator) dispatchTurn(ctx context.Context, run *RunContext, in OrchestratorInput, intent turnIntent) (OrchestratorResult, error) {
+	switch intent.kind {
+	case answerQuestions:
+		return orch.resumeQuestionsTurn(ctx, run, in, intent.interruptID)
+	case sideQuestionDuringArm:
+		// The message starts a new turn; the pending Arm pause stays alive.
+		return orch.runFreshTurn(ctx, run, in, true)
+	default:
+		return orch.runFreshTurn(ctx, run, in, false)
 	}
+}
 
-	iter := o.runner.Run(ctx, in.Messages, adk.WithCheckPointID(in.ChatID.String()))
-	return o.consume(ctx, rc, iter, hasPending && pending.kind == interruptArm)
+// resumeQuestionsTurn answers a pending questions card: the user's message is
+// the suspended ask_user tool's result.
+func (orch *Orchestrator) resumeQuestionsTurn(ctx context.Context, run *RunContext, in OrchestratorInput, interruptID string) (OrchestratorResult, error) {
+	if err := orch.restoreFromChat(ctx, run); err != nil {
+		return OrchestratorResult{}, err
+	}
+	events, err := orch.runner.ResumeWithParams(ctx, run.ChatID.String(), &adk.ResumeParams{
+		Targets: map[string]any{interruptID: in.RawPrompt},
+	})
+	if err != nil {
+		return OrchestratorResult{}, fmt.Errorf("orchestrator: resume questions pause: %w", err)
+	}
+	return orch.consume(ctx, run, events, false)
+}
+
+// runFreshTurn starts a new turn. keepCheckpoint is true only when the chat is
+// paused on the Arm card and this message is a side question: the Arm pause
+// must survive the new turn.
+func (orch *Orchestrator) runFreshTurn(ctx context.Context, run *RunContext, in OrchestratorInput, keepCheckpoint bool) (OrchestratorResult, error) {
+	events := orch.runner.Run(ctx, in.Messages, adk.WithCheckPointID(run.ChatID.String()))
+	return orch.consume(ctx, run, events, keepCheckpoint)
 }
 
 // ResumeExecute resumes the Arm pause once the Task layer has confirmed
 // on-chain arm and allowance. It carries only a bare "armed" signal: what to
 // execute already lives in the checkpointed conversation.
-func (o *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, wallet string) (ExecuteTaskResult, error) {
-	task, found, err := o.Tasks.FindByID(ctx, taskID)
+func (orch *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, wallet string) (ExecuteTaskResult, error) {
+	task, found, err := orch.Tasks.FindByID(ctx, taskID)
 	if err != nil || !found {
 		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: task not found: %d", taskID)
 	}
 
-	chatID := o.resolveChatID(ctx, task)
-	pending, hasPending := o.pending(ctx, chatID)
+	chatID := orch.chatIDForTask(ctx, task)
+	pending, hasPending := orch.interrupts().pending(ctx, chatID)
 	if chatID == uuid.Nil || !hasPending || pending.kind != interruptArm {
 		return ExecuteTaskResult{}, fmt.Errorf("%w: task %d", ErrNoPendingExecution, taskID)
 	}
 
-	rc := o.newRunContext(chatID, wallet, "", task.SourceMessageID)
-	if err := o.restoreRunContext(ctx, rc, task); err != nil {
+	run := orch.newRunContext(chatID, wallet, "", task.SourceMessageID)
+	if err := orch.restoreRunContext(ctx, run, task); err != nil {
 		return ExecuteTaskResult{}, err
 	}
-	ctx = WithRunContext(ctx, rc)
+	ctx = WithRunContext(ctx, run)
 
-	iter, err := o.runner.ResumeWithParams(ctx, chatID.String(), &adk.ResumeParams{Targets: map[string]any{pending.id: "armed"}})
+	events, err := orch.runner.ResumeWithParams(ctx, chatID.String(), &adk.ResumeParams{Targets: map[string]any{pending.id: "armed"}})
 	if err != nil {
 		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume arm pause: %w", err)
 	}
-	result, err := o.consume(ctx, rc, iter, false)
+	result, err := orch.consume(ctx, run, events, false)
 	if errors.Is(err, errToolBudgetExhausted) {
 		// The budget is not a failure: return what the turn produced.
 		return ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
@@ -203,38 +227,16 @@ func (o *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, wallet s
 	return ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
 }
 
-func (o *Orchestrator) pending(ctx context.Context, chatID uuid.UUID) (pendingInterrupt, bool) {
-	if chatID == uuid.Nil {
-		return pendingInterrupt{}, false
-	}
-	stored, found, err := o.CheckPointStore.GetInterruptID(ctx, chatID.String())
-	if err != nil || !found {
-		return pendingInterrupt{}, false
-	}
-	kind, id, ok := strings.Cut(stored, "|")
-	if !ok || id == "" {
-		return pendingInterrupt{}, false
-	}
-	return pendingInterrupt{kind: kind, id: id}, true
-}
-
-func (o *Orchestrator) storeInterrupt(ctx context.Context, chatID uuid.UUID, kind, id string) {
-	if chatID == uuid.Nil {
-		return
-	}
-	_ = o.CheckPointStore.SetInterruptID(ctx, chatID.String(), kind+"|"+id)
-}
-
-// resolveChatID finds the chat a Task belongs to, needed to look up its
+// chatIDForTask finds the chat a Task belongs to, needed to look up its
 // checkpoint/interrupt ID — via the Task's own source message first, falling
 // back to any chat message that references this Task's card.
-func (o *Orchestrator) resolveChatID(ctx context.Context, task dbmodel.AgentTask) uuid.UUID {
+func (orch *Orchestrator) chatIDForTask(ctx context.Context, task dbmodel.AgentTask) uuid.UUID {
 	if task.SourceMessageID != nil {
-		if msg, found, err := o.ChatMessages.FindByID(ctx, *task.SourceMessageID); err == nil && found {
+		if msg, found, err := orch.ChatMessages.FindByID(ctx, *task.SourceMessageID); err == nil && found {
 			return msg.ChatID
 		}
 	}
-	if msg, found, err := o.ChatMessages.FindByUIRefTaskID(ctx, task.ID); err == nil && found {
+	if msg, found, err := orch.ChatMessages.FindByUIRefTaskID(ctx, task.ID); err == nil && found {
 		return msg.ChatID
 	}
 	return uuid.Nil
@@ -249,18 +251,53 @@ const toolBudgetInstructions = `You have reached your tool-call budget for this 
 // agent's own text when there is any; otherwise it asks the model once, with no
 // tools, for an answer from the evidence already gathered. No hardcoded reply
 // is written here.
-func (o *Orchestrator) finishOnBudget(ctx context.Context, in OrchestratorInput, result *OrchestratorResult) {
-	if strings.TrimSpace(result.Reply) != "" || o.ReplyModel == nil {
+func (orch *Orchestrator) finishOnBudget(ctx context.Context, in OrchestratorInput, result *OrchestratorResult) {
+	if strings.TrimSpace(result.Reply) != "" || orch.ReplyModel == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, finalAnswerTimeout)
 	defer cancel()
 
 	messages := append([]*schema.Message{schema.SystemMessage(toolBudgetInstructions)}, in.Messages...)
-	resp, err := o.ReplyModel.Generate(ctx, messages)
+	resp, err := orch.ReplyModel.Generate(ctx, messages)
 	if err != nil || resp == nil || strings.TrimSpace(resp.Content) == "" {
 		return
 	}
 	result.Reply = strings.TrimSpace(resp.Content)
 	PublishChatEvent(in.ChatID, "reply_delta", map[string]any{"delta": result.Reply})
+}
+
+// CancellationReply writes the sentence that confirms a cancelled trade plan,
+// in the user's own language. It lives here, next to the turn it belongs to,
+// because the Orchestrator owns ReplyModel — ChatService never builds a prompt.
+func (orch *Orchestrator) CancellationReply(ctx context.Context, ticker string, history []dbmodel.AgentChatMessage) string {
+	if orch.ReplyModel == nil {
+		return ""
+	}
+
+	recent := history
+	if len(recent) > 10 {
+		recent = recent[len(recent)-10:]
+	}
+
+	target := ticker
+	if target == "" {
+		target = "the asset"
+	}
+
+	systemPrompt := fmt.Sprintf(`You are Quasar, PulsarFi's AI trading assistant.
+The user has explicitly cancelled the pending trade confirmation for %s.
+
+CRITICAL USER-DRIVEN LANGUAGE POLICY:
+Detect and mirror 100%% the user's active language from the chat history (Indonesian, English, Javanese, Turkish, Japanese, etc.).
+NEVER hardcode or assume any single language. Do NOT use em dashes.
+Produce a single friendly, professional confirmation sentence stating that the trade plan for %s has been cancelled and no orders or on-chain transactions were executed.
+Return ONLY the confirmation sentence, with no markdown fences, greetings, or extra commentary.`, target, target)
+
+	msgs := append([]*schema.Message{schema.SystemMessage(systemPrompt)}, chatHistory(recent)...)
+	resp, err := orch.ReplyModel.Generate(ctx, msgs)
+	if err == nil && resp != nil && strings.TrimSpace(resp.Content) != "" {
+		return strings.TrimSpace(resp.Content)
+	}
+	return ""
 }

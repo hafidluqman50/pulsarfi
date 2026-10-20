@@ -39,8 +39,8 @@ func refusal(reason string) string {
 }
 
 func runContextWithTask(ctx context.Context) (*agent.RunContext, bool) {
-	rc, ok := agent.RunContextFrom(ctx)
-	return rc, ok && rc.TaskID != 0
+	run, ok := agent.RunContextFrom(ctx)
+	return run, ok && run.TaskID != 0
 }
 
 func newOpenTaskTool(tasks TaskOpener) (tool.InvokableTool, error) {
@@ -48,17 +48,17 @@ func newOpenTaskTool(tasks TaskOpener) (tool.InvokableTool, error) {
 		"open_task",
 		"Opens the permanent on-chain Task for this request. Call it FIRST for anything except plain conversation, even while trade parameters are still missing. Never call it twice in one turn: use update_task afterwards.",
 		func(ctx context.Context, decision agent.RouteDecision) (toolReply, error) {
-			rc, ok := agent.RunContextFrom(ctx)
+			run, ok := agent.RunContextFrom(ctx)
 			if !ok {
 				return toolReply{}, errors.New("open_task: no run context bound to this turn")
 			}
-			if rc.TaskID != 0 {
+			if run.TaskID != 0 {
 				return toolReply{ToolError: "a Task is already open: call update_task instead"}, nil
 			}
-			if err := tasks.CommitTask(ctx, rc, decision); err != nil {
+			if err := tasks.CommitTask(ctx, run, decision); err != nil {
 				return toolReply{}, err
 			}
-			return toolReply{TaskID: rc.TaskID, Status: "open"}, nil
+			return toolReply{TaskID: run.TaskID, Status: "open"}, nil
 		},
 	)
 }
@@ -68,14 +68,14 @@ func newUpdateTaskTool(tasks TaskOpener) (tool.InvokableTool, error) {
 		"update_task",
 		"Refreshes the Task that is already open once the user's answers settle (more of) the trade parameters. Send the complete, current decision, including the full card. Never opens a second Task.",
 		func(ctx context.Context, decision agent.RouteDecision) (toolReply, error) {
-			rc, ok := runContextWithTask(ctx)
+			run, ok := runContextWithTask(ctx)
 			if !ok {
 				return toolReply{ToolError: noOpenTaskReason}, nil
 			}
-			if err := tasks.UpdateTask(ctx, rc, decision); err != nil {
+			if err := tasks.UpdateTask(ctx, run, decision); err != nil {
 				return toolReply{}, err
 			}
-			return toolReply{TaskID: rc.TaskID, Status: "updated"}, nil
+			return toolReply{TaskID: run.TaskID, Status: "updated"}, nil
 		},
 	)
 }
@@ -155,15 +155,15 @@ func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...
 	if !wasInterrupted {
 		var args awaitArmArgs
 		_ = json.Unmarshal([]byte(arguments), &args)
-		rc, ok := runContextWithTask(ctx)
+		run, ok := runContextWithTask(ctx)
 		if !ok {
 			return refusal(noOpenTaskReason), nil
 		}
-		if !rc.Decision.IsActionable {
+		if !run.Decision.IsActionable {
 			return refusal("this Task is not an actionable trade: update_task with is_actionable true first"), nil
 		}
-		recordAwaitConfirmation(ctx, rc)
-		payload := agent.ArmInterrupt{TaskID: rc.TaskID, Message: args.Message}
+		recordAwaitConfirmation(ctx, run)
+		payload := agent.ArmInterrupt{TaskID: run.TaskID, Message: args.Message}
 		return "", tool.StatefulInterrupt(ctx, payload, payload)
 	}
 	if isTarget, _, _ := tool.GetResumeContext[string](ctx); isTarget {
@@ -172,13 +172,13 @@ func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...
 	return "", tool.StatefulInterrupt(ctx, state, state)
 }
 
-func recordAwaitConfirmation(ctx context.Context, rc *agent.RunContext) {
-	if rc.Recorder == nil {
+func recordAwaitConfirmation(ctx context.Context, run *agent.RunContext) {
+	if run.Recorder == nil {
 		return
 	}
-	label := rc.Decision.Label
-	rc.OnSubTaskStarted("supervisor", "await_confirmation", label)
-	if _, err := rc.Recorder.Record(ctx, "supervisor", "await_confirmation", "done", "Arm Card presented, awaiting the user's on-chain confirmation.", label, nil); err != nil {
+	label := run.Decision.Label
+	run.Stream.StepStarted("supervisor", "await_confirmation", label)
+	if _, err := run.Recorder.Record(ctx, "supervisor", "await_confirmation", "done", "Arm Card presented, awaiting the user's on-chain confirmation.", label, nil); err != nil {
 		slog.WarnContext(ctx, "supervisor: record await_confirmation failed", "error", err)
 	}
 }
@@ -225,11 +225,11 @@ func newAnalyzerCall(ctx context.Context, analyzerAgent adk.Agent) (tool.Invokab
 func (c *analyzerCall) Info(ctx context.Context) (*schema.ToolInfo, error) { return c.inner.Info(ctx) }
 
 func (c *analyzerCall) InvokableRun(ctx context.Context, arguments string, opts ...tool.Option) (string, error) {
-	rc, ok := runContextWithTask(ctx)
+	run, ok := runContextWithTask(ctx)
 	if !ok {
 		return refusal(noOpenTaskReason), nil
 	}
-	decision := rc.Decision
+	decision := run.Decision
 	// Nova's request is built from the Task. A trade that is still being
 	// configured would send her the wrong instructions (no verification, no
 	// verdict), so the Task must be settled first.
@@ -243,17 +243,16 @@ func (c *analyzerCall) InvokableRun(ctx context.Context, arguments string, opts 
 		return "", fmt.Errorf("analyzer_agent: %w", err)
 	}
 
-	rc.OnSubTaskStarted("supervisor", "route_to_analyzer", decision.Label)
-	if _, err := rc.Recorder.Record(ctx, "supervisor", "route_to_analyzer", "done", "Routed to Nova for evaluation.", decision.Label, nil); err != nil {
+	run.Stream.StepStarted("supervisor", "route_to_analyzer", decision.Label)
+	if _, err := run.Recorder.Record(ctx, "supervisor", "route_to_analyzer", "done", "Routed to Nova for evaluation.", decision.Label, nil); err != nil {
 		return "", fmt.Errorf("analyzer_agent: record route_to_analyzer: %w", err)
 	}
 
-	rc.OnSubTaskStarted("analyzer", "gather_evidence", decision.Label)
-	rc.CurrentAgent = "analyzer"
-	rc.CurrentStepName = "gather_evidence"
+	run.Stream.StepStarted("analyzer", "gather_evidence", decision.Label)
+	run.Stream.SetCurrent("analyzer", "gather_evidence")
 	reply, err := c.inner.InvokableRun(ctx, wrappedArguments, opts...)
 	if err != nil {
-		if _, recErr := rc.Recorder.Record(ctx, "analyzer", "gather_evidence", "failed", err.Error(), decision.Label, nil); recErr != nil {
+		if _, recErr := run.Recorder.Record(ctx, "analyzer", "gather_evidence", "failed", err.Error(), decision.Label, nil); recErr != nil {
 			slog.ErrorContext(ctx, "supervisor: record gather_evidence failed step", "error", recErr)
 		}
 		return "", fmt.Errorf("analyzer_agent run: %w", err)
@@ -267,7 +266,7 @@ func (c *analyzerCall) InvokableRun(ctx context.Context, arguments string, opts 
 	if decision.IsActionable {
 		verdict, prose = agent.ParseNovaVerdict(reply)
 	}
-	if _, err := rc.Recorder.Record(ctx, "analyzer", "gather_evidence", "done", prose, decision.Label, nil); err != nil {
+	if _, err := run.Recorder.Record(ctx, "analyzer", "gather_evidence", "done", prose, decision.Label, nil); err != nil {
 		return "", fmt.Errorf("analyzer_agent: record gather_evidence: %w", err)
 	}
 	if verdict == nil {
@@ -298,11 +297,11 @@ func newExecutorCall(ctx context.Context, executorAgent adk.Agent, armed ArmedTa
 func (c *executorCall) Info(ctx context.Context) (*schema.ToolInfo, error) { return c.inner.Info(ctx) }
 
 func (c *executorCall) InvokableRun(ctx context.Context, arguments string, opts ...tool.Option) (string, error) {
-	rc, ok := runContextWithTask(ctx)
+	run, ok := runContextWithTask(ctx)
 	if !ok {
 		return refusal(noOpenTaskReason), nil
 	}
-	task, found, err := c.armed.FindByID(ctx, rc.TaskID)
+	task, found, err := c.armed.FindByID(ctx, run.TaskID)
 	if err != nil {
 		return "", fmt.Errorf("executor_agent: load task: %w", err)
 	}
@@ -316,24 +315,23 @@ func (c *executorCall) InvokableRun(ctx context.Context, arguments string, opts 
 		return "", fmt.Errorf("executor_agent: %w", err)
 	}
 
-	label := rc.Decision.Label
-	rc.OnSubTaskStarted("supervisor", "route_to_executor", label)
-	if _, err := rc.Recorder.Record(ctx, "supervisor", "route_to_executor", "done", "Routed to Comet for execution.", label, nil); err != nil {
+	label := run.Decision.Label
+	run.Stream.StepStarted("supervisor", "route_to_executor", label)
+	if _, err := run.Recorder.Record(ctx, "supervisor", "route_to_executor", "done", "Routed to Comet for execution.", label, nil); err != nil {
 		return "", fmt.Errorf("executor_agent: record route_to_executor: %w", err)
 	}
 
-	tipBefore := rc.Recorder.TerminalHash()
-	rc.CurrentAgent = "executor"
-	rc.CurrentStepName = "decide"
+	tipBefore := run.Recorder.TerminalHash()
+	run.Stream.SetCurrent("executor", "decide")
 	reply, err := c.inner.InvokableRun(ctx, wrappedArguments, opts...)
 	if err != nil {
-		if _, recErr := rc.Recorder.Record(ctx, "executor", "decide", "failed", err.Error(), label, nil); recErr != nil {
+		if _, recErr := run.Recorder.Record(ctx, "executor", "decide", "failed", err.Error(), label, nil); recErr != nil {
 			slog.ErrorContext(ctx, "supervisor: record decide failed step", "error", recErr)
 		}
 		return "", fmt.Errorf("executor_agent run: %w", err)
 	}
-	if rc.Recorder.TerminalHash() == tipBefore {
-		if _, err := rc.Recorder.Record(ctx, "executor", "decide", "done", reply, label, nil); err != nil {
+	if run.Recorder.TerminalHash() == tipBefore {
+		if _, err := run.Recorder.Record(ctx, "executor", "decide", "done", reply, label, nil); err != nil {
 			return "", fmt.Errorf("executor_agent: record decide step: %w", err)
 		}
 	}

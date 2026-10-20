@@ -52,8 +52,8 @@ func (g *gracefulTool) InvokableRun(ctx context.Context, argumentsInJSON string,
 	// currently running, so the frontend gets a real failed entry instead of
 	// silently losing this attempt — RunContext is the only thing a tool's
 	// own ctx carries back to the orchestrator turn.
-	if rc, ok := RunContextFrom(ctx); ok && rc.OnSubTaskFailed != nil {
-		rc.OnSubTaskFailed(rc.CurrentAgent, rc.CurrentStepName, err.Error())
+	if run, ok := RunContextFrom(ctx); ok && run.Stream != nil {
+		run.Stream.StepFailed(err.Error())
 	}
 
 	payload, marshalErr := json.Marshal(map[string]string{

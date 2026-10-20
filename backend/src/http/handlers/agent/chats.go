@@ -2,7 +2,6 @@ package agent
 
 import (
 	"errors"
-	"log/slog"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -32,7 +31,7 @@ func PostChatMessageHandler(c *gin.Context) {
 		return
 	}
 
-	runAgentOverSocket(c, chatID, func() (agentsvc.WorkflowCard, error) {
+	respondWithTurn(c, func() (agentsvc.WorkflowCard, error) {
 		return chatSvc.HandleChatMessage(c.Request.Context(), chatID, claims.WalletAddress, messageRequest.Message, messageRequest.Hidden)
 	})
 }
@@ -52,21 +51,18 @@ func RetryLastMessageHandler(c *gin.Context) {
 		return
 	}
 
-	runAgentOverSocket(c, chatID, func() (agentsvc.WorkflowCard, error) {
+	respondWithTurn(c, func() (agentsvc.WorkflowCard, error) {
 		return chatSvc.RetryLastMessage(c.Request.Context(), chatID, claims.WalletAddress)
 	})
 }
 
-// runAgentOverSocket is a plain, blocking HTTP request-response — the
-// request only ever completes once the whole turn finishes, same as any
-// other endpoint in this API. Live progress (sub_tasks, reply_delta,
-// thinking, tool_call) is pushed out-of-band over the chat's WebSocket topic
-// by the agent package as it happens, and sub_tasks always carries the
-// turn's full, current sub-task list, never a single fragment. The HTTP
-// response body itself only ever carries the final result or an error — a
-// client that never subscribed to the topic still gets a correct, complete
-// response, it just misses the live play-by-play.
-func runAgentOverSocket(c *gin.Context, chatID uuid.UUID, run func() (agentsvc.WorkflowCard, error)) {
+// respondWithTurn is a plain, blocking HTTP request-response: the request only
+// completes once the whole turn finishes, and the body carries only the final
+// result or an error. Live progress (sub_tasks, reply_delta, thinking,
+// tool_call) and the terminal event are published by the agent package out of
+// band over the chat's WebSocket topic as the turn runs — this handler owns no
+// event, only the HTTP status mapping.
+func respondWithTurn(c *gin.Context, run func() (agentsvc.WorkflowCard, error)) {
 	workflowCard, err := run()
 
 	switch {
@@ -80,13 +76,10 @@ func runAgentOverSocket(c *gin.Context, chatID uuid.UUID, run func() (agentsvc.W
 		response.Conflict(c, "a turn is already running for this chat")
 		return
 	case err != nil:
-		slog.ErrorContext(c.Request.Context(), "agent: process chat message failed", "error", err)
-		agentsvc.PublishChatEvent(chatID, "error", gin.H{"message": "Failed to process chat message"})
 		response.InternalError(c, "Failed to process chat message")
 		return
 	}
 
-	agentsvc.PublishChatEvent(chatID, "final", workflowCard)
 	response.OK(c, "message processed", workflowCard)
 }
 
