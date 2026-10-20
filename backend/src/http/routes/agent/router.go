@@ -21,6 +21,7 @@ func RegisterRoutes(rg *gin.RouterGroup, jwtConfig auth.Config) {
 	protected.GET("/chats", agentHandler.ListChatsHandler)
 	protected.GET("/portfolio/chart", agentHandler.GetPortfolioChartHandler)
 	protected.GET("/chats/:id/messages", agentHandler.GetChatMessagesHandler)
+	protected.GET("/chats/:id/turn", agentHandler.GetTurnStatusHandler)
 	protected.POST("/chats/:id/messages", agentHandler.PostChatMessageHandler)
 	protected.POST("/chats/:id/messages/retry", agentHandler.RetryLastMessageHandler)
 

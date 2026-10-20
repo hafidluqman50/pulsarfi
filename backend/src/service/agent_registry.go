@@ -154,6 +154,7 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		ChatMessages:    repos.AgentChatMessage,
 		Orchestrator:    orchestrator,
 		CheckPointStore: checkpointStore,
+		Turns:           agentsvc.NewTurnRegistry(),
 	}
 	taskSvc := &agentsvc.TaskService{
 		Tasks:        repos.AgentTask,

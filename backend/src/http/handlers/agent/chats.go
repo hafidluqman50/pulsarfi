@@ -76,6 +76,9 @@ func runAgentOverSocket(c *gin.Context, chatID uuid.UUID, run func() (agentsvc.W
 	case errors.Is(err, agentsvc.ErrNothingToRetry):
 		response.BadRequest(c, "nothing to retry")
 		return
+	case errors.Is(err, agentsvc.ErrTurnInFlight):
+		response.Conflict(c, "a turn is already running for this chat")
+		return
 	case err != nil:
 		slog.ErrorContext(c.Request.Context(), "agent: process chat message failed", "error", err)
 		agentsvc.PublishChatEvent(chatID, "error", gin.H{"message": "Failed to process chat message"})

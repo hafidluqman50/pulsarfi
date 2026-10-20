@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
@@ -15,6 +16,14 @@ import (
 )
 
 var ErrChatNotFound = errors.New("agent: chat not found")
+
+// ErrTurnInFlight is returned when a second turn is requested for a chat that
+// already has one running. The handler maps it to 409.
+var ErrTurnInFlight = errors.New("agent: a turn is already running for this chat")
+
+// turnTimeout bounds one detached turn. It matches the server's WriteTimeout,
+// the longest a live client can wait for the blocking response.
+const turnTimeout = 5 * time.Minute
 
 // ChatService manages chat threads, user messages, and supervisor replies.
 // It delegates the entire turn to Orchestrator — pause and resume are
@@ -26,6 +35,9 @@ type ChatService struct {
 	ChatMessages    *repository.AgentChatMessageRepository
 	Orchestrator    *Orchestrator
 	CheckPointStore ExtendedCheckPointStore
+	// Turns is the per-chat single-turn guard. Nil in tests that build the
+	// service directly; tryStartTurn treats nil as "no guard".
+	Turns *TurnRegistry
 }
 
 func (s *ChatService) ListChats(ctx context.Context, wallet string) ([]model.AgentChat, error) {
@@ -67,7 +79,25 @@ func (s *ChatService) GetChatMessages(ctx context.Context, chatID uuid.UUID, wal
 // LLM as context, still returned by every read) that must never render as a
 // bubble in the UI — the compiled answer a clarifying-questions card sends,
 // not something the user typed by hand.
-func (s *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, hidden bool) (WorkflowCard, error) {
+// HandleChatMessage takes the chat's single turn slot, then runs the turn on a
+// context that does not belong to the caller's connection: a refresh or a
+// closed tab must not cancel work already committed to.
+func (s *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, hidden bool) (card WorkflowCard, err error) {
+	release, ok := s.tryStartTurn(chatID)
+	if !ok {
+		return WorkflowCard{}, ErrTurnInFlight
+	}
+	defer release()
+
+	s.announceTurn(chatID, "running")
+	defer func() { s.announceTurn(chatID, turnStatus(err)) }()
+
+	turnCtx, cancel := turnContext(ctx)
+	defer cancel()
+	return s.handleChatMessage(turnCtx, chatID, wallet, message, hidden)
+}
+
+func (s *ChatService) handleChatMessage(ctx context.Context, chatID uuid.UUID, wallet, message string, hidden bool) (WorkflowCard, error) {
 	chat, err := s.Chats.FindOrCreate(ctx, chatID, strings.ToLower(wallet), truncateRunes(message, 50))
 	if err != nil {
 		return WorkflowCard{}, err
@@ -103,7 +133,24 @@ func (s *ChatService) HandleChatMessage(ctx context.Context, chatID uuid.UUID, w
 	return s.runForMessage(ctx, chatID, userMessage, append(existingMessages, userMessage), strings.ToLower(wallet))
 }
 
-func (s *ChatService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string) (WorkflowCard, error) {
+// RetryLastMessage takes the same turn slot: a retry issued while the original
+// turn is still running would otherwise start a second turn concurrently.
+func (s *ChatService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string) (card WorkflowCard, err error) {
+	release, ok := s.tryStartTurn(chatID)
+	if !ok {
+		return WorkflowCard{}, ErrTurnInFlight
+	}
+	defer release()
+
+	s.announceTurn(chatID, "running")
+	defer func() { s.announceTurn(chatID, turnStatus(err)) }()
+
+	turnCtx, cancel := turnContext(ctx)
+	defer cancel()
+	return s.retryLastMessage(turnCtx, chatID, wallet)
+}
+
+func (s *ChatService) retryLastMessage(ctx context.Context, chatID uuid.UUID, wallet string) (WorkflowCard, error) {
 	chat, found, err := s.Chats.FindByID(ctx, chatID)
 	if err != nil {
 		return WorkflowCard{}, err
@@ -128,6 +175,52 @@ func (s *ChatService) RetryLastMessage(ctx context.Context, chatID uuid.UUID, wa
 	}
 
 	return s.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet))
+}
+
+// tryStartTurn claims the chat's single turn slot. A nil registry (unit tests
+// that build ChatService directly) means "no guard", not a panic.
+func (s *ChatService) tryStartTurn(chatID uuid.UUID) (func(), bool) {
+	if s.Turns == nil {
+		return func() {}, true
+	}
+	return s.Turns.TryStart(chatID)
+}
+
+func turnStatus(err error) string {
+	if err != nil {
+		return "failed"
+	}
+	return "done"
+}
+
+func (s *ChatService) announceTurn(chatID uuid.UUID, status string) {
+	PublishChatEvent(chatID, "turn", map[string]any{"status": status})
+}
+
+// turnContext detaches the turn from the caller's connection while keeping its
+// values, and bounds it with its own timeout.
+func turnContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), turnTimeout)
+}
+
+// TurnStatus is the authoritative "is a turn running for this chat" answer for
+// a client that has just mounted. A chat with no row yet is simply idle.
+func (s *ChatService) TurnStatus(ctx context.Context, chatID uuid.UUID, wallet string) (running bool, startedAt time.Time, err error) {
+	chat, found, err := s.Chats.FindByID(ctx, chatID)
+	if err != nil {
+		return false, time.Time{}, err
+	}
+	if !found {
+		return false, time.Time{}, nil
+	}
+	if !strings.EqualFold(chat.OwnerWallet, wallet) {
+		return false, time.Time{}, ErrWalletMismatch
+	}
+	if s.Turns == nil {
+		return false, time.Time{}, nil
+	}
+	running, startedAt = s.Turns.Status(chatID)
+	return running, startedAt, nil
 }
 
 func (s *ChatService) hasActiveCheckpoint(ctx context.Context, chatID uuid.UUID) bool {
