@@ -121,6 +121,9 @@ func (h *flowHarness) say(message string) agentcore.WorkflowCard {
 	if err != nil {
 		h.t.Fatalf("HandleChatMessage(%q): %v", message, err)
 	}
+	if n := len(card.Messages); n < 2 || card.Messages[n-2].Sender != "user" || card.Messages[n-1].Sender != "supervisor" || card.Messages[n-1].ID == 0 {
+		h.t.Fatalf("send response must end in the persisted user and supervisor rows, got %+v", card.Messages)
+	}
 	return card
 }
 

@@ -1,13 +1,20 @@
 package agentcore
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/horizonlabs/pulsarfi-backend/src/model"
+)
 
 // WorkflowCard is the final result of a turn: what the handler returns and
-// what the chat-stream `final` event carries.
+// what the chat-stream `final` event carries. Messages is the chat's full
+// message list after the turn, so a client can replace its state instead of
+// refetching.
 type WorkflowCard struct {
-	TaskID      int64           `json:"task_id,omitempty"`
-	Reply       string          `json:"reply"`
-	ContentType string          `json:"content_type"`
-	UIComponent *string         `json:"ui_component,omitempty"`
-	UIProps     json.RawMessage `json:"ui_props,omitempty"`
+	TaskID      int64                    `json:"task_id,omitempty"`
+	Reply       string                   `json:"reply"`
+	ContentType string                   `json:"content_type"`
+	UIComponent *string                  `json:"ui_component,omitempty"`
+	UIProps     json.RawMessage          `json:"ui_props,omitempty"`
+	Messages    []model.AgentChatMessage `json:"messages,omitempty"`
 }

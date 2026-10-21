@@ -264,17 +264,23 @@ func (svc *ChatService) handleCancellation(ctx context.Context, chatID uuid.UUID
 	existingMessages, _ := svc.ChatMessages.FindByChatID(ctx, chatID)
 	cancelReply := svc.Orchestrator.CancellationReply(ctx, "the asset", existingMessages)
 
-	if _, err := svc.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+	replyRow, err := svc.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
 		ChatID:      chatID,
 		Sender:      "supervisor",
 		ContentType: "text",
 		Content:     cancelReply,
-	}); err != nil {
+	})
+	if err != nil {
 		slog.ErrorContext(ctx, "agent: persist supervisor cancel reply failed", "error", err)
 	}
 
+	card := agentcore.WorkflowCard{Reply: cancelReply, ContentType: "text", Messages: existingMessages}
+	if replyRow.ID != 0 {
+		card.Messages = append(card.Messages, replyRow)
+	}
+
 	orchestrator.PublishChatEvent(chatID, "reply_delta", map[string]any{"delta": cancelReply})
-	return agentcore.WorkflowCard{Reply: cancelReply, ContentType: "text"}, nil
+	return card, nil
 }
 
 // runForMessage delegates the whole turn to Orchestrator.Send and publishes
@@ -301,14 +307,18 @@ func (svc *ChatService) runForMessage(ctx context.Context, chatID uuid.UUID, use
 		return agentcore.WorkflowCard{}, fmt.Errorf("agent: orchestrator run failed: %w", err)
 	}
 
-	card, err := svc.persistSupervisorReply(ctx, chatID, result)
-	if err == nil {
-		orchestrator.PublishChatEvent(chatID, "final", card)
+	replyRow, card := svc.persistSupervisorReply(ctx, chatID, result)
+	// The response is the chat's state: the history this turn read plus the
+	// row it just wrote. The client replaces its list with it.
+	card.Messages = allMessages
+	if replyRow.ID != 0 {
+		card.Messages = append(card.Messages, replyRow)
 	}
-	return card, err
+	orchestrator.PublishChatEvent(chatID, "final", card)
+	return card, nil
 }
 
-func (svc *ChatService) persistSupervisorReply(ctx context.Context, chatID uuid.UUID, result orchestrator.OrchestratorResult) (agentcore.WorkflowCard, error) {
+func (svc *ChatService) persistSupervisorReply(ctx context.Context, chatID uuid.UUID, result orchestrator.OrchestratorResult) (model.AgentChatMessage, agentcore.WorkflowCard) {
 	card := agentcore.WorkflowCard{TaskID: result.TaskID, Reply: result.Reply, ContentType: result.ContentType, UIProps: result.UIProps}
 	if result.UIComponent != "" {
 		component := result.UIComponent
@@ -323,7 +333,7 @@ func (svc *ChatService) persistSupervisorReply(ctx context.Context, chatID uuid.
 	if result.TaskID != 0 {
 		refTaskID = &result.TaskID
 	}
-	if _, err := svc.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
+	row, err := svc.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
 		ChatID:      chatID,
 		Sender:      "supervisor",
 		ContentType: card.ContentType,
@@ -331,11 +341,12 @@ func (svc *ChatService) persistSupervisorReply(ctx context.Context, chatID uuid.
 		UIComponent: card.UIComponent,
 		UIProps:     uiProps,
 		UIRefTaskID: refTaskID,
-	}); err != nil {
+	})
+	if err != nil {
 		slog.ErrorContext(ctx, "agent: persist supervisor reply failed", "error", err)
 	}
 
-	return card, nil
+	return row, card
 }
 
 // isCancellationAction detects whether a user message signals intent to

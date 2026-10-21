@@ -12,7 +12,7 @@ import { PortfolioChart } from './PortfolioChart';
 import { RosterCard } from './RosterCard';
 import { agentDisplayName, MessageMarkdown, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
 import { beginTurn, clearTurnLive, failTurn, getChatSession, markTurnEnded, markTurnStarted, useChatSession } from './chatSession';
-import { useChatMessages } from '@/http/agent/hooks';
+import { useAgentChats, useChatMessages } from '@/http/agent/hooks';
 
 // The thinking indicator is a fixed English UI-chrome label — global for every
 // user, regardless of the conversation's language — plus a remembered
@@ -425,7 +425,13 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
 });
 
 export function ChatThread({ chatId }: ChatThreadProps) {
-  const { data: messages = [], isLoading } = useChatMessages(chatId);
+  // A new chat is a client UUID with no row yet, so its history is fetched
+  // only once the chat exists (shared agent-chats cache). Everything the user
+  // sends is appended to this cache from the response; the DB is the source
+  // only when opening an existing chat or after a reload.
+  const { data: chats = [] } = useAgentChats();
+  const chatExists = chats.some((chat) => chat.id === chatId);
+  const { data: messages = [], isLoading } = useChatMessages(chatId, { enabled: chatExists });
   const queryClient = useQueryClient();
   const session = useChatSession(chatId);
   const [draft, setDraft] = useState('');
@@ -456,27 +462,29 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     };
   }, [chatId]);
 
-  // When a turn ends, wait for the persisted messages to land before dropping
-  // the live bubbles, so the reply does not blink out.
+  // The reply is already in the messages cache (appended from the response),
+  // so ending a turn only drops the live chrome and refreshes task state.
+  // There is no message refetch here: the DB is consulted on mount, not after
+  // every turn.
   const endedAt = session.endedAt;
   useEffect(() => {
     if (!endedAt) return;
-    let cancelled = false;
-    void queryClient
-      .invalidateQueries({ queryKey: ['agent-chat-messages', chatId] })
-      .then(() => queryClient.invalidateQueries({ queryKey: ['agent-tasks'] }))
-      .then(() => {
-        if (!cancelled) clearTurnLive(chatId);
-      });
-    return () => {
-      cancelled = true;
-    };
+    clearTurnLive(chatId);
+    void queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
   }, [endedAt, chatId, queryClient]);
 
-  // Derived at render time, not via a setState-in-effect: once the real
-  // persisted message shows up in `messages`, the optimistic bubble below
+  // Derived at render time, not via a setState-in-effect: once the row
+  // appended from the response is in `messages`, the optimistic bubble below
   // is redundant and hides itself immediately.
   const pendingBubbleText = pendingText && !messages.some((m) => m.sender === 'user' && m.content === pendingText) ? pendingText : null;
+
+  // The live bubble and the appended reply are the same text. Hide the live
+  // copy as soon as `messages` contains it: that covers the frame between the
+  // append and clearTurnLive, and any later fetch that brings the same row.
+  const liveReplyText = session.streamingReplyText;
+  const liveReplyPersisted =
+    liveReplyText !== '' &&
+    messages.some((message) => message.sender !== 'user' && !isHiddenMessage(message) && message.content === liveReplyText);
 
   async function handleSend(overrideText?: string, hidden?: boolean) {
     const trimmed = (overrideText ?? draft).trim();
@@ -489,12 +497,21 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     if (!hidden) setPendingText(trimmed);
     if (!overrideText) setDraft('');
     try {
-      await sendChatMessage(chatId, trimmed, hidden);
-      // The blocking response means the turn finished and the reply is
-      // persisted; endedAt then refetches before the live bubbles are dropped.
+      const card = await sendChatMessage(chatId, trimmed, hidden);
+      // The response is the chat's state: replace, never refetch.
+      if (card.messages) queryClient.setQueryData(['agent-chat-messages', chatId], card.messages);
+      if (!chatExists) {
+        // The first message created the chat server-side; let the sidebar see
+        // it. No messages refetch: the rows above are already on screen.
+        void queryClient.invalidateQueries({ queryKey: ['agent-chats'] });
+      }
       markTurnEnded(chatId);
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
+      // Error recovery is the one place a refetch is allowed: pull the
+      // persisted user row (and the new chat) so Retry has something to act on.
+      if (!chatExists) void queryClient.invalidateQueries({ queryKey: ['agent-chats'] });
+      void queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
       failTurn(chatId, trimmed, description);
       toast.error('Message failed to send', { description });
     } finally {
@@ -508,7 +525,8 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     isSendingRef.current = true;
     beginTurn(chatId);
     try {
-      await retryLastMessage(chatId);
+      const card = await retryLastMessage(chatId);
+      if (card.messages) queryClient.setQueryData(['agent-chat-messages', chatId], card.messages);
       markTurnEnded(chatId);
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
@@ -517,7 +535,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     } finally {
       isSendingRef.current = false;
     }
-  }, [chatId, messages]);
+  }, [chatId, queryClient, messages]);
 
   const isBusy = session.running || pendingText != null;
 
@@ -536,7 +554,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
         isFinalizing={session.isFinalizing}
         showReasoning={showReasoning}
         chartPending={session.chartPending}
-        streamingReplyText={session.streamingReplyText}
+        streamingReplyText={liveReplyPersisted ? '' : liveReplyText}
         onRetry={handleRetry}
         onToggleReasoning={() => setShowReasoning(!showReasoning)}
         onSendPrompt={handleSend}
