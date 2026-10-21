@@ -1,9 +1,9 @@
 'use client';
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { sendChatMessage, retryLastMessage, getTurnStatus, type AgentChatMessage, type LiveSubTask } from '@/http/agent/chatApi';
+import { sendChatMessage, retryLastMessage, getTurnStatus, type AgentChatMessage, type LiveSubTask, type WorkflowCard } from '@/http/agent/chatApi';
 import { ClarifyingQuestions } from './ClarifyingQuestions';
 import { HorizonNoticeCard } from './HorizonNoticeCard';
 import { NewsBrief } from './NewsBrief';
@@ -424,16 +424,54 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
   );
 });
 
+// Optimistic rows live only in the client cache until the next fetch replaces
+// them with the canonical DB rows, so a negative id is enough to keep React
+// keys unique in the meantime.
+let optimisticMessageId = -1;
+function nextOptimisticMessageId(): number {
+  return optimisticMessageId--;
+}
+
+function optimisticUserMessage(chatId: string, content: string): AgentChatMessage {
+  return {
+    id: nextOptimisticMessageId(),
+    chat_id: chatId,
+    sender: 'user',
+    content_type: 'text',
+    content,
+    ui_component: null,
+    ui_props: null,
+    ui_ref_task_id: null,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function replyMessage(chatId: string, card: WorkflowCard): AgentChatMessage {
+  return {
+    id: nextOptimisticMessageId(),
+    chat_id: chatId,
+    sender: 'supervisor',
+    content_type: card.content_type,
+    content: card.reply,
+    ui_component: card.ui_component ?? null,
+    ui_props: card.ui_props ?? null,
+    ui_ref_task_id: card.task_id ?? null,
+    created_at: new Date().toISOString(),
+  };
+}
+
+function appendMessages(queryClient: QueryClient, chatId: string, rows: AgentChatMessage[]): void {
+  queryClient.setQueryData<AgentChatMessage[]>(['agent-chat-messages', chatId], (prev) => [...(prev ?? []), ...rows]);
+}
+
 export function ChatThread({ chatId }: ChatThreadProps) {
-  // A new chat is a client UUID with no row yet: there is nothing to fetch,
-  // so the messages query stays off (no request, no loading skeleton) and the
-  // empty intro renders immediately. It turns on once the chat is known to
-  // the server, or after this mount has sent its first message. useAgentChats
-  // shares QuasarPanel's cache, so this adds no request of its own.
+  // A new chat is a client UUID with no row yet, so its history is fetched
+  // only once the chat exists (shared agent-chats cache). Everything the user
+  // sends is appended to this cache from the response; the DB is the source
+  // only when opening an existing chat or after a reload.
   const { data: chats = [] } = useAgentChats();
   const chatExists = chats.some((chat) => chat.id === chatId);
-  const [hasSent, setHasSent] = useState(false);
-  const { data: messages = [], isLoading } = useChatMessages(chatId, { enabled: chatExists || hasSent });
+  const { data: messages = [], isLoading } = useChatMessages(chatId, { enabled: chatExists });
   const queryClient = useQueryClient();
   const session = useChatSession(chatId);
   const [draft, setDraft] = useState('');
@@ -464,33 +502,25 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     };
   }, [chatId]);
 
-  // When a turn ends, wait for the persisted messages to land before dropping
-  // the live bubbles, so the reply does not blink out.
+  // The reply is already in the messages cache (appended from the response),
+  // so ending a turn only drops the live chrome and refreshes task state.
+  // There is no message refetch here: the DB is consulted on mount, not after
+  // every turn.
   const endedAt = session.endedAt;
   useEffect(() => {
     if (!endedAt) return;
-    let cancelled = false;
-    void queryClient
-      .invalidateQueries({ queryKey: ['agent-chat-messages', chatId] })
-      .then(() => queryClient.invalidateQueries({ queryKey: ['agent-tasks'] }))
-      .then(() => {
-        if (!cancelled) clearTurnLive(chatId);
-      });
-    return () => {
-      cancelled = true;
-    };
+    clearTurnLive(chatId);
+    void queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
   }, [endedAt, chatId, queryClient]);
 
-  // Derived at render time, not via a setState-in-effect: once the real
-  // persisted message shows up in `messages`, the optimistic bubble below
+  // Derived at render time, not via a setState-in-effect: once the row
+  // appended from the response is in `messages`, the optimistic bubble below
   // is redundant and hides itself immediately.
   const pendingBubbleText = pendingText && !messages.some((m) => m.sender === 'user' && m.content === pendingText) ? pendingText : null;
 
-  // The live bubble and the persisted row are the same reply. clearTurnLive
-  // runs only after two invalidations, so the persisted row lands first; at
-  // that point rendering both shows the reply twice. Hide the live copy as
-  // soon as the refetched history contains it, and keep it while the refetch
-  // is in flight so the reply does not blink.
+  // The live bubble and the appended reply are the same text. Hide the live
+  // copy as soon as `messages` contains it: that covers the frame between the
+  // append and clearTurnLive, and any later fetch that brings the same row.
   const liveReplyText = session.streamingReplyText;
   const liveReplyPersisted =
     liveReplyText !== '' &&
@@ -507,13 +537,25 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     if (!hidden) setPendingText(trimmed);
     if (!overrideText) setDraft('');
     try {
-      await sendChatMessage(chatId, trimmed, hidden);
-      setHasSent(true);
-      // The blocking response means the turn finished and the reply is
-      // persisted; endedAt then refetches before the live bubbles are dropped.
+      const card = await sendChatMessage(chatId, trimmed, hidden);
+      // The response is the reply: put it on screen instead of refetching the
+      // chat. A hidden send is full history but never a bubble, so only the
+      // reply is appended.
+      appendMessages(queryClient, chatId, hidden
+        ? [replyMessage(chatId, card)]
+        : [optimisticUserMessage(chatId, trimmed), replyMessage(chatId, card)]);
+      if (!chatExists) {
+        // The first message created the chat server-side; let the sidebar see
+        // it. No messages refetch: the rows above are already on screen.
+        void queryClient.invalidateQueries({ queryKey: ['agent-chats'] });
+      }
       markTurnEnded(chatId);
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
+      // The server persists the user row before running the turn, so keep it
+      // visible (and retryable) instead of waiting for a refetch. Validation
+      // failures reconcile on the next natural fetch.
+      if (!hidden) appendMessages(queryClient, chatId, [optimisticUserMessage(chatId, trimmed)]);
       failTurn(chatId, trimmed, description);
       toast.error('Message failed to send', { description });
     } finally {
@@ -527,8 +569,8 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     isSendingRef.current = true;
     beginTurn(chatId);
     try {
-      await retryLastMessage(chatId);
-      setHasSent(true);
+      const card = await retryLastMessage(chatId);
+      appendMessages(queryClient, chatId, [replyMessage(chatId, card)]);
       markTurnEnded(chatId);
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
@@ -537,7 +579,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     } finally {
       isSendingRef.current = false;
     }
-  }, [chatId, messages]);
+  }, [chatId, queryClient, messages]);
 
   const isBusy = session.running || pendingText != null;
 
@@ -546,7 +588,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
       <MessageList
         chatId={chatId}
         messages={messages}
-        isLoading={isLoading && !hasSent}
+        isLoading={isLoading}
         isStreaming={session.running}
         pendingText={pendingBubbleText}
         failedMessage={session.failedMessage}

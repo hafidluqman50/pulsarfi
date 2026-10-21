@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
+| **Version** | 1.2 |
 | **Status** | Draft |
 | **Date Created** | 2026-10-21 |
 | **Last Updated** | 2026-10-21 |
@@ -11,58 +11,68 @@
 |---|---|---|
 | 1.0 | 2026-10-21 | Initial draft. |
 | 1.1 | 2026-10-21 | Added the new-chat half: §1 notes the empty fetch + skeleton, §2 gains a no-fetch rule, §3/§5 gate the messages query on the chat existing (or the first send), §8 adds the network check. |
+| 1.2 | 2026-10-21 | Replaced the per-turn refetch with client-owned message state: the reply is appended from the send response, `endedAt` no longer invalidates `agent-chat-messages`, and the DB hydrates only on mount/refresh. §1, §2, §3, §5, §7 and §8 revised; `hasSent` removed, `optimisticUserMessage`/`replyMessage`/`appendMessages` added. |
 
 ## 1. Problem Statement
 
-A single-word message ("halo") renders Quasar's reply twice. This is a
-regression from #53 (`chatSession`): before it, the live streaming bubble was
-guarded at render time by `isStreaming && streamingReplyText`; after it, the
-guard is only `streamingReplyText` (`ChatThread.tsx:408`).
+A single-word message ("halo") renders Quasar's reply twice, and **+ new chat**
+shows a loading skeleton for a chat that has nothing to load.
 
-The persisted supervisor row and the live bubble are the same text. When a turn
-ends:
+The duplicate is a regression from #53 (`chatSession`): before it, the live
+streaming bubble was guarded by `isStreaming && streamingReplyText`; after it,
+only by `streamingReplyText` (`ChatThread.tsx`). But the deeper cause is the
+model, not the guard: the send path waits for the reply to reach Postgres and
+then refetches it.
 
-1. the backend persists the reply, then publishes `final`;
-2. `markTurnEnded` sets `endedAt`;
-3. the `endedAt` effect refetches the chat messages, then calls
-   `clearTurnLive` — only after **two** `invalidateQueries` promises resolve.
+```text
+turn ends -> markTurnEnded -> endedAt
+  -> invalidate(agent-chat-messages) -> refetch lands
+  -> invalidate(agent-tasks) -> clearTurnLive
+```
 
-Between step 3's refetch and `clearTurnLive`, `messages` already contains the
-persisted reply while `streamingReplyText` still holds the streamed copy, so
-`MessageList` renders both: one live bubble, one persisted bubble.
+Between "refetch lands" and `clearTurnLive`, `messages` contains the persisted
+reply while `streamingReplyText` still holds the streamed copy, so both render.
+A chatbot should not know or ask "has my message reached the database yet": it
+appends the user's message, appends the reply it already has, and lets the DB
+be the source only when the chat is opened or the page is reloaded.
 
-Short replies make the window obvious (the whole reply is one chunk); long
-replies hide it behind the scrolling.
-
-The same mount also fetches messages for a brand-new chat: "+ new chat" is a
-client UUID with no row, `useChatMessages` is always enabled, and the backend
-answers 200 `[]` — but the request is in flight, so the thread shows a loading
-skeleton for a chat that provably has nothing to load.
+The same mount always fetched messages: "+ new chat" is a client UUID with no
+row, `useChatMessages` was always enabled, and the backend answers 200 `[]` —
+but the request is in flight, so the thread shows a skeleton.
 
 ## 2. Definition of Done
 
-1. A normal turn renders the reply once, from stream to persisted, with no
-   blink and no moment where both exist.
+1. A normal turn renders the reply once, with no blink.
 2. Streaming still grows live while the turn runs.
 3. A brand-new chat issues **no** messages request and shows the empty intro
    immediately; there is no loading skeleton.
-4. No behaviour change for charts, cards, hidden messages, retry, or
-   `clearTurnLive`.
-5. Frontend typecheck/lint/build green.
+4. A finished turn issues **no** messages refetch. The DB is consulted when an
+   existing chat is opened and after a reload.
+5. Charts, cards, hidden messages and retry behave as before.
+6. Frontend typecheck/lint/build green.
 
 ## 3. Feature Description
 
-Derive, at render time, whether the live text has already landed in the
-persisted history. If it has, pass an empty streaming text to `MessageList`;
-otherwise keep passing it (no blink while the refetch is in flight).
+- **Send** — on success, append the user row (unless the send is hidden) and
+  the reply row built from the response's `WorkflowCard` to the
+  `agent-chat-messages` cache. No messages invalidation.
+- **First message of a new chat** — invalidate `agent-chats` so the sidebar
+  shows the new chat; the messages query then enables and reconciles with the
+  DB rows, which replace the optimistic ones.
+- **Retry** — append the reply only; the user row is already there.
+- **Turn end** (`endedAt`) — clear the live chrome and invalidate `agent-tasks`
+  (PlanCard state). Never `agent-chat-messages`.
+- **History** — `useChatMessages` is enabled only when the chat exists in the
+  shared `agent-chats` cache, so a new chat never fetches.
+- **Live bubble** — hidden while `messages` already contains that exact reply.
+  This covers the frame between the append and `clearTurnLive`, and any later
+  fetch that returns the same row.
+- **Failure** — keep the user row in the cache so Retry stays available (the
+  server persists it before running the turn; validation failures reconcile on
+  the next natural fetch).
 
-Equality is exact: the backend persists `result.Reply`, which is the same
-string the stream accumulated in `outcome.reply`.
-
-The messages query is enabled only when the chat is known to the server
-(present in the shared `agent-chats` cache) or after this mount has sent its
-first message. A new chat therefore issues no request; the first send enables
-it, and `hasSent` suppresses the skeleton for that one fetch.
+Optimistic rows carry negative ids; the next fetch replaces them with the
+canonical DB rows, so React keys stay unique in the meantime.
 
 ## 4. Impacted Files
 
@@ -71,55 +81,63 @@ it, and `hasSent` suppresses the skeleton for that one fetch.
 
 ## 5. Code Shape
 
-Before:
+New helpers (module level):
 
 ```tsx
-{streamingReplyText && (
-  <div className="rise" style={{ maxWidth: '92%' }}>
-    ...
-    <MessageMarkdown content={streamingReplyText} fontSize={15} />
-  </div>
-)}
+function optimisticUserMessage(chatId: string, content: string): AgentChatMessage
+function replyMessage(chatId: string, card: WorkflowCard): AgentChatMessage
+function appendMessages(queryClient: QueryClient, chatId: string, rows: AgentChatMessage[]): void
 ```
 
-After (ChatThread derives the prop; MessageList is unchanged):
+The send path:
 
 ```tsx
-const liveReplyText = session.streamingReplyText;
-const liveReplyPersisted =
-  liveReplyText !== '' &&
-  messages.some((message) =>
-    message.sender !== 'user' && !isHiddenMessage(message) && message.content === liveReplyText,
-  );
+const card = await sendChatMessage(chatId, trimmed, hidden);
+appendMessages(queryClient, chatId, hidden
+  ? [replyMessage(chatId, card)]
+  : [optimisticUserMessage(chatId, trimmed), replyMessage(chatId, card)]);
+if (!chatExists) void queryClient.invalidateQueries({ queryKey: ['agent-chats'] });
+markTurnEnded(chatId);
 ```
+
+The retry path appends `replyMessage` only. The failure path appends the user
+row only.
+
+Turn end:
 
 ```tsx
-streamingReplyText={liveReplyPersisted ? '' : liveReplyText}
+useEffect(() => {
+  if (!endedAt) return;
+  clearTurnLive(chatId);
+  void queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
+}, [endedAt, chatId, queryClient]);
 ```
 
-The query gate (ChatThread):
+Query gate and live-bubble guard:
 
 ```tsx
 const { data: chats = [] } = useAgentChats();
 const chatExists = chats.some((chat) => chat.id === chatId);
-const [hasSent, setHasSent] = useState(false);
-const { data: messages = [], isLoading } = useChatMessages(chatId, { enabled: chatExists || hasSent });
+const { data: messages = [], isLoading } = useChatMessages(chatId, { enabled: chatExists });
+
+const liveReplyPersisted =
+  liveReplyText !== '' &&
+  messages.some((m) => m.sender !== 'user' && !isHiddenMessage(m) && m.content === liveReplyText);
 ```
 
-```tsx
-isLoading={isLoading && !hasSent}
-```
-
-New symbols: `liveReplyText`, `liveReplyPersisted`, `chatExists`, `hasSent`.
-Deleted symbols: none.
+New symbols: `optimisticUserMessage`, `replyMessage`, `appendMessages`,
+`nextOptimisticMessageId`, `chatExists`, `liveReplyText`, `liveReplyPersisted`.
+Deleted symbols: `hasSent`, `setHasSent`.
 
 Call flow after the change:
 
 ```text
-WS reply_delta -> session.streamingReplyText grows -> live bubble renders
-turn ends -> final -> endedAt -> refetch messages
-  persisted reply found with the same content -> liveReplyPersisted = true
-  -> live bubble hidden, persisted bubble renders
+send -> pending bubble
+     -> stream (reply_delta) -> live bubble
+     -> response WorkflowCard
+     -> append [user, reply] to agent-chat-messages
+     -> markTurnEnded -> clearTurnLive + invalidate agent-tasks
+open existing chat / reload -> fetch messages once (DB is the source)
 ```
 
 ## 6. UI/UX Changes (Lo-Fi)
@@ -129,12 +147,19 @@ None. The reply appears in the same place, once.
 ## 7. Flowchart
 
 ```text
-reply_delta ──► session.streamingReplyText ──► [live bubble]
-final ──► endedAt ──► refetch ──► messages contains reply?
-                                        │ yes                 │ no
-                                        ▼                     ▼
-                              hide live bubble        keep live bubble
-                              (persisted renders)     (no blink yet)
+send ──► [optimistic user bubble]
+          │
+          ├─ reply_delta ──► [live bubble]
+          │
+          └─ response ──► append user + reply to cache
+                          │
+                          ▼
+                       clearTurnLive
+                          │
+                          ▼
+             [one user bubble, one reply bubble]
+
+open / reload ──► fetch history once ──► [DB rows]
 ```
 
 ## 8. Verification Plan
@@ -144,9 +169,11 @@ final ──► endedAt ──► refetch ──► messages contains reply?
 3. `cd frontend && npm run build`.
 4. Manual, dev server: open Quasar, send `halo`.
    - While streaming: exactly one bubble, growing.
-   - After the turn: exactly one bubble (the persisted one), no second copy.
-5. Manual, long answer: streaming still grows, then swaps to the persisted
-   message without a blank frame and without a duplicate.
-6. Manual, chart answer: exactly one chart card, no duplicate text.
-7. DevTools Network: click "+ new chat" → **no** `GET /agent/chats/<uuid>/messages`;
-   send `halo` → exactly one messages request, then the history renders.
+   - After the turn: exactly one bubble, no second copy, no blank frame.
+5. Manual, long answer and chart answer: one reply / one chart card.
+6. Manual, retry after a failed turn: the user row stays, Retry produces one
+   reply.
+7. DevTools Network:
+   - click "+ new chat" → **no** `GET /agent/chats/<uuid>/messages`;
+   - send `halo` → no messages refetch after the response;
+   - open an existing chat or reload → exactly one messages fetch.
