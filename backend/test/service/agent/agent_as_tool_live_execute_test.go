@@ -5,7 +5,8 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
+	agenttask "github.com/horizonlabs/pulsarfi-backend/src/service/agent/task"
 	"math/big"
 	"os"
 	"strconv"
@@ -104,13 +105,13 @@ func TestLiveAgentAsTool_ArmAndExecute(t *testing.T) {
 	conn := newCaptureConn()
 	go realtime.Default().Serve(conn, &auth.Claims{WalletAddress: signer.Hex(), Role: "user"})
 	defer close(conn.incoming)
-	conn.subscribe(agentsvc.ChatStreamTopic(chatID))
+	conn.subscribe(orchestrator.ChatStreamTopic(chatID))
 
 	idrx := common.HexToAddress(os.Getenv("IDRX_ADDRESS"))
 	manager := common.HexToAddress(os.Getenv("AGENT_TASK_MANAGER_ADDRESS"))
 
 	// 1. ArmTask: the server grants the on-chain trade permission.
-	arm, err := registry.AgentTask.ArmTask(ctx, taskID, signer.Hex(), agentsvc.ArmTaskInput{
+	arm, err := registry.AgentTask.ArmTask(ctx, taskID, signer.Hex(), agenttask.ArmTaskInput{
 		TotalBudget: rawBudget.String(), DurationSec: 24 * 60 * 60, TokenAddress: idrx.Hex(),
 	})
 	if err != nil {

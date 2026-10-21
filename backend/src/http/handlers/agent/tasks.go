@@ -3,7 +3,7 @@ package agent
 import (
 	"errors"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/task"
 	"log/slog"
 	"strconv"
 
@@ -83,7 +83,7 @@ func ArmTaskHandler(c *gin.Context) {
 		return
 	}
 
-	armResult, err := taskSvc.ArmTask(c.Request.Context(), taskID, claims.WalletAddress, agentsvc.ArmTaskInput{
+	armResult, err := taskSvc.ArmTask(c.Request.Context(), taskID, claims.WalletAddress, task.ArmTaskInput{
 		TotalBudget:       armRequest.TotalBudget,
 		DurationSec:       armRequest.DurationSec,
 		TokenAddress:      armRequest.TokenAddress,

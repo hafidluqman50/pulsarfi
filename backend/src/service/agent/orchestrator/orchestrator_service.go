@@ -1,4 +1,4 @@
-package agent
+package orchestrator
 
 import (
 	"context"
@@ -109,7 +109,7 @@ func (orch *Orchestrator) interrupts() *agentcore.InterruptStore {
 // already resolved — including which pause it answers, so the pending marker
 // is read exactly once, in ChatService.resolveTurn. A tool-budget cap is not a
 // failure: the turn is finalized from whatever it produced.
-func (orch *Orchestrator) Send(ctx context.Context, in OrchestratorInput, intent turnIntent) (OrchestratorResult, error) {
+func (orch *Orchestrator) Send(ctx context.Context, in OrchestratorInput, intent agentcore.TurnIntent) (OrchestratorResult, error) {
 	run := orch.newRunContext(in.ChatID, in.Wallet, in.RawPrompt, in.SourceMessageID)
 	ctx = agentcore.WithRunContext(ctx, run)
 
@@ -121,11 +121,11 @@ func (orch *Orchestrator) Send(ctx context.Context, in OrchestratorInput, intent
 	return result, err
 }
 
-func (orch *Orchestrator) dispatchTurn(ctx context.Context, run *agentcore.RunContext, in OrchestratorInput, intent turnIntent) (OrchestratorResult, error) {
-	switch intent.kind {
-	case answerQuestions:
-		return orch.resumeQuestionsTurn(ctx, run, in, intent.interruptID)
-	case sideQuestionDuringArm:
+func (orch *Orchestrator) dispatchTurn(ctx context.Context, run *agentcore.RunContext, in OrchestratorInput, intent agentcore.TurnIntent) (OrchestratorResult, error) {
+	switch intent.Kind {
+	case agentcore.AnswerQuestions:
+		return orch.resumeQuestionsTurn(ctx, run, in, intent.InterruptID)
+	case agentcore.SideQuestionDuringArm:
 		// The message starts a new turn; the pending Arm pause stays alive.
 		return orch.runFreshTurn(ctx, run, in, true)
 	default:
@@ -159,37 +159,37 @@ func (orch *Orchestrator) runFreshTurn(ctx context.Context, run *agentcore.RunCo
 // ResumeExecute resumes the Arm pause once the Task layer has confirmed
 // on-chain arm and allowance. It carries only a bare "armed" signal: what to
 // execute already lives in the checkpointed conversation.
-func (orch *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, wallet string) (ExecuteTaskResult, error) {
+func (orch *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, wallet string) (agentcore.ExecuteTaskResult, error) {
 	task, found, err := orch.Tasks.FindByID(ctx, taskID)
 	if err != nil || !found {
-		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: task not found: %d", taskID)
+		return agentcore.ExecuteTaskResult{}, fmt.Errorf("orchestrator: task not found: %d", taskID)
 	}
 
 	chatID := orch.chatIDForTask(ctx, task)
 	pending, hasPending := orch.interrupts().Pending(ctx, chatID)
 	if chatID == uuid.Nil || !hasPending || pending.Kind != agentcore.InterruptArm {
-		return ExecuteTaskResult{}, fmt.Errorf("%w: task %d", agentcore.ErrNoPendingExecution, taskID)
+		return agentcore.ExecuteTaskResult{}, fmt.Errorf("%w: task %d", agentcore.ErrNoPendingExecution, taskID)
 	}
 
 	run := orch.newRunContext(chatID, wallet, "", task.SourceMessageID)
 	if err := orch.restoreRunContext(ctx, run, task); err != nil {
-		return ExecuteTaskResult{}, err
+		return agentcore.ExecuteTaskResult{}, err
 	}
 	ctx = agentcore.WithRunContext(ctx, run)
 
 	events, err := orch.runner.ResumeWithParams(ctx, chatID.String(), &adk.ResumeParams{Targets: map[string]any{pending.ID: "armed"}})
 	if err != nil {
-		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume arm pause: %w", err)
+		return agentcore.ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume arm pause: %w", err)
 	}
 	result, err := orch.consume(ctx, run, events, false)
 	if errors.Is(err, errToolBudgetExhausted) {
 		// The budget is not a failure: return what the turn produced.
-		return ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
+		return agentcore.ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
 	}
 	if err != nil {
-		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume execute failed: %w", err)
+		return agentcore.ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume execute failed: %w", err)
 	}
-	return ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
+	return agentcore.ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
 }
 
 // chatIDForTask finds the chat a Task belongs to, needed to look up its
@@ -259,7 +259,7 @@ NEVER hardcode or assume any single language. Do NOT use em dashes.
 Produce a single friendly, professional confirmation sentence stating that the trade plan for %s has been cancelled and no orders or on-chain transactions were executed.
 Return ONLY the confirmation sentence, with no markdown fences, greetings, or extra commentary.`, target, target)
 
-	msgs := append([]*schema.Message{schema.SystemMessage(systemPrompt)}, chatHistory(recent)...)
+	msgs := append([]*schema.Message{schema.SystemMessage(systemPrompt)}, agentcore.ChatHistory(recent)...)
 	resp, err := orch.ReplyModel.Generate(ctx, msgs)
 	if err == nil && resp != nil && strings.TrimSpace(resp.Content) != "" {
 		return strings.TrimSpace(resp.Content)

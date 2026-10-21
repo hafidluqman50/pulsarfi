@@ -4,12 +4,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/chat"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/task"
 	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
 
-var taskSvc *agentsvc.TaskService
-var chatSvc *agentsvc.ChatService
+var taskSvc *task.TaskService
+var chatSvc *chat.ChatService
 var chartSvc *publicsvc.PortfolioChartReader
 
 func ConfigureServices(s *service.Registry) {

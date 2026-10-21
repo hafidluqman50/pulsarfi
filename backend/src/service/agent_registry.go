@@ -3,14 +3,16 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/chat"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/task"
 	"log"
 	"math/big"
 
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/analyzer"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/executor"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/supervisor"
@@ -70,7 +72,7 @@ func (a balanceAdapter) IDRXBalance(ctx context.Context, wallet string) (*big.In
 // Nova and Comet as its tools, run by the Orchestrator over an adk.Runner
 // (docs/plans/agent-as-tool-orchestration.md): ChatModelAgent does stream,
 // the earlier belief that it cannot was wrong.
-func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.PortfolioChartReader) (*agentsvc.ChatService, *agentsvc.TaskService, *agentsvc.TaskScheduler) {
+func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.PortfolioChartReader) (*chat.ChatService, *task.TaskService, *task.TaskScheduler) {
 	ctx := context.Background()
 
 	// One model for every role now — deepseek-v4-pro is discontinued
@@ -135,7 +137,7 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 
 	// Two steps because Quasar's tools open Tasks through the Orchestrator
 	// (supervisor.TaskOpener) while the Orchestrator runs Quasar.
-	orchestrator := &agentsvc.Orchestrator{
+	orch := &orchestrator.Orchestrator{
 		Tasks:           repos.AgentTask,
 		SubTasks:        repos.AgentSubTask,
 		ChatMessages:    repos.AgentChatMessage,
@@ -144,26 +146,26 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		ReplyModel:      supervisorModel,
 		Stocks:          repos.Stock,
 	}
-	supervisorAgent, err := supervisor.New(ctx, supervisorModel, analyzerAgent, executorAgent, orchestrator, repos.AgentTask)
+	supervisorAgent, err := supervisor.New(ctx, supervisorModel, analyzerAgent, executorAgent, orch, repos.AgentTask)
 	if err != nil {
 		log.Printf("agent task service disabled: build supervisor agent: %v", err)
 		return nil, nil, nil
 	}
-	orchestrator.Quasar = supervisorAgent
-	orchestrator, err = agentsvc.NewOrchestrator(ctx, orchestrator)
+	orch.Quasar = supervisorAgent
+	orch, err = orchestrator.NewOrchestrator(ctx, orch)
 	if err != nil {
 		log.Printf("agent task service disabled: build orchestrator: %v", err)
 		return nil, nil, nil
 	}
 
-	chatSvc := &agentsvc.ChatService{
+	chatSvc := &chat.ChatService{
 		Chats:           repos.AgentChat,
 		ChatMessages:    repos.AgentChatMessage,
-		Orchestrator:    orchestrator,
+		Orchestrator:    orch,
 		CheckPointStore: checkpointStore,
 		Turns:           agentcore.NewTurnRegistry(),
 	}
-	taskSvc := &agentsvc.TaskService{
+	taskSvc := &task.TaskService{
 		Tasks:        repos.AgentTask,
 		SubTasks:     repos.AgentSubTask,
 		Trades:       repos.AgentTrade,
@@ -171,8 +173,8 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		Chats:        repos.AgentChat,
 		Chain:        contractClient,
 		Executor:     executorAgent,
-		Orchestrator: orchestrator,
+		Orchestrator: orch,
 	}
-	taskScheduler := agentsvc.NewTaskScheduler(repos.AgentTask, repos.AgentChatMessage, repos.AgentChat, taskSvc, supervisorModel)
+	taskScheduler := task.NewTaskScheduler(repos.AgentTask, repos.AgentChatMessage, repos.AgentChat, taskSvc, supervisorModel)
 	return chatSvc, taskSvc, taskScheduler
 }

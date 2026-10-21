@@ -3,8 +3,9 @@ package agent_test
 import (
 	"context"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/chat"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
 	"os"
 	"strings"
 	"sync"
@@ -64,8 +65,8 @@ type flowHarness struct {
 	repos        *repository.Registry
 	chain        *fakeChain
 	store        *checkpoint.PostgresCheckPointStore
-	orchestrator *agentsvc.Orchestrator
-	chat         *agentsvc.ChatService
+	orchestrator *orchestrator.Orchestrator
+	chat         *chat.ChatService
 	wallet       string
 	chatID       uuid.UUID
 }
@@ -85,7 +86,7 @@ func newFlowHarness(t *testing.T, quasarSteps, novaSteps, cometSteps []*schema.M
 	chain := &fakeChain{}
 	store := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 
-	orchestrator := &agentsvc.Orchestrator{
+	orch := &orchestrator.Orchestrator{
 		Tasks:           repos.AgentTask,
 		SubTasks:        repos.AgentSubTask,
 		ChatMessages:    repos.AgentChatMessage,
@@ -94,20 +95,20 @@ func newFlowHarness(t *testing.T, quasarSteps, novaSteps, cometSteps []*schema.M
 	}
 	quasar, err := supervisor.New(ctx, &scriptedModel{steps: quasarSteps},
 		newAgent(t, "analyzer_agent", novaSteps), newAgent(t, "executor_agent", cometSteps),
-		orchestrator, repos.AgentTask)
+		orch, repos.AgentTask)
 	if err != nil {
 		t.Fatalf("build supervisor: %v", err)
 	}
-	orchestrator.Quasar = quasar
-	if orchestrator, err = agentsvc.NewOrchestrator(ctx, orchestrator); err != nil {
+	orch.Quasar = quasar
+	if orch, err = orchestrator.NewOrchestrator(ctx, orch); err != nil {
 		t.Fatalf("build orchestrator: %v", err)
 	}
 
 	return &flowHarness{
-		t: t, repos: repos, chain: chain, store: store, orchestrator: orchestrator,
-		chat: &agentsvc.ChatService{
+		t: t, repos: repos, chain: chain, store: store, orchestrator: orch,
+		chat: &chat.ChatService{
 			Chats: repos.AgentChat, ChatMessages: repos.AgentChatMessage,
-			Orchestrator: orchestrator, CheckPointStore: store,
+			Orchestrator: orch, CheckPointStore: store,
 		},
 		wallet: "0x" + strings.ReplaceAll(uuid.NewString(), "-", "") + "00000000",
 		chatID: uuid.New(),

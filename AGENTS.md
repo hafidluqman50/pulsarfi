@@ -166,3 +166,35 @@ When asked to create an implementation plan (Planning Mode), follow these rules 
    - Snippets are contracts, not final code. Anything not yet verified against library source or a running test is marked `UNVERIFIED`, and the verification plan must name the test that will resolve it.
    - Editing the Code Shape of an existing plan is a content revision: it bumps the version and adds a changelog row like any other edit (item 2).
 7. **Reuse check (mandatory for every `[NEW]` item in Impacted Files).** Read the existing code before proposing anything new. For each `[NEW]` file, type, interface or table, the plan states what existing code was checked and why it could not serve. Follow the naming and layout of sibling files (for example, an agent role is a package with `index.go`, `instructions.go` and `tools_service.go`, like `analyzer/` and `executor/`). Do not add a table, migration, interface or abstraction where an existing one already works; if it works, use it as it is.
+
+---
+
+## 8. Agentic Package Rules
+
+The agent layer is concurrent, stateful across turns, and built on Eino. Its
+flow map and debugging recipes live in `backend/src/service/agent/README.md`;
+the layout decision is `docs/plans/agent-package-layout.md`.
+
+1. **`app/core/agent` (package `agentcore`) is I/O-free.** Types, ports and
+   pure/in-memory policy only. No `repository`, `gorm`, `pgx`, `go-ethereum`,
+   no HTTP, no `os.Getenv`. When the domain needs Postgres or the chain, it
+   declares a port in `ports.go` and the implementation lives under
+   `service/agent/` or `service/external/`.
+2. **One file, one owner.** The file name states its scope
+   (`stream_service.go` is the turn's live event stream). When the boundary is
+   not obvious, the file opens with `// Owns:` and `// Does not own:`.
+3. **Interfaces live with the consumer.** Declare a port next to the code
+   that calls it, not next to the implementation.
+4. **New state names its tier** in the doc comment: per-turn (`RunContext`),
+   per-process (`TurnRegistry`), DB (`repository`), or client
+   (`frontend/components/agent/chatSession.ts`). Never add a package-level map
+   without stating its lifetime.
+5. **Pauses come only from tools.** `ask_user` and `await_arm`
+   (`supervisor/tools_service.go`) are the only interrupt sources. Never pause
+   from a handler or a repository.
+6. **No hardcoded user-visible text** (see §3). Reminders, cancellation
+   replies and card labels are model turns, not Go string literals.
+7. **No silent failures.** A swallowed error must `slog` with the chat id
+   (`chat=<uuid>`) and enough context to reproduce it.
+8. **Agentic tests live in `backend/test/service/agent/`** (§1.1) and must not
+   call the live model unless the file ends in `_live_test.go`.

@@ -2,14 +2,15 @@
 
 | | |
 |---|---|
-| **Version** | 1.0 |
-| **Status** | Draft |
+| **Version** | 1.1 |
+| **Status** | Implemented |
 | **Date Created** | 2026-10-20 |
 | **Last Updated** | 2026-10-20 |
 
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-10-20 | Initial draft. |
+| 1.1 | 2026-10-20 | Marked Implemented. Target Tree updated to the files that shipped (execute_result.go, turn_intent.go, chat_history.go, helper/strings.go); Staging notes the four commits and their verification. |
 
 ## 1. Problem Statement
 
@@ -46,6 +47,9 @@ src/
         interrupts.go                       # QuestionsInterrupt, ArmInterrupt
         workflow_card.go                    # WorkflowCard
         execute_output.go                   # ExecuteTradeOutput
+        execute_result.go                   # ExecuteTaskResult (orchestrator + task share it)
+        turn_intent.go                      # TurnIntent, TurnKind, FreshTurnIntent
+        chat_history.go                     # ChatHistory (model rows -> eino messages)
         ports.go                            # SubTaskWriter, TurnStream, ChainSubTaskRecorder, ExtendedCheckPointStore
         run_context.go                      # RunContext, WithRunContext, RunContextFrom
         interrupt_store.go                  # InterruptStore (policy over the store port)
@@ -55,6 +59,7 @@ src/
       reply_classifier.go
       nova_verdict.go
       graceful_tool.go
+      strings.go
   config/
     database.go, env.go                     # unchanged
     onchain.go                              # OnchainConfig + LoadOnchain()
@@ -128,6 +133,14 @@ func LoadOnchain() (OnchainConfig, error) // reads + validates ALCHEMY_RPC_URL,
 | 3 | `app/core/agent/` (remaining types + ports); `RunContext` fields → interfaces; `subtask/`, `checkpoint/` | Medium — field types change, call sites do not |
 | 4 | `service/agent/{orchestrator,chat,task}/`; handlers, registry, tests; `README.md` | Medium |
 
+Delivered as four commits on `refactor/agent-package-layout`, each built from
+`main` and verified before the next one started:
+
+1. `refactor(agent): move the on-chain service to external`
+2. `refactor(agent): move the pure helpers to app/helper`
+3. `refactor(agent): make core I/O-free with ports`
+4. `refactor(agent): split orchestrator, chat and task into folders`
+
 ## 7. Impacted Files
 
 - **Moved**: `client_service.go` → `service/external/onchain_service.go`; `sub_task_recorder.go` → `service/agent/subtask/`; `checkpoint_store_service.go` → `service/agent/checkpoint/`; the rest of `service/agent/*.go` into `app/core/agent/`, `app/helper/`, `service/agent/{orchestrator,chat,task}/`.
@@ -145,6 +158,9 @@ func LoadOnchain() (OnchainConfig, error) // reads + validates ALCHEMY_RPC_URL,
    - `grep -rn "os.Getenv" src/service/agent src/service/external/onchain_service.go src/app/core/agent`
 4. Boundary check: `grep -rniE "agent\." src/service/external/onchain_service.go` → no import of the agent packages (the `subTask*` helpers and `model.AgentSubTask` are the contract's own vocabulary, not the agent domain).
 5. Import cycles are caught by `go build`.
+6. Result after phase 4 (2026-10-20): `go build ./...` and `go vet ./...` green;
+   the offline suite PASS (53s); `grep -rn 'src/service/agent"' src test` empty;
+   `grep -rn 'os.Getenv' src/service/agent src/app/core/agent` empty.
 
 ## 9. Risks
 

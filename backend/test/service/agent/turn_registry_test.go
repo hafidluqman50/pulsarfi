@@ -2,8 +2,9 @@ package agent_test
 
 import (
 	"context"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/chat"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
 	"os"
 	"strings"
 	"testing"
@@ -79,23 +80,23 @@ func TestChatTurn_SurvivesACancelledRequest(t *testing.T) {
 	repos := repository.NewRegistry(db)
 
 	checkpoints := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
-	orchestrator := &agentsvc.Orchestrator{
+	orch := &orchestrator.Orchestrator{
 		Tasks:           repos.AgentTask,
 		SubTasks:        repos.AgentSubTask,
 		ChatMessages:    repos.AgentChatMessage,
 		Quasar:          newAgent(t, "supervisor_agent", []*schema.Message{answer("", "ok")}),
 		CheckPointStore: checkpoints,
 	}
-	orchestrator, err = agentsvc.NewOrchestrator(context.Background(), orchestrator)
+	orch, err = orchestrator.NewOrchestrator(context.Background(), orch)
 	if err != nil {
 		t.Fatalf("build orchestrator: %v", err)
 	}
 
 	registry := agentcore.NewTurnRegistry()
-	svc := &agentsvc.ChatService{
+	svc := &chat.ChatService{
 		Chats:           repos.AgentChat,
 		ChatMessages:    repos.AgentChatMessage,
-		Orchestrator:    orchestrator,
+		Orchestrator:    orch,
 		CheckPointStore: checkpoints,
 		Turns:           registry,
 	}

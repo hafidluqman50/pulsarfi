@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
 	"io"
 	"os"
 	"strings"
@@ -195,7 +195,7 @@ func TestLiveAgentAsTool_Scenarios(t *testing.T) {
 
 	t.Run("A greeting opens no task", func(t *testing.T) {
 		chatID := uuid.New()
-		conn.subscribe(agentsvc.ChatStreamTopic(chatID))
+		conn.subscribe(orchestrator.ChatStreamTopic(chatID))
 		card, summary := say(chatID, "Halo, apa kabar?")
 		logSummary(t, "A", card, summary)
 		if card.TaskID != 0 {
@@ -208,7 +208,7 @@ func TestLiveAgentAsTool_Scenarios(t *testing.T) {
 
 	t.Run("B information goes through a task and Nova", func(t *testing.T) {
 		chatID := uuid.New()
-		conn.subscribe(agentsvc.ChatStreamTopic(chatID))
+		conn.subscribe(orchestrator.ChatStreamTopic(chatID))
 		card, summary := say(chatID, "Ambilin chart IHSG dong")
 		logSummary(t, "B", card, summary)
 		if card.TaskID == 0 {
@@ -224,7 +224,7 @@ func TestLiveAgentAsTool_Scenarios(t *testing.T) {
 
 	t.Run("D trade: questions card, answer, Nova, Arm Card", func(t *testing.T) {
 		chatID := uuid.New()
-		conn.subscribe(agentsvc.ChatStreamTopic(chatID))
+		conn.subscribe(orchestrator.ChatStreamTopic(chatID))
 
 		card, summary := say(chatID, "Mau beli BBCA")
 		logSummary(t, "D1", card, summary)
@@ -311,7 +311,7 @@ func TestLiveAgentAsTool_NovaStaysOnTrustedDomains(t *testing.T) {
 	registry, conn := liveHarness(t)
 	for _, message := range []string{"Cek berita saham BBCA hari ini dong", "Tarik berita terbaru soal IHSG dan saham BBRI"} {
 		chatID := uuid.New()
-		conn.subscribe(agentsvc.ChatStreamTopic(chatID))
+		conn.subscribe(orchestrator.ChatStreamTopic(chatID))
 		card, err := registry.AgentChat.HandleChatMessage(context.Background(), chatID, liveDemoWallet, message, false)
 		if err != nil {
 			t.Fatalf("HandleChatMessage(%q): %v", message, err)

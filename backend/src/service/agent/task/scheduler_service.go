@@ -1,9 +1,10 @@
-package agent
+package task
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"log/slog"
 	"strings"
 	"time"
@@ -189,7 +190,7 @@ func (s *TaskScheduler) dispatchHorizonNotice(ctx context.Context, t dbmodel.Age
 			if len(chatMsgs) > 10 {
 				chatMsgs = chatMsgs[len(chatMsgs)-10:]
 			}
-			recentHistory = chatHistory(chatMsgs)
+			recentHistory = agentcore.ChatHistory(chatMsgs)
 		}
 
 		prompt := fmt.Sprintf(`You are Quasar, PulsarFi's AI trading assistant.
