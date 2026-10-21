@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Version** | 1.4 |
-| **Status** | Draft |
+| **Version** | 1.5 |
+| **Status** | Implemented |
 | **Date Created** | 2026-10-21 |
 | **Last Updated** | 2026-10-21 |
 
@@ -13,6 +13,7 @@
 | 1.1 | 2026-10-21 | Added the new-chat half: §1 notes the empty fetch + skeleton, §2 gains a no-fetch rule, §3/§5 gate the messages query on the chat existing (or the first send), §8 adds the network check. |
 | 1.2 | 2026-10-21 | Replaced the per-turn refetch with client-owned message state: the reply is appended from the send response, `endedAt` no longer invalidates `agent-chat-messages`, and the DB hydrates only on mount/refresh. §1, §2, §3, §5, §7 and §8 revised; `hasSent` removed, `optimisticUserMessage`/`replyMessage`/`appendMessages` added. |
 | 1.3 | 2026-10-21 | Root fix is the API contract, not client-side row fabrication: `WorkflowCard` carries the rows the call created, `persistSupervisorReply` and `handleCancellation` return them, and the frontend appends them. §1, §2, §3, §5, §7 and §8 rewritten; `optimisticUserMessage`, `replyMessage` and the negative-id counter deleted. |
+| 1.5 | 2026-10-21 | Marked Implemented: backend returns the full chat, the client replaces its messages, no per-turn refetch. Verified with go build/vet, the offline suite (51.5s), tsc, lint and the frontend build. |
 | 1.4 | 2026-10-21 | The response is the chat's state, so the client replaces instead of appending: `WorkflowCard.Messages` becomes the full chat after the turn (prior rows + the rows this call wrote), `includeUserRow` and `appendMessages` are removed, and the frontend does one `setQueryData` replace. §1–§3, §5, §7, §8 updated. |
 
 ## 1. Problem Statement
