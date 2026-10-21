@@ -2,12 +2,12 @@ package agent
 
 import (
 	"errors"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	usermw "github.com/horizonlabs/pulsarfi-backend/src/http/middleware/user"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 // GetTurnStatusHandler answers the one question a client that has just mounted
@@ -30,7 +30,7 @@ func GetTurnStatusHandler(c *gin.Context) {
 	}
 
 	running, startedAt, err := chatSvc.TurnStatus(c.Request.Context(), chatID, claims.WalletAddress)
-	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+	if errors.Is(err, agentcore.ErrWalletMismatch) {
 		response.Forbidden(c, "chat does not belong to the authenticated wallet")
 		return
 	}

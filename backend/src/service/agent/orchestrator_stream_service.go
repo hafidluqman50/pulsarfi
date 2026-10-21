@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"io"
 	"strings"
 	"sync"
@@ -267,13 +268,13 @@ func interruptFrom(info *adk.InterruptInfo) *interruptOutcome {
 			continue
 		}
 		switch payload := interruptCtx.Info.(type) {
-		case QuestionsInterrupt:
+		case agentcore.QuestionsInterrupt:
 			return &interruptOutcome{kind: interruptQuestions, id: interruptCtx.ID, questions: payload.Questions, message: payload.Message}
-		case *QuestionsInterrupt:
+		case *agentcore.QuestionsInterrupt:
 			return &interruptOutcome{kind: interruptQuestions, id: interruptCtx.ID, questions: payload.Questions, message: payload.Message}
-		case ArmInterrupt:
+		case agentcore.ArmInterrupt:
 			return &interruptOutcome{kind: interruptArm, id: interruptCtx.ID, message: payload.Message}
-		case *ArmInterrupt:
+		case *agentcore.ArmInterrupt:
 			return &interruptOutcome{kind: interruptArm, id: interruptCtx.ID, message: payload.Message}
 		}
 	}

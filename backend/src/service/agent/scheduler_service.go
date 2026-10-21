@@ -103,24 +103,24 @@ func (s *TaskScheduler) processHorizonNotices(ctx context.Context) {
 }
 
 type HorizonNoticeCardLabels struct {
-	Badge             string `json:"badge"`
+	Badge              string `json:"badge"`
 	TimeRemainingLabel string `json:"time_remaining_label"`
-	Headline          string `json:"headline"`
-	CustodialNotice   string `json:"custodial_notice"`
-	CloseButton       string `json:"close_button"`
-	LeaveButton       string `json:"leave_button"`
-	ProcessingButton  string `json:"processing_button"`
-	CloseSettledText  string `json:"close_settled_text"`
-	LeaveSettledText  string `json:"leave_settled_text"`
-	CloseToastTitle   string `json:"close_toast_title"`
-	CloseToastDesc    string `json:"close_toast_desc"`
-	LeaveToastTitle   string `json:"leave_toast_title"`
-	LeaveToastDesc    string `json:"leave_toast_desc"`
-	ClosePrompt       string `json:"close_prompt"`
+	Headline           string `json:"headline"`
+	CustodialNotice    string `json:"custodial_notice"`
+	CloseButton        string `json:"close_button"`
+	LeaveButton        string `json:"leave_button"`
+	ProcessingButton   string `json:"processing_button"`
+	CloseSettledText   string `json:"close_settled_text"`
+	LeaveSettledText   string `json:"leave_settled_text"`
+	CloseToastTitle    string `json:"close_toast_title"`
+	CloseToastDesc     string `json:"close_toast_desc"`
+	LeaveToastTitle    string `json:"leave_toast_title"`
+	LeaveToastDesc     string `json:"leave_toast_desc"`
+	ClosePrompt        string `json:"close_prompt"`
 }
 
 type HorizonNoticeLLMResponse struct {
-	Content string                   `json:"content"`
+	Content string                  `json:"content"`
 	Card    HorizonNoticeCardLabels `json:"card"`
 }
 

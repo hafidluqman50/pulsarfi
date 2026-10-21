@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"os"
 	"strings"
 	"sync"
@@ -112,7 +113,7 @@ func newFlowHarness(t *testing.T, quasarSteps, novaSteps, cometSteps []*schema.M
 	}
 }
 
-func (h *flowHarness) say(message string) agentsvc.WorkflowCard {
+func (h *flowHarness) say(message string) agentcore.WorkflowCard {
 	h.t.Helper()
 	card, err := h.chat.HandleChatMessage(context.Background(), h.chatID, h.wallet, message, false)
 	if err != nil {
@@ -349,7 +350,7 @@ func TestFlowResumeExecuteWithoutPendingPauseIsAnExplicitError(t *testing.T) {
 
 	_, err := h.orchestrator.ResumeExecute(context.Background(), card.TaskID, h.wallet)
 
-	if err == nil || !strings.Contains(err.Error(), agentsvc.ErrNoPendingExecution.Error()) {
+	if err == nil || !strings.Contains(err.Error(), agentcore.ErrNoPendingExecution.Error()) {
 		t.Fatalf("expected ErrNoPendingExecution, got %v", err)
 	}
 }

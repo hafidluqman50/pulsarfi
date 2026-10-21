@@ -2,13 +2,13 @@ package agent
 
 import (
 	"errors"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	usermw "github.com/horizonlabs/pulsarfi-backend/src/http/middleware/user"
 	chatrequest "github.com/horizonlabs/pulsarfi-backend/src/http/request/agent/chat"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 func PostChatMessageHandler(c *gin.Context) {
@@ -31,7 +31,7 @@ func PostChatMessageHandler(c *gin.Context) {
 		return
 	}
 
-	respondWithTurn(c, func() (agentsvc.WorkflowCard, error) {
+	respondWithTurn(c, func() (agentcore.WorkflowCard, error) {
 		return chatSvc.HandleChatMessage(c.Request.Context(), chatID, claims.WalletAddress, messageRequest.Message, messageRequest.Hidden)
 	})
 }
@@ -51,7 +51,7 @@ func RetryLastMessageHandler(c *gin.Context) {
 		return
 	}
 
-	respondWithTurn(c, func() (agentsvc.WorkflowCard, error) {
+	respondWithTurn(c, func() (agentcore.WorkflowCard, error) {
 		return chatSvc.RetryLastMessage(c.Request.Context(), chatID, claims.WalletAddress)
 	})
 }
@@ -62,17 +62,17 @@ func RetryLastMessageHandler(c *gin.Context) {
 // tool_call) and the terminal event are published by the agent package out of
 // band over the chat's WebSocket topic as the turn runs — this handler owns no
 // event, only the HTTP status mapping.
-func respondWithTurn(c *gin.Context, run func() (agentsvc.WorkflowCard, error)) {
+func respondWithTurn(c *gin.Context, run func() (agentcore.WorkflowCard, error)) {
 	workflowCard, err := run()
 
 	switch {
-	case errors.Is(err, agentsvc.ErrWalletMismatch):
+	case errors.Is(err, agentcore.ErrWalletMismatch):
 		response.Forbidden(c, "chat does not belong to the authenticated wallet")
 		return
-	case errors.Is(err, agentsvc.ErrNothingToRetry):
+	case errors.Is(err, agentcore.ErrNothingToRetry):
 		response.BadRequest(c, "nothing to retry")
 		return
-	case errors.Is(err, agentsvc.ErrTurnInFlight):
+	case errors.Is(err, agentcore.ErrTurnInFlight):
 		response.Conflict(c, "a turn is already running for this chat")
 		return
 	case err != nil:
@@ -118,7 +118,7 @@ func GetChatMessagesHandler(c *gin.Context) {
 	}
 
 	messages, err := chatSvc.GetChatMessages(c.Request.Context(), chatID, claims.WalletAddress)
-	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+	if errors.Is(err, agentcore.ErrWalletMismatch) {
 		response.Forbidden(c, "chat does not belong to the authenticated wallet")
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"strings"
 	"time"
 
@@ -19,14 +20,9 @@ import (
 
 func init() {
 	// Interrupt payloads travel inside the Eino checkpoint, so gob must know them.
-	schema.RegisterName[QuestionsInterrupt]("agent_questions_interrupt")
-	schema.RegisterName[ArmInterrupt]("agent_arm_interrupt")
+	schema.RegisterName[agentcore.QuestionsInterrupt]("agent_questions_interrupt")
+	schema.RegisterName[agentcore.ArmInterrupt]("agent_arm_interrupt")
 }
-
-var (
-	ErrNoOpenTask         = errors.New("agent: no open task, call open_task first")
-	ErrNoPendingExecution = errors.New("agent: task has no pending arm pause to resume")
-)
 
 // Reading map for this file.
 //
@@ -105,36 +101,6 @@ type OrchestratorResult struct {
 	PendingQuestions []contracts.IntakeField
 }
 
-// RouteDecision is the argument of Quasar's open_task and update_task tools:
-// what Quasar understood about the request. It is also what the Task row's
-// trigger description is built from.
-type RouteDecision struct {
-	IsActionable    bool                    `json:"is_actionable" jsonschema_description:"true only if this request could ever result in an on-chain trade; false for anything purely informational (chart, portfolio, news) and while trade parameters are still missing"`
-	Summary         string                  `json:"summary" jsonschema_description:"short one-line summary of the request in the exact language or dialect of the user's message, suitable for on-chain storage"`
-	Label           string                  `json:"label" jsonschema_description:"short human-readable title for this step, in the exact language or dialect of the user's message"`
-	Shape           string                  `json:"shape,omitempty" jsonschema_description:"scalp, swing, investment, or empty when the user has not chosen one"`
-	Side            string                  `json:"side,omitempty" jsonschema_description:"buy or sell (canonical English value), or empty when unknown"`
-	MentionedTicker string                  `json:"mentioned_ticker,omitempty" jsonschema_description:"canonical PulsarFi ticker for the stock the user named: ALL-CAPS with the P suffix (BRPT resolves to BRPTP), or empty when none was named"`
-	BudgetIDRX      string                  `json:"budget_idrx,omitempty" jsonschema_description:"confirmed IDRX budget as plain digits, or empty when not applicable or unknown"`
-	SellAmount      string                  `json:"sell_amount,omitempty" jsonschema_description:"for sell: confirmed quantity of stock tokens as plain digits, or a percentage such as 50%, or empty when unknown"`
-	Card            *contracts.CardContract `json:"card,omitempty" jsonschema_description:"mandatory for any trade Task, authored entirely in the user's language; see the card contract in your instructions"`
-}
-
-// QuestionsInterrupt is the payload of the ask_user pause. Message is the
-// sentence that introduces the card; it travels with the pause so the user
-// never sees a card under an empty bubble.
-type QuestionsInterrupt struct {
-	Questions []contracts.IntakeField
-	Message   string
-}
-
-// ArmInterrupt is the payload of the await_arm pause. Message introduces the
-// Arm Card, same reason as above.
-type ArmInterrupt struct {
-	TaskID  int64
-	Message string
-}
-
 const (
 	interruptQuestions = "questions"
 	interruptArm       = "arm"
@@ -203,7 +169,7 @@ func (orch *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, walle
 	chatID := orch.chatIDForTask(ctx, task)
 	pending, hasPending := orch.interrupts().pending(ctx, chatID)
 	if chatID == uuid.Nil || !hasPending || pending.kind != interruptArm {
-		return ExecuteTaskResult{}, fmt.Errorf("%w: task %d", ErrNoPendingExecution, taskID)
+		return ExecuteTaskResult{}, fmt.Errorf("%w: task %d", agentcore.ErrNoPendingExecution, taskID)
 	}
 
 	run := orch.newRunContext(chatID, wallet, "", task.SourceMessageID)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"log/slog"
 	"math/big"
 	"strings"
@@ -15,14 +16,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-)
-
-var (
-	ErrWalletMismatch    = errors.New("agent: authenticated wallet does not own this task")
-	ErrTaskNotFound      = errors.New("agent: task not found")
-	ErrTaskNotActionable = errors.New("agent: task is not actionable")
-	ErrTaskNotArmed      = errors.New("agent: task has not been armed yet")
-	ErrNothingToRetry    = errors.New("agent: no failed message to retry")
 )
 
 type AgentContractClient interface {
@@ -50,14 +43,6 @@ type TaskService struct {
 	Orchestrator *Orchestrator
 }
 
-type WorkflowCard struct {
-	TaskID      int64           `json:"task_id,omitempty"`
-	Reply       string          `json:"reply"`
-	ContentType string          `json:"content_type"`
-	UIComponent *string         `json:"ui_component,omitempty"`
-	UIProps     json.RawMessage `json:"ui_props,omitempty"`
-}
-
 func (s *TaskService) ListTasks(ctx context.Context, walletAddress string) ([]model.AgentTask, error) {
 	return s.Tasks.FindByWallet(ctx, strings.ToLower(walletAddress))
 }
@@ -78,7 +63,7 @@ func (s *TaskService) GetReasoningChain(ctx context.Context, taskID int64) ([]mo
 		return nil, err
 	}
 	if !found {
-		return nil, ErrTaskNotFound
+		return nil, agentcore.ErrTaskNotFound
 	}
 	return s.SubTasks.FindByTaskID(ctx, taskID)
 }
@@ -89,10 +74,10 @@ func (s *TaskService) GetTrades(ctx context.Context, taskID int64, walletAddress
 		return nil, err
 	}
 	if !found {
-		return nil, ErrTaskNotFound
+		return nil, agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, walletAddress) {
-		return nil, ErrWalletMismatch
+		return nil, agentcore.ErrWalletMismatch
 	}
 	return s.Trades.FindByTaskID(ctx, taskID)
 }
@@ -138,10 +123,10 @@ func (s *TaskService) ArmTask(ctx context.Context, taskID int64, wallet string, 
 		return ArmTaskResult{}, err
 	}
 	if !found {
-		return ArmTaskResult{}, ErrTaskNotFound
+		return ArmTaskResult{}, agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ArmTaskResult{}, ErrWalletMismatch
+		return ArmTaskResult{}, agentcore.ErrWalletMismatch
 	}
 	if task.OnChainTaskID == nil {
 		return ArmTaskResult{}, fmt.Errorf("agent: task %d has no on-chain id — every Task must already be created on-chain by the time it reaches Arm, this should never happen", taskID)
@@ -232,13 +217,13 @@ func (s *TaskService) DisarmTask(ctx context.Context, taskID int64, wallet strin
 		return err
 	}
 	if !found {
-		return ErrTaskNotFound
+		return agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ErrWalletMismatch
+		return agentcore.ErrWalletMismatch
 	}
 	if task.OnChainTaskID == nil {
-		return ErrTaskNotArmed
+		return agentcore.ErrTaskNotArmed
 	}
 	if err := s.Chain.CancelTask(ctx, uint64(*task.OnChainTaskID)); err != nil {
 		return fmt.Errorf("agent: on-chain cancelTask: %w", err)
@@ -252,10 +237,10 @@ func (s *TaskService) PauseTask(ctx context.Context, taskID int64, wallet string
 		return err
 	}
 	if !found {
-		return ErrTaskNotFound
+		return agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ErrWalletMismatch
+		return agentcore.ErrWalletMismatch
 	}
 	return s.Tasks.SetPaused(ctx, taskID, true)
 }
@@ -266,10 +251,10 @@ func (s *TaskService) ResumeTask(ctx context.Context, taskID int64, wallet strin
 		return err
 	}
 	if !found {
-		return ErrTaskNotFound
+		return agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ErrWalletMismatch
+		return agentcore.ErrWalletMismatch
 	}
 	return s.Tasks.SetPaused(ctx, taskID, false)
 }
@@ -292,16 +277,16 @@ func (s *TaskService) ExecuteTask(ctx context.Context, taskID int64, wallet stri
 		return ExecuteTaskResult{}, err
 	}
 	if !found {
-		return ExecuteTaskResult{}, ErrTaskNotFound
+		return ExecuteTaskResult{}, agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ExecuteTaskResult{}, ErrWalletMismatch
+		return ExecuteTaskResult{}, agentcore.ErrWalletMismatch
 	}
 	if !task.IsActionable {
-		return ExecuteTaskResult{}, ErrTaskNotActionable
+		return ExecuteTaskResult{}, agentcore.ErrTaskNotActionable
 	}
 	if task.ArmedAt == nil || task.OnChainTaskID == nil {
-		return ExecuteTaskResult{}, ErrTaskNotArmed
+		return ExecuteTaskResult{}, agentcore.ErrTaskNotArmed
 	}
 
 	if task.Status == "executed" {
@@ -535,10 +520,10 @@ func (s *TaskService) SettleHorizonTask(ctx context.Context, taskID int64, walle
 		return err
 	}
 	if !found {
-		return ErrTaskNotFound
+		return agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ErrWalletMismatch
+		return agentcore.ErrWalletMismatch
 	}
 	status := "completed"
 	if policy == "leave_open" {

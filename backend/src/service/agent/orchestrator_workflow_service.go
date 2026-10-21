@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"log/slog"
 	"strings"
 
@@ -13,8 +14,8 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 )
 
-func decisionFromTask(task dbmodel.AgentTask) RouteDecision {
-	decision := RouteDecision{IsActionable: task.IsActionable}
+func decisionFromTask(task dbmodel.AgentTask) agentcore.RouteDecision {
+	decision := agentcore.RouteDecision{IsActionable: task.IsActionable}
 	if task.Summary != nil {
 		decision.Summary = *task.Summary
 		decision.Label = *task.Summary
@@ -57,7 +58,7 @@ func (orch *Orchestrator) cardOfTask(ctx context.Context, taskID int64) *contrac
 // Sub Task recorder — the first time Quasar recognizes an intent, even while
 // parameters are still missing. Every Task is on-chain, so this runs for
 // every request except plain conversation. Later rounds only UpdateTask.
-func (orch *Orchestrator) CommitTask(ctx context.Context, run *RunContext, decision RouteDecision) error {
+func (orch *Orchestrator) CommitTask(ctx context.Context, run *RunContext, decision agentcore.RouteDecision) error {
 	decision = withCardDefaults(decision)
 
 	triggerDescription, err := orch.buildDecisionTrigger(ctx, run.RawPrompt, decision)
@@ -89,9 +90,9 @@ func (orch *Orchestrator) CommitTask(ctx context.Context, run *RunContext, decis
 // answers complete them — never a second on-chain createTask, only the
 // Postgres summary, trigger description and is_actionable are refreshed, and
 // the on-chain actionable flag is flipped the first time a round settles.
-func (orch *Orchestrator) UpdateTask(ctx context.Context, run *RunContext, decision RouteDecision) error {
+func (orch *Orchestrator) UpdateTask(ctx context.Context, run *RunContext, decision agentcore.RouteDecision) error {
 	if run.TaskID == 0 {
-		return ErrNoOpenTask
+		return agentcore.ErrNoOpenTask
 	}
 	wasActionable := run.Decision.IsActionable
 	if decision.MentionedTicker == "" {
@@ -134,7 +135,7 @@ func (orch *Orchestrator) UpdateTask(ctx context.Context, run *RunContext, decis
 	return nil
 }
 
-func withCardDefaults(decision RouteDecision) RouteDecision {
+func withCardDefaults(decision agentcore.RouteDecision) agentcore.RouteDecision {
 	if decision.Card == nil {
 		decision.Card = &contracts.CardContract{}
 	}
@@ -144,7 +145,7 @@ func withCardDefaults(decision RouteDecision) RouteDecision {
 	return decision
 }
 
-func (orch *Orchestrator) buildDecisionTrigger(ctx context.Context, rawPrompt string, decision RouteDecision) (string, error) {
+func (orch *Orchestrator) buildDecisionTrigger(ctx context.Context, rawPrompt string, decision agentcore.RouteDecision) (string, error) {
 	if decision.Summary == "" {
 		decision.Summary = defaultSummary(decision.Side, decision, decision.MentionedTicker)
 	}
@@ -160,7 +161,7 @@ func (orch *Orchestrator) buildDecisionTrigger(ctx context.Context, rawPrompt st
 // tied to the Task — "understand_request" fires exactly once, the first time
 // an intent is recognized; "route_decision" fires every round, so the
 // on-chain trail shows how the Task evolved as the user answered.
-func (orch *Orchestrator) recordDecision(ctx context.Context, run *RunContext, decision RouteDecision, isFirst bool) error {
+func (orch *Orchestrator) recordDecision(ctx context.Context, run *RunContext, decision agentcore.RouteDecision, isFirst bool) error {
 	if run.Recorder == nil {
 		return nil
 	}
@@ -181,7 +182,7 @@ func (orch *Orchestrator) recordDecision(ctx context.Context, run *RunContext, d
 	return nil
 }
 
-func defaultSummary(side string, decision RouteDecision, ticker string) string {
+func defaultSummary(side string, decision agentcore.RouteDecision, ticker string) string {
 	if side == "sell" {
 		return fmt.Sprintf("Sell %s %s", decision.SellAmount, ticker)
 	}
@@ -209,7 +210,7 @@ func (orch *Orchestrator) resolveStockContractAddress(ctx context.Context, side,
 // struct-to-JSON mapping, no lookups. stockContractAddress is non-empty only
 // for sell tasks; the caller resolves it before calling here so this
 // function stays IO-free.
-func buildTriggerDescription(rawPrompt string, decision RouteDecision, stockContractAddress string) (string, error) {
+func buildTriggerDescription(rawPrompt string, decision agentcore.RouteDecision, stockContractAddress string) (string, error) {
 	cleanShape := strings.ToLower(strings.TrimSpace(decision.Shape))
 	side := decision.Side
 
@@ -256,7 +257,7 @@ func buildTriggerDescription(rawPrompt string, decision RouteDecision, stockCont
 	return string(triggerBytes), nil
 }
 
-func (orch *Orchestrator) persistTask(ctx context.Context, run *RunContext, decision RouteDecision, triggerDescription string) (dbmodel.AgentTask, error) {
+func (orch *Orchestrator) persistTask(ctx context.Context, run *RunContext, decision agentcore.RouteDecision, triggerDescription string) (dbmodel.AgentTask, error) {
 	if orch.Tasks == nil {
 		return dbmodel.AgentTask{}, nil
 	}
@@ -279,7 +280,7 @@ func (orch *Orchestrator) persistTask(ctx context.Context, run *RunContext, deci
 	return task, nil
 }
 
-func (orch *Orchestrator) armOnChain(ctx context.Context, run *RunContext, decision RouteDecision, taskID int64) (uint64, error) {
+func (orch *Orchestrator) armOnChain(ctx context.Context, run *RunContext, decision agentcore.RouteDecision, taskID int64) (uint64, error) {
 	if orch.Chain == nil {
 		return 0, nil
 	}
@@ -300,7 +301,7 @@ func (orch *Orchestrator) armOnChain(ctx context.Context, run *RunContext, decis
 	return onChainTaskID, nil
 }
 
-func (orch *Orchestrator) attachRecorder(ctx context.Context, run *RunContext, decision RouteDecision, onChainTaskID uint64, taskID int64) error {
+func (orch *Orchestrator) attachRecorder(ctx context.Context, run *RunContext, decision agentcore.RouteDecision, onChainTaskID uint64, taskID int64) error {
 	recorder, err := NewSubTaskRecorder(ctx, orch.SubTasks, orch.Chain, onChainTaskID, taskID, decision.Summary, run.Wallet)
 	if err != nil {
 		return fmt.Errorf("orchestrator: build subtask recorder: %w", err)

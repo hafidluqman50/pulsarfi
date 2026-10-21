@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 
 	"github.com/google/uuid"
 	dbmodel "github.com/horizonlabs/pulsarfi-backend/src/model"
@@ -30,7 +31,7 @@ type RunContext struct {
 	OnChainTaskID *int64
 	TaskID        int64
 	Recorder      *SubTaskRecorder
-	Decision      RouteDecision
+	Decision      agentcore.RouteDecision
 
 	// live
 	Stream *turnStream
@@ -74,7 +75,7 @@ func (orch *Orchestrator) restoreFromChat(ctx context.Context, run *RunContext) 
 		return fmt.Errorf("orchestrator: find chat task: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("%w: chat %s is paused but has no task", ErrNoOpenTask, run.ChatID)
+		return fmt.Errorf("%w: chat %s is paused but has no task", agentcore.ErrNoOpenTask, run.ChatID)
 	}
 	return orch.restoreRunContext(ctx, run, task)
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"log/slog"
 
 	"github.com/cloudwego/eino/adk"
@@ -48,7 +49,7 @@ func newOpenTaskTool(tasks TaskOpener) (tool.InvokableTool, error) {
 	return utils.InferTool(
 		"open_task",
 		"Opens the permanent on-chain Task for this request. Call it FIRST for anything except plain conversation, even while trade parameters are still missing. Never call it twice in one turn: use update_task afterwards.",
-		func(ctx context.Context, decision agent.RouteDecision) (toolReply, error) {
+		func(ctx context.Context, decision agentcore.RouteDecision) (toolReply, error) {
 			run, ok := agent.RunContextFrom(ctx)
 			if !ok {
 				return toolReply{}, errors.New("open_task: no run context bound to this turn")
@@ -68,7 +69,7 @@ func newUpdateTaskTool(tasks TaskOpener) (tool.InvokableTool, error) {
 	return utils.InferTool(
 		"update_task",
 		"Refreshes the Task that is already open once the user's answers settle (more of) the trade parameters. Send the complete, current decision, including the full card. Never opens a second Task.",
-		func(ctx context.Context, decision agent.RouteDecision) (toolReply, error) {
+		func(ctx context.Context, decision agentcore.RouteDecision) (toolReply, error) {
 			run, ok := runContextWithTask(ctx)
 			if !ok {
 				return toolReply{ToolError: noOpenTaskReason}, nil
@@ -108,7 +109,7 @@ func newAskUserTool() (tool.InvokableTool, error) {
 func (t *askUserTool) Info(_ context.Context) (*schema.ToolInfo, error) { return t.info, nil }
 
 func (t *askUserTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
-	wasInterrupted, _, state := tool.GetInterruptState[agent.QuestionsInterrupt](ctx)
+	wasInterrupted, _, state := tool.GetInterruptState[agentcore.QuestionsInterrupt](ctx)
 	if !wasInterrupted {
 		if _, ok := runContextWithTask(ctx); !ok {
 			return refusal(noOpenTaskReason), nil
@@ -117,7 +118,7 @@ func (t *askUserTool) InvokableRun(ctx context.Context, arguments string, _ ...t
 		if err := json.Unmarshal([]byte(arguments), &args); err != nil || len(args.Questions) == 0 {
 			return refusal("ask_user needs at least one question"), nil
 		}
-		payload := agent.QuestionsInterrupt{Questions: args.Questions, Message: args.Message}
+		payload := agentcore.QuestionsInterrupt{Questions: args.Questions, Message: args.Message}
 		return "", tool.StatefulInterrupt(ctx, payload, payload)
 	}
 	if isTarget, hasData, answer := tool.GetResumeContext[string](ctx); isTarget && hasData {
@@ -152,7 +153,7 @@ func newAwaitArmTool() (tool.InvokableTool, error) {
 func (t *awaitArmTool) Info(_ context.Context) (*schema.ToolInfo, error) { return t.info, nil }
 
 func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
-	wasInterrupted, _, state := tool.GetInterruptState[agent.ArmInterrupt](ctx)
+	wasInterrupted, _, state := tool.GetInterruptState[agentcore.ArmInterrupt](ctx)
 	if !wasInterrupted {
 		var args awaitArmArgs
 		_ = json.Unmarshal([]byte(arguments), &args)
@@ -164,7 +165,7 @@ func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...
 			return refusal("this Task is not an actionable trade: update_task with is_actionable true first"), nil
 		}
 		recordAwaitConfirmation(ctx, run)
-		payload := agent.ArmInterrupt{TaskID: run.TaskID, Message: args.Message}
+		payload := agentcore.ArmInterrupt{TaskID: run.TaskID, Message: args.Message}
 		return "", tool.StatefulInterrupt(ctx, payload, payload)
 	}
 	if isTarget, _, _ := tool.GetResumeContext[string](ctx); isTarget {

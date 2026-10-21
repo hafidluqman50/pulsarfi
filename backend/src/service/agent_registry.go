@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/big"
 
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
@@ -159,7 +160,7 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		ChatMessages:    repos.AgentChatMessage,
 		Orchestrator:    orchestrator,
 		CheckPointStore: checkpointStore,
-		Turns:           agentsvc.NewTurnRegistry(),
+		Turns:           agentcore.NewTurnRegistry(),
 	}
 	taskSvc := &agentsvc.TaskService{
 		Tasks:        repos.AgentTask,

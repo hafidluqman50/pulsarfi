@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"os"
 	"strings"
 	"testing"
@@ -10,7 +11,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -76,25 +76,25 @@ func TestTaskService_ExecuteTaskValidation(t *testing.T) {
 
 	// Test 1: Task Not Found
 	_, err = registry.AgentTask.ExecuteTask(ctx, 999999999, ownerWallet)
-	if err != agentsvc.ErrTaskNotFound {
+	if err != agentcore.ErrTaskNotFound {
 		t.Fatalf("expected ErrTaskNotFound, got %v", err)
 	}
 
 	// Test 2: Wallet Mismatch
 	_, err = registry.AgentTask.ExecuteTask(ctx, unarmedTask.ID, otherWallet)
-	if err != agentsvc.ErrWalletMismatch {
+	if err != agentcore.ErrWalletMismatch {
 		t.Fatalf("expected ErrWalletMismatch, got %v", err)
 	}
 
 	// Test 3: Task Not Actionable
 	_, err = registry.AgentTask.ExecuteTask(ctx, nonActionableTask.ID, ownerWallet)
-	if err != agentsvc.ErrTaskNotActionable {
+	if err != agentcore.ErrTaskNotActionable {
 		t.Fatalf("expected ErrTaskNotActionable, got %v", err)
 	}
 
 	// Test 4: Task Not Armed
 	_, err = registry.AgentTask.ExecuteTask(ctx, unarmedTask.ID, ownerWallet)
-	if err != agentsvc.ErrTaskNotArmed {
+	if err != agentcore.ErrTaskNotArmed {
 		t.Fatalf("expected ErrTaskNotArmed, got %v", err)
 	}
 

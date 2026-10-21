@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"os"
 	"strings"
 	"testing"
@@ -10,7 +11,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -92,7 +92,7 @@ func TestChatServiceDecomposition(t *testing.T) {
 
 	// 3. Verify Wallet mismatch protection
 	_, err = registry.AgentChat.GetChatMessages(ctx, chatID, "0x"+strings.Repeat("b", 40))
-	if err != agentsvc.ErrWalletMismatch {
+	if err != agentcore.ErrWalletMismatch {
 		t.Errorf("expected ErrWalletMismatch, got %v", err)
 	}
 

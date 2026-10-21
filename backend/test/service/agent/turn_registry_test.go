@@ -8,6 +8,7 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestTurnRegistry_OnlyOneTurnPerChat(t *testing.T) {
-	registry := agentsvc.NewTurnRegistry()
+	registry := agentcore.NewTurnRegistry()
 	chatID := uuid.New()
 
 	release, ok := registry.TryStart(chatID)
@@ -42,7 +43,7 @@ func TestTurnRegistry_OnlyOneTurnPerChat(t *testing.T) {
 }
 
 func TestTurnRegistry_IsPerChat(t *testing.T) {
-	registry := agentsvc.NewTurnRegistry()
+	registry := agentcore.NewTurnRegistry()
 	first, second := uuid.New(), uuid.New()
 
 	release, ok := registry.TryStart(first)
@@ -89,7 +90,7 @@ func TestChatTurn_SurvivesACancelledRequest(t *testing.T) {
 		t.Fatalf("build orchestrator: %v", err)
 	}
 
-	registry := agentsvc.NewTurnRegistry()
+	registry := agentcore.NewTurnRegistry()
 	svc := &agentsvc.ChatService{
 		Chats:           repos.AgentChat,
 		ChatMessages:    repos.AgentChatMessage,

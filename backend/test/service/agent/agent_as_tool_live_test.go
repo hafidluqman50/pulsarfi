@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"io"
 	"os"
 	"strings"
@@ -131,7 +132,7 @@ func summarize(frames []string) liveSummary {
 	return summary
 }
 
-func logSummary(t *testing.T, label string, card agentsvc.WorkflowCard, summary liveSummary) {
+func logSummary(t *testing.T, label string, card agentcore.WorkflowCard, summary liveSummary) {
 	t.Helper()
 	t.Logf("[%s] task_id=%d content_type=%s ui_component=%v", label, card.TaskID, card.ContentType, card.UIComponent)
 	t.Logf("[%s] reply: %s", label, strings.TrimSpace(card.Reply))
@@ -146,7 +147,7 @@ var intakeAnswers = map[string]string{
 	"strategy": "sekaligus", "exit_policy": "tutup posisi",
 }
 
-func answerFor(card agentsvc.WorkflowCard) string {
+func answerFor(card agentcore.WorkflowCard) string {
 	var payload struct {
 		Questions []struct{ Key, Question string } `json:"questions"`
 	}
@@ -184,7 +185,7 @@ func TestLiveAgentAsTool_Scenarios(t *testing.T) {
 	go realtime.Default().Serve(conn, &auth.Claims{WalletAddress: liveDemoWallet, Role: "user"})
 	defer close(conn.incoming)
 
-	say := func(chatID uuid.UUID, message string) (agentsvc.WorkflowCard, liveSummary) {
+	say := func(chatID uuid.UUID, message string) (agentcore.WorkflowCard, liveSummary) {
 		card, err := registry.AgentChat.HandleChatMessage(ctx, chatID, liveDemoWallet, message, false)
 		if err != nil {
 			t.Fatalf("HandleChatMessage(%q): %v", message, err)

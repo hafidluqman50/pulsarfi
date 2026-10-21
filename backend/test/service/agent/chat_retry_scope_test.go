@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"errors"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"os"
 	"strings"
 	"testing"
@@ -59,7 +60,7 @@ func TestChatRetry_ScopesToTheChatsOwnLastMessage(t *testing.T) {
 	wallet := "0x" + strings.Repeat("d", 40)
 
 	// 1. A chat that does not exist has nothing to retry.
-	if _, err := svc.RetryLastMessage(ctx, uuid.New(), wallet); !errors.Is(err, agentsvc.ErrNothingToRetry) {
+	if _, err := svc.RetryLastMessage(ctx, uuid.New(), wallet); !errors.Is(err, agentcore.ErrNothingToRetry) {
 		t.Fatalf("unknown chat: expected ErrNothingToRetry, got %v", err)
 	}
 
@@ -71,7 +72,7 @@ func TestChatRetry_ScopesToTheChatsOwnLastMessage(t *testing.T) {
 	}
 	seed(ctx, t, repos, settled, "user", "beli BUMIP 100000")
 	seed(ctx, t, repos, settled, "supervisor", "ok")
-	if _, err := svc.RetryLastMessage(ctx, settled, wallet); !errors.Is(err, agentsvc.ErrNothingToRetry) {
+	if _, err := svc.RetryLastMessage(ctx, settled, wallet); !errors.Is(err, agentcore.ErrNothingToRetry) {
 		t.Fatalf("settled chat: expected ErrNothingToRetry, got %v", err)
 	}
 
