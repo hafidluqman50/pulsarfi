@@ -3,7 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { sendChatMessage, retryLastMessage, getTurnStatus, type AgentChatMessage, type LiveSubTask, type WorkflowCard } from '@/http/agent/chatApi';
+import { sendChatMessage, retryLastMessage, getTurnStatus, type AgentChatMessage, type LiveSubTask } from '@/http/agent/chatApi';
 import { ClarifyingQuestions } from './ClarifyingQuestions';
 import { HorizonNoticeCard } from './HorizonNoticeCard';
 import { NewsBrief } from './NewsBrief';
@@ -424,42 +424,6 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
   );
 });
 
-// Optimistic rows live only in the client cache until the next fetch replaces
-// them with the canonical DB rows, so a negative id is enough to keep React
-// keys unique in the meantime.
-let optimisticMessageId = -1;
-function nextOptimisticMessageId(): number {
-  return optimisticMessageId--;
-}
-
-function optimisticUserMessage(chatId: string, content: string): AgentChatMessage {
-  return {
-    id: nextOptimisticMessageId(),
-    chat_id: chatId,
-    sender: 'user',
-    content_type: 'text',
-    content,
-    ui_component: null,
-    ui_props: null,
-    ui_ref_task_id: null,
-    created_at: new Date().toISOString(),
-  };
-}
-
-function replyMessage(chatId: string, card: WorkflowCard): AgentChatMessage {
-  return {
-    id: nextOptimisticMessageId(),
-    chat_id: chatId,
-    sender: 'supervisor',
-    content_type: card.content_type,
-    content: card.reply,
-    ui_component: card.ui_component ?? null,
-    ui_props: card.ui_props ?? null,
-    ui_ref_task_id: card.task_id ?? null,
-    created_at: new Date().toISOString(),
-  };
-}
-
 function appendMessages(queryClient: QueryClient, chatId: string, rows: AgentChatMessage[]): void {
   queryClient.setQueryData<AgentChatMessage[]>(['agent-chat-messages', chatId], (prev) => [...(prev ?? []), ...rows]);
 }
@@ -538,12 +502,9 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     if (!overrideText) setDraft('');
     try {
       const card = await sendChatMessage(chatId, trimmed, hidden);
-      // The response is the reply: put it on screen instead of refetching the
-      // chat. A hidden send is full history but never a bubble, so only the
-      // reply is appended.
-      appendMessages(queryClient, chatId, hidden
-        ? [replyMessage(chatId, card)]
-        : [optimisticUserMessage(chatId, trimmed), replyMessage(chatId, card)]);
+      // The response carries the rows this call created: show them instead of
+      // refetching the chat.
+      if (card.messages?.length) appendMessages(queryClient, chatId, card.messages);
       if (!chatExists) {
         // The first message created the chat server-side; let the sidebar see
         // it. No messages refetch: the rows above are already on screen.
@@ -552,10 +513,10 @@ export function ChatThread({ chatId }: ChatThreadProps) {
       markTurnEnded(chatId);
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
-      // The server persists the user row before running the turn, so keep it
-      // visible (and retryable) instead of waiting for a refetch. Validation
-      // failures reconcile on the next natural fetch.
-      if (!hidden) appendMessages(queryClient, chatId, [optimisticUserMessage(chatId, trimmed)]);
+      // Error recovery is the one place a refetch is allowed: pull the
+      // persisted user row (and the new chat) so Retry has something to act on.
+      if (!chatExists) void queryClient.invalidateQueries({ queryKey: ['agent-chats'] });
+      void queryClient.invalidateQueries({ queryKey: ['agent-chat-messages', chatId] });
       failTurn(chatId, trimmed, description);
       toast.error('Message failed to send', { description });
     } finally {
@@ -570,7 +531,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     beginTurn(chatId);
     try {
       const card = await retryLastMessage(chatId);
-      appendMessages(queryClient, chatId, [replyMessage(chatId, card)]);
+      if (card.messages?.length) appendMessages(queryClient, chatId, card.messages);
       markTurnEnded(chatId);
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';

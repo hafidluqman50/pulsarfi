@@ -101,6 +101,9 @@ func TestChatRetry_ScopesToTheChatsOwnLastMessage(t *testing.T) {
 	if last := messages[len(messages)-1]; last.Sender != "supervisor" {
 		t.Fatalf("expected the retry to settle with a supervisor reply, last sender is %q", last.Sender)
 	}
+	if len(card.Messages) != 1 || card.Messages[0].ID != messages[len(messages)-1].ID {
+		t.Fatalf("retry response must carry exactly the persisted supervisor row, got %+v", card.Messages)
+	}
 
 	// 4. Retrying a chat never touches another chat's rows: the settled chat
 	//    still ends on its own supervisor row.

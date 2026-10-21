@@ -31,6 +31,9 @@ export interface WorkflowCard {
   content_type: 'text' | 'chart' | 'news';
   ui_component?: string | null;
   ui_props?: unknown;
+  // The persisted rows this call created, so the client can append them
+  // instead of refetching the chat.
+  messages?: AgentChatMessage[];
 }
 
 export async function getPortfolioChart(lens: string, range: string): Promise<unknown> {
