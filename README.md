@@ -10,7 +10,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)](https://nextjs.org/)
 [![Arbitrum](https://img.shields.io/badge/Arbitrum-Sepolia-28A0F0)](https://arbitrum.io/)
 
-**PulsarFi turns selected IDX equities into 1:1 pStock receipts with custodian attestations, IDRX settlement, and on-chain liquidity.**
+**PulsarFi turns selected IDX equities into 1:1 PulsarStock receipts with custodian attestations, IDRX settlement, Uniswap V4 liquidity, and an on-chain agent that trades under user-set guardrails.**
 
 [Explore Docs](https://pulsarfi-docs.vercel.app) · [Frontend](./frontend) · [Backend](./backend) · [Smart Contracts](./smart-contract) · [Mobile App](https://github.com/hafidluqman50/pulsarfi-app)
 
@@ -21,6 +21,7 @@ Demo custodian wallets and the operator flow for judging are documented in [Judg
 <img src="https://img.shields.io/badge/RWA-IDX%20Equities-c8102e?style=for-the-badge" alt="RWA IDX Equities"/>
 <img src="https://img.shields.io/badge/Settlement-IDRX-16110e?style=for-the-badge" alt="IDRX Settlement"/>
 <img src="https://img.shields.io/badge/Custody-3%2F5%20Multisig-1f7a4b?style=for-the-badge" alt="Custody Multisig"/>
+<img src="https://img.shields.io/badge/Liquidity-Uniswap%20V4-ff007a?style=for-the-badge" alt="Uniswap V4"/>
 
 </div>
 
@@ -30,14 +31,17 @@ Demo custodian wallets and the operator flow for judging are documented in [Judg
 
 **A Note on Development:** This project was built with strict architectural oversight. While AI tools were leveraged to accelerate development, every line of code was explicitly directed, reviewed, and deeply understood. There is no 'vibecoding' here. AI acts solely as a velocity multiplier for a deliberately engineered system.
 
-PulsarFi tokenizes Indonesian public equities into pStock tokens on Arbitrum Sepolia. Each pStock represents custodian-backed IDX exposure, priced through IDX market data and traded against IDRX liquidity.
+PulsarFi tokenizes Indonesian public equities into `PulsarStock` tokens on Arbitrum Sepolia. Each token is an ERC-20 per IDX equity (`BUMIP`, `ENRGP`, `BRPTP`, …), backed 1:1 by shares held in custody at KSEI and paired against IDRX liquidity in a Uniswap V4 pool. Price discovery comes from the AMM, not an external oracle.
 
-The product surface is intentionally compact:
+The product surface:
 
-- Markets: browse pStocks, IDX prices, IHSG, and token detail pages.
-- Portfolio: view wallet holdings, transfers, swaps, and redemption requests.
-- Custodian console: submit mint proposals, attest reserves, and manage redemption access.
-- Protocol: mint, approve, execute, and redeem pStocks through smart contracts.
+- **Markets** — browse tokenized equities, IDX prices, IHSG, and token detail pages.
+- **Portfolio** — wallet holdings, transfers, swaps, and redemption requests.
+- **Quasar** — the in-app agent: ask for analysis, charts, news, or a trade, and it either answers or prepares an on-chain task you arm yourself.
+- **Custodian console** — mint proposals, reserve attestations, approvals, and redemption access.
+- **Protocol** — mint, swap, and redeem through the contracts.
+
+Holding and swapping are permissionless. KYC is enforced only at the redemption gateway, when a token is converted back to a physical security.
 
 ## Architecture
 
@@ -51,11 +55,17 @@ flowchart TB
   API --> Yahoo[Yahoo Finance<br/>IDX + IHSG Prices]
   API --> Chain[Arbitrum Sepolia RPC]
 
+  API --> Agent[Quasar / Nova / Comet<br/>CloudWeGo Eino]
+
   Frontend --> Wallet[RainbowKit + Wagmi]
   Wallet --> Protocol[PulsarProtocol<br/>UUPS + 3/5 Multisig]
   Protocol --> PStock[PulsarStock ERC20]
-  Protocol --> AMM[Uniswap V2 Router]
-  AMM --> IDRX[IDRX Mock]
+  Protocol --> PM[Uniswap V4 PoolManager]
+  PM --> Hook[PulsarSwapHook<br/>swapFeeBps]
+  Protocol --> IDRX[IDRX<br/>src/mocks]
+
+  Agent --> ATM[AgentTaskManager<br/>budget + cooldown guardrails]
+  ATM --> Protocol
 
   Custodian --> Protocol
 ```
@@ -65,37 +75,52 @@ flowchart TB
 ```mermaid
 sequenceDiagram
   participant C as Custodian
-  participant API as Backend API
-  participant P as PulsarProtocol
   participant U as User
-  participant AMM as IDRX Pool
+  participant P as PulsarProtocol
+  participant V4 as Uniswap V4 Pool
+  participant A as AgentTaskManager
 
-  C->>P: requestMint
-  C->>P: 3/5 approvals
-  P->>P: executeMint
-  P->>AMM: seed pStock/IDRX liquidity
-  U->>AMM: trade pStock
-  U->>P: requestRedeem
-  C->>API: review + attest
+  C->>P: requestMint(ticker, amounts, attestation)
+  C->>P: approveMint x3/5
+  C->>P: executeMint(proposalId, sqrtPriceX96)
+  P->>P: deploy PulsarStock lazily
+  P->>V4: seed token/IDRX pool
+  U->>V4: swapV4(ticker, amountIn, minOut, buyStock)
+  U->>A: arm task (budget, cap, cooldown)
+  A->>P: executeTrade -> swapV4
+  U->>P: requestRedeem(ticker, amount)
+  C->>P: approveRedeem x3/5
+  P->>P: executeRedeem (KYC gate)
 ```
+
+## Agent system
+
+Quasar (supervisor) talks to the user and routes work to Nova (analysis, charts, news) and Comet (execution). It runs on CloudWeGo Eino inside the Go backend; the model provider is selected by environment.
+
+Trades are self-custodial: the user arms a `Task` on `AgentTaskManager` first. The contract enforces the guardrails on-chain — total budget, per-trade cap, and cooldown — and the agent can only ever submit within them. Nothing is delegated custody.
 
 ## Stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 16, React 19, TailwindCSS, RainbowKit, Wagmi, React Query |
-| Backend | Go, Gin, GORM, PostgreSQL |
-| Smart contracts | Solidity, Foundry, UUPS, OpenZeppelin, Uniswap V2 |
-| Data | Yahoo Finance chart API, on-chain AMM reserves, custodian attestations |
+| Frontend | Next.js 16, React, TailwindCSS, RainbowKit, Wagmi, React Query |
+| Backend | Go, Gin, GORM, PostgreSQL, CloudWeGo Eino |
+| Smart contracts | Solidity, Foundry, UUPS, OpenZeppelin, Uniswap V4 (PoolManager + hook) |
+| Data | Yahoo Finance chart API, on-chain V4 pool, custodian attestations |
 | Network | Arbitrum Sepolia |
 
 ## Repository
 
 ```text
-frontend/        Next.js app for markets, portfolio, swap, and custodian console
-backend/         Go API for auth, public market data, custodian workflows, and records
-smart-contract/  Foundry project for PulsarProtocol and PulsarStock
-docs/            Docusaurus documentation source
+frontend/        Next.js app for markets, portfolio, swap, Quasar, and custodian console
+backend/         Go API for auth, market data, custodian workflows, and the agent
+  src/app/core/agent/       agentcore: domain types and ports
+  src/app/helper/           pure agent helpers
+  src/config/               env, database, on-chain settings
+  src/service/external/     chain, market data, storage, email
+  src/service/agent/        orchestrator, chat, task, subtask, checkpoint, and the three roles
+smart-contract/  Foundry project for PulsarProtocol, PulsarStock, AgentTaskManager
+docs/            Docusaurus documentation source and implementation plans
 ```
 
 ## Quick Start
@@ -121,4 +146,4 @@ npm run dev
 
 ## Docs
 
-Full documentation lives at [pulsarfi-docs.vercel.app](https://pulsarfi-docs.vercel.app).
+Full documentation lives at [pulsarfi-docs.vercel.app](https://pulsarfi-docs.vercel.app). Implementation plans and the agent flow map are in [`docs/plans/`](./docs/plans) and [`backend/src/service/agent/README.md`](./backend/src/service/agent/README.md).
