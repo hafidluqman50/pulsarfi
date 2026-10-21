@@ -135,4 +135,3 @@ func TestLiveNewsQueryHTTPEndpoint(t *testing.T) {
 	}
 	t.Logf("Turn 2 follow-up HTTP endpoint returned %d OK with response: %s", w2.Code, w2.Body.String())
 }
-

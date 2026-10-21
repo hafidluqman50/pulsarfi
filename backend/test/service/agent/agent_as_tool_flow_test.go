@@ -2,6 +2,10 @@ package agent_test
 
 import (
 	"context"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/chat"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
 	"os"
 	"strings"
 	"sync"
@@ -13,7 +17,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/supervisor"
 )
 
@@ -61,9 +64,9 @@ type flowHarness struct {
 	t            *testing.T
 	repos        *repository.Registry
 	chain        *fakeChain
-	store        *agentsvc.PostgresCheckPointStore
-	orchestrator *agentsvc.Orchestrator
-	chat         *agentsvc.ChatService
+	store        *checkpoint.PostgresCheckPointStore
+	orchestrator *orchestrator.Orchestrator
+	chat         *chat.ChatService
 	wallet       string
 	chatID       uuid.UUID
 }
@@ -81,9 +84,9 @@ func newFlowHarness(t *testing.T, quasarSteps, novaSteps, cometSteps []*schema.M
 	}
 	repos := repository.NewRegistry(db)
 	chain := &fakeChain{}
-	store := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	store := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 
-	orchestrator := &agentsvc.Orchestrator{
+	orch := &orchestrator.Orchestrator{
 		Tasks:           repos.AgentTask,
 		SubTasks:        repos.AgentSubTask,
 		ChatMessages:    repos.AgentChatMessage,
@@ -92,27 +95,27 @@ func newFlowHarness(t *testing.T, quasarSteps, novaSteps, cometSteps []*schema.M
 	}
 	quasar, err := supervisor.New(ctx, &scriptedModel{steps: quasarSteps},
 		newAgent(t, "analyzer_agent", novaSteps), newAgent(t, "executor_agent", cometSteps),
-		orchestrator, repos.AgentTask)
+		orch, repos.AgentTask)
 	if err != nil {
 		t.Fatalf("build supervisor: %v", err)
 	}
-	orchestrator.Quasar = quasar
-	if orchestrator, err = agentsvc.NewOrchestrator(ctx, orchestrator); err != nil {
+	orch.Quasar = quasar
+	if orch, err = orchestrator.NewOrchestrator(ctx, orch); err != nil {
 		t.Fatalf("build orchestrator: %v", err)
 	}
 
 	return &flowHarness{
-		t: t, repos: repos, chain: chain, store: store, orchestrator: orchestrator,
-		chat: &agentsvc.ChatService{
+		t: t, repos: repos, chain: chain, store: store, orchestrator: orch,
+		chat: &chat.ChatService{
 			Chats: repos.AgentChat, ChatMessages: repos.AgentChatMessage,
-			Orchestrator: orchestrator, CheckPointStore: store,
+			Orchestrator: orch, CheckPointStore: store,
 		},
 		wallet: "0x" + strings.ReplaceAll(uuid.NewString(), "-", "") + "00000000",
 		chatID: uuid.New(),
 	}
 }
 
-func (h *flowHarness) say(message string) agentsvc.WorkflowCard {
+func (h *flowHarness) say(message string) agentcore.WorkflowCard {
 	h.t.Helper()
 	card, err := h.chat.HandleChatMessage(context.Background(), h.chatID, h.wallet, message, false)
 	if err != nil {
@@ -349,7 +352,7 @@ func TestFlowResumeExecuteWithoutPendingPauseIsAnExplicitError(t *testing.T) {
 
 	_, err := h.orchestrator.ResumeExecute(context.Background(), card.TaskID, h.wallet)
 
-	if err == nil || !strings.Contains(err.Error(), agentsvc.ErrNoPendingExecution.Error()) {
+	if err == nil || !strings.Contains(err.Error(), agentcore.ErrNoPendingExecution.Error()) {
 		t.Fatalf("expected ErrNoPendingExecution, got %v", err)
 	}
 }

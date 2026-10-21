@@ -2,6 +2,8 @@ package agent_test
 
 import (
 	"context"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
 	"sync"
 	"testing"
 
@@ -11,7 +13,6 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 // budgetCheckpoints is a tiny in-memory ExtendedCheckPointStore — this test
@@ -127,23 +128,23 @@ func TestToolBudget_TruncatesInsteadOfFailing(t *testing.T) {
 		t.Fatalf("build quasar: %v", err)
 	}
 
-	orchestrator := &agentsvc.Orchestrator{
+	orch := &orchestrator.Orchestrator{
 		Quasar:          quasar,
 		ReplyModel:      &budgetReplyModel{reply: "ini jawaban dari bukti yang ada"},
 		CheckPointStore: newBudgetCheckpoints(),
 	}
-	orchestrator, err = agentsvc.NewOrchestrator(ctx, orchestrator)
+	orch, err = orchestrator.NewOrchestrator(ctx, orch)
 	if err != nil {
 		t.Fatalf("build orchestrator: %v", err)
 	}
 
 	chatID := uuid.New()
-	result, err := orchestrator.Send(ctx, agentsvc.OrchestratorInput{
+	result, err := orch.Send(ctx, orchestrator.OrchestratorInput{
 		ChatID:    chatID,
 		Wallet:    "0xtest",
 		RawPrompt: "cari berita IHSG",
 		Messages:  []*schema.Message{schema.UserMessage("cari berita IHSG")},
-	}, agentsvc.FreshTurnIntent())
+	}, agentcore.FreshTurnIntent())
 	if err != nil {
 		t.Fatalf("a tool-budget cap must not fail the turn, got: %v", err)
 	}

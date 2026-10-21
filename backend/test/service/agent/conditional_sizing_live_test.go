@@ -15,9 +15,9 @@ import (
 
 // TestAmbiguousTradeDoesNotAskSizingUntilSideKnown tests that when an ambiguous
 // trade is requested without specifying buy vs sell (e.g. "Aku mau kamu trading BMRI"):
-// 1. Quasar asks only for side and shape, and NEVER asks for idrx_cap or portfolio_share.
-// 2. Once the user answers "beli dan scalping", Quasar asks only for idrx_cap (buy budget),
-//    and NEVER asks for portfolio_share (token quantity to sell).
+//  1. Quasar asks only for side and shape, and NEVER asks for idrx_cap or portfolio_share.
+//  2. Once the user answers "beli dan scalping", Quasar asks only for idrx_cap (buy budget),
+//     and NEVER asks for portfolio_share (token quantity to sell).
 func TestAmbiguousTradeDoesNotAskSizingUntilSideKnown(t *testing.T) {
 	if err := godotenv.Load("../../../.env"); err != nil {
 		t.Logf("no .env loaded (%v), relying on already-exported environment", err)
@@ -89,8 +89,8 @@ func TestAmbiguousTradeDoesNotAskSizingUntilSideKnown(t *testing.T) {
 
 	var parsedProps2 struct {
 		Questions []struct {
-			Key      string   `json:"key"`
-			Question string   `json:"question"`
+			Key      string `json:"key"`
+			Question string `json:"question"`
 		} `json:"questions"`
 	}
 	if err := json.Unmarshal(card2.UIProps, &parsedProps2); err != nil {

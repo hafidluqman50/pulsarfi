@@ -2,20 +2,23 @@ package agent_test
 
 import (
 	"context"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/chat"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
 func TestTurnRegistry_OnlyOneTurnPerChat(t *testing.T) {
-	registry := agentsvc.NewTurnRegistry()
+	registry := agentcore.NewTurnRegistry()
 	chatID := uuid.New()
 
 	release, ok := registry.TryStart(chatID)
@@ -42,7 +45,7 @@ func TestTurnRegistry_OnlyOneTurnPerChat(t *testing.T) {
 }
 
 func TestTurnRegistry_IsPerChat(t *testing.T) {
-	registry := agentsvc.NewTurnRegistry()
+	registry := agentcore.NewTurnRegistry()
 	first, second := uuid.New(), uuid.New()
 
 	release, ok := registry.TryStart(first)
@@ -76,24 +79,24 @@ func TestChatTurn_SurvivesACancelledRequest(t *testing.T) {
 	}
 	repos := repository.NewRegistry(db)
 
-	checkpoints := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
-	orchestrator := &agentsvc.Orchestrator{
+	checkpoints := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	orch := &orchestrator.Orchestrator{
 		Tasks:           repos.AgentTask,
 		SubTasks:        repos.AgentSubTask,
 		ChatMessages:    repos.AgentChatMessage,
 		Quasar:          newAgent(t, "supervisor_agent", []*schema.Message{answer("", "ok")}),
 		CheckPointStore: checkpoints,
 	}
-	orchestrator, err = agentsvc.NewOrchestrator(context.Background(), orchestrator)
+	orch, err = orchestrator.NewOrchestrator(context.Background(), orch)
 	if err != nil {
 		t.Fatalf("build orchestrator: %v", err)
 	}
 
-	registry := agentsvc.NewTurnRegistry()
-	svc := &agentsvc.ChatService{
+	registry := agentcore.NewTurnRegistry()
+	svc := &chat.ChatService{
 		Chats:           repos.AgentChat,
 		ChatMessages:    repos.AgentChatMessage,
-		Orchestrator:    orchestrator,
+		Orchestrator:    orch,
 		CheckPointStore: checkpoints,
 		Turns:           registry,
 	}

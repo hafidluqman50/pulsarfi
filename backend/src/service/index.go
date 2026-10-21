@@ -1,11 +1,12 @@
 package service
 
 import (
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/chat"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/task"
 	"log"
 
 	"github.com/horizonlabs/pulsarfi-backend/src/auth"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	authsvc "github.com/horizonlabs/pulsarfi-backend/src/service/auth"
 	custodiansvc "github.com/horizonlabs/pulsarfi-backend/src/service/custodian"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/external"
@@ -30,9 +31,9 @@ type Registry struct {
 	Stream                 *external.StreamService
 	Price                  *external.PriceService
 	TransferIndexer        *indexersvc.TransferIndexerService
-	AgentChat              *agentsvc.ChatService
-	AgentTask              *agentsvc.TaskService
-	AgentTaskScheduler     *agentsvc.TaskScheduler
+	AgentChat              *chat.ChatService
+	AgentTask              *task.TaskService
+	AgentTaskScheduler     *task.TaskScheduler
 	PortfolioChart         *publicsvc.PortfolioChartReader
 }
 

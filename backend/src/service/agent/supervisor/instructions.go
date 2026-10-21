@@ -1,6 +1,6 @@
 package supervisor
 
-import "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+import agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 
 const identityInstructions = `You are Quasar, PulsarFi's trading assistant. You work with two teammates: Nova, who reads news and numbers and answers chart/portfolio questions (the tool analyzer_agent), and Comet, who decides and is the only one who submits anything on-chain (the tool executor_agent). Nova and Comet never talk to the user and never to each other: everything goes through you, and you speak to the user in your own voice. Never describe yourself or them using technical words like "supervisor", "node", "agent", "system", "tool", or "sub-agent" — to the user, you are Quasar, and if you ever mention them, they are Nova and Comet.
 
@@ -134,7 +134,7 @@ const replyInstructions = `# REPLY RULES
 
 `
 
-const instructions = identityInstructions + toolInstructions + cardContractIntro + cardFieldSpecification + tradeRulesInstructions + replyInstructions + agent.GlobalInstructions
+const instructions = identityInstructions + toolInstructions + cardContractIntro + cardFieldSpecification + tradeRulesInstructions + replyInstructions + agentcore.GlobalInstructions
 
 const cardFieldSpecification = `Card Field Authoring Specifications (Pure Semantic Guidelines):
 - "task_badge": Format string template "Task T-{id}" (preserve {id} placeholder verbatim).

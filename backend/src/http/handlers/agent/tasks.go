@@ -2,6 +2,8 @@ package agent
 
 import (
 	"errors"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/task"
 	"log/slog"
 	"strconv"
 
@@ -9,7 +11,6 @@ import (
 	usermw "github.com/horizonlabs/pulsarfi-backend/src/http/middleware/user"
 	taskrequest "github.com/horizonlabs/pulsarfi-backend/src/http/request/agent/task"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 // ListTasksHandler always scopes to the authenticated wallet — task
@@ -82,7 +83,7 @@ func ArmTaskHandler(c *gin.Context) {
 		return
 	}
 
-	armResult, err := taskSvc.ArmTask(c.Request.Context(), taskID, claims.WalletAddress, agentsvc.ArmTaskInput{
+	armResult, err := taskSvc.ArmTask(c.Request.Context(), taskID, claims.WalletAddress, task.ArmTaskInput{
 		TotalBudget:       armRequest.TotalBudget,
 		DurationSec:       armRequest.DurationSec,
 		TokenAddress:      armRequest.TokenAddress,
@@ -90,11 +91,11 @@ func ArmTaskHandler(c *gin.Context) {
 		CooldownInterval:  armRequest.CooldownInterval,
 		IsRecurring:       armRequest.IsRecurring,
 	})
-	if errors.Is(err, agentsvc.ErrTaskNotFound) {
+	if errors.Is(err, agentcore.ErrTaskNotFound) {
 		response.NotFound(c, "task not found")
 		return
 	}
-	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+	if errors.Is(err, agentcore.ErrWalletMismatch) {
 		response.Forbidden(c, "task does not belong to the authenticated wallet")
 		return
 	}
@@ -126,15 +127,15 @@ func DisarmTaskHandler(c *gin.Context) {
 	}
 
 	err = taskSvc.DisarmTask(c.Request.Context(), taskID, claims.WalletAddress)
-	if errors.Is(err, agentsvc.ErrTaskNotFound) {
+	if errors.Is(err, agentcore.ErrTaskNotFound) {
 		response.NotFound(c, "task not found")
 		return
 	}
-	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+	if errors.Is(err, agentcore.ErrWalletMismatch) {
 		response.Forbidden(c, "task does not belong to the authenticated wallet")
 		return
 	}
-	if errors.Is(err, agentsvc.ErrTaskNotArmed) {
+	if errors.Is(err, agentcore.ErrTaskNotArmed) {
 		response.UnprocessableEntity(c, "task has not been armed yet", nil)
 		return
 	}
@@ -166,11 +167,11 @@ func PauseTaskHandler(c *gin.Context) {
 	}
 
 	err = taskSvc.PauseTask(c.Request.Context(), taskID, claims.WalletAddress)
-	if errors.Is(err, agentsvc.ErrTaskNotFound) {
+	if errors.Is(err, agentcore.ErrTaskNotFound) {
 		response.NotFound(c, "task not found")
 		return
 	}
-	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+	if errors.Is(err, agentcore.ErrWalletMismatch) {
 		response.Forbidden(c, "task does not belong to the authenticated wallet")
 		return
 	}
@@ -198,11 +199,11 @@ func ResumeTaskHandler(c *gin.Context) {
 	}
 
 	err = taskSvc.ResumeTask(c.Request.Context(), taskID, claims.WalletAddress)
-	if errors.Is(err, agentsvc.ErrTaskNotFound) {
+	if errors.Is(err, agentcore.ErrTaskNotFound) {
 		response.NotFound(c, "task not found")
 		return
 	}
-	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+	if errors.Is(err, agentcore.ErrWalletMismatch) {
 		response.Forbidden(c, "task does not belong to the authenticated wallet")
 		return
 	}
@@ -232,11 +233,11 @@ func GetTaskTradesHandler(c *gin.Context) {
 	}
 
 	trades, err := taskSvc.GetTrades(c.Request.Context(), taskID, claims.WalletAddress)
-	if errors.Is(err, agentsvc.ErrTaskNotFound) {
+	if errors.Is(err, agentcore.ErrTaskNotFound) {
 		response.NotFound(c, "task not found")
 		return
 	}
-	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+	if errors.Is(err, agentcore.ErrWalletMismatch) {
 		response.Forbidden(c, "task does not belong to the authenticated wallet")
 		return
 	}
@@ -263,7 +264,7 @@ func GetReasoningHandler(c *gin.Context) {
 	}
 
 	chain, err := taskSvc.GetReasoningChain(c.Request.Context(), taskID)
-	if errors.Is(err, agentsvc.ErrTaskNotFound) {
+	if errors.Is(err, agentcore.ErrTaskNotFound) {
 		response.NotFound(c, "task not found")
 		return
 	}
@@ -292,19 +293,19 @@ func ExecuteTaskHandler(c *gin.Context) {
 	}
 
 	result, err := taskSvc.ExecuteTask(c.Request.Context(), taskID, claims.WalletAddress)
-	if errors.Is(err, agentsvc.ErrTaskNotFound) {
+	if errors.Is(err, agentcore.ErrTaskNotFound) {
 		response.NotFound(c, "task not found")
 		return
 	}
-	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+	if errors.Is(err, agentcore.ErrWalletMismatch) {
 		response.Forbidden(c, "task does not belong to the authenticated wallet")
 		return
 	}
-	if errors.Is(err, agentsvc.ErrTaskNotArmed) {
+	if errors.Is(err, agentcore.ErrTaskNotArmed) {
 		response.UnprocessableEntity(c, "task has not been armed yet", nil)
 		return
 	}
-	if errors.Is(err, agentsvc.ErrTaskNotActionable) {
+	if errors.Is(err, agentcore.ErrTaskNotActionable) {
 		response.UnprocessableEntity(c, "task is not actionable", nil)
 		return
 	}
@@ -341,11 +342,11 @@ func SettleHorizonTaskHandler(c *gin.Context) {
 	}
 
 	err = taskSvc.SettleHorizonTask(c.Request.Context(), taskID, claims.WalletAddress, req.Policy)
-	if errors.Is(err, agentsvc.ErrTaskNotFound) {
+	if errors.Is(err, agentcore.ErrTaskNotFound) {
 		response.NotFound(c, "task not found")
 		return
 	}
-	if errors.Is(err, agentsvc.ErrWalletMismatch) {
+	if errors.Is(err, agentcore.ErrWalletMismatch) {
 		response.Forbidden(c, "task does not belong to the authenticated wallet")
 		return
 	}
@@ -356,5 +357,3 @@ func SettleHorizonTaskHandler(c *gin.Context) {
 
 	response.OK(c, "horizon task settled", gin.H{"task_id": taskID, "policy": req.Policy})
 }
-
-

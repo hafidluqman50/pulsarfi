@@ -3,12 +3,16 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/chat"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/task"
 	"log"
 	"math/big"
-	"os"
 
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/analyzer"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/executor"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/supervisor"
@@ -16,8 +20,8 @@ import (
 	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
 
-// spotPriceAdapter closes over the env vars PriceService.GetOnchainPriceV4
-// itself needs (PULSAR_PROTOCOL/ALCHEMY_RPC_URL, same pattern already used
+// spotPriceAdapter closes over the on-chain config PriceService.GetOnchainPriceV4
+// itself needs (PulsarProtocol/RPCURL, same pattern already used
 // by public/stock_service.go's own market-listing call site) — keeps
 // executor.SpotPriceReader's own interface free of env-var/wiring
 // knowledge (ISP), matching every other adapter in this file.
@@ -40,7 +44,7 @@ func (a spotPriceAdapter) QuoteStockToIdrx(ctx context.Context, ticker string, s
 }
 
 // balanceAdapter reads the owner's IDRX balance on-chain, closing over the
-// same env wiring as spotPriceAdapter (IDRX_ADDRESS/ALCHEMY_RPC_URL) so
+// same on-chain config as spotPriceAdapter (IDRXAddress/RPCURL) so
 // executor.BalanceReader stays free of it.
 type balanceAdapter struct {
 	price    *publicsvc.PriceService
@@ -68,7 +72,7 @@ func (a balanceAdapter) IDRXBalance(ctx context.Context, wallet string) (*big.In
 // Nova and Comet as its tools, run by the Orchestrator over an adk.Runner
 // (docs/plans/agent-as-tool-orchestration.md): ChatModelAgent does stream,
 // the earlier belief that it cannot was wrong.
-func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.PortfolioChartReader) (*agentsvc.ChatService, *agentsvc.TaskService, *agentsvc.TaskScheduler) {
+func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.PortfolioChartReader) (*chat.ChatService, *task.TaskService, *task.TaskScheduler) {
 	ctx := context.Background()
 
 	// One model for every role now — deepseek-v4-pro is discontinued
@@ -87,9 +91,14 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 	// its place. StubAgentContractClient (the old fake) has been deleted
 	// entirely, not just unused (v2.7) — there is no fallback type left to
 	// reach for by mistake.
-	contractClient, chainErr := agentsvc.NewClient(ctx)
+	onchainCfg, cfgErr := config.LoadOnchain()
+	if cfgErr != nil {
+		log.Printf("agent task service disabled: on-chain config: %v", cfgErr)
+		return nil, nil, nil
+	}
+	contractClient, chainErr := external.NewOnchainService(ctx, onchainCfg)
 	if chainErr != nil {
-		log.Printf("agent task service disabled: on-chain client: %v", chainErr)
+		log.Printf("agent task service disabled: on-chain service: %v", chainErr)
 		return nil, nil, nil
 	}
 
@@ -115,20 +124,20 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 	// retired from this wiring; a failed ExecuteTrade call fails loudly on
 	// its own merits (a real, in-flight chain error), never a stub standing
 	// in for one.
-	prices := spotPriceAdapter{price: chartReader.Price, protocolAddr: os.Getenv("PULSAR_PROTOCOL"), rpcURL: os.Getenv("ALCHEMY_RPC_URL")}
-	balances := balanceAdapter{price: chartReader.Price, idrxAddr: os.Getenv("IDRX_ADDRESS"), rpcURL: os.Getenv("ALCHEMY_RPC_URL")}
-	executorAgent, err := executor.New(ctx, executorModel, &executor.DBPortfolioReader{Transactions: repos.StockTransaction}, contractClient, repos.Stock, prices, balances, repos.AgentTrade, repos.StockTransaction)
+	prices := spotPriceAdapter{price: chartReader.Price, protocolAddr: onchainCfg.PulsarProtocol, rpcURL: onchainCfg.RPCURL}
+	balances := balanceAdapter{price: chartReader.Price, idrxAddr: onchainCfg.IDRXAddress, rpcURL: onchainCfg.RPCURL}
+	executorAgent, err := executor.New(ctx, executorModel, &executor.DBPortfolioReader{Transactions: repos.StockTransaction}, contractClient, repos.Stock, prices, balances, onchainCfg.IDRXAddress, repos.AgentTrade, repos.StockTransaction)
 
 	if err != nil {
 		log.Printf("agent task service disabled: build executor agent: %v", err)
 		return nil, nil, nil
 	}
 
-	checkpointStore := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	checkpointStore := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 
 	// Two steps because Quasar's tools open Tasks through the Orchestrator
 	// (supervisor.TaskOpener) while the Orchestrator runs Quasar.
-	orchestrator := &agentsvc.Orchestrator{
+	orch := &orchestrator.Orchestrator{
 		Tasks:           repos.AgentTask,
 		SubTasks:        repos.AgentSubTask,
 		ChatMessages:    repos.AgentChatMessage,
@@ -137,26 +146,26 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		ReplyModel:      supervisorModel,
 		Stocks:          repos.Stock,
 	}
-	supervisorAgent, err := supervisor.New(ctx, supervisorModel, analyzerAgent, executorAgent, orchestrator, repos.AgentTask)
+	supervisorAgent, err := supervisor.New(ctx, supervisorModel, analyzerAgent, executorAgent, orch, repos.AgentTask)
 	if err != nil {
 		log.Printf("agent task service disabled: build supervisor agent: %v", err)
 		return nil, nil, nil
 	}
-	orchestrator.Quasar = supervisorAgent
-	orchestrator, err = agentsvc.NewOrchestrator(ctx, orchestrator)
+	orch.Quasar = supervisorAgent
+	orch, err = orchestrator.NewOrchestrator(ctx, orch)
 	if err != nil {
 		log.Printf("agent task service disabled: build orchestrator: %v", err)
 		return nil, nil, nil
 	}
 
-	chatSvc := &agentsvc.ChatService{
+	chatSvc := &chat.ChatService{
 		Chats:           repos.AgentChat,
 		ChatMessages:    repos.AgentChatMessage,
-		Orchestrator:    orchestrator,
+		Orchestrator:    orch,
 		CheckPointStore: checkpointStore,
-		Turns:           agentsvc.NewTurnRegistry(),
+		Turns:           agentcore.NewTurnRegistry(),
 	}
-	taskSvc := &agentsvc.TaskService{
+	taskSvc := &task.TaskService{
 		Tasks:        repos.AgentTask,
 		SubTasks:     repos.AgentSubTask,
 		Trades:       repos.AgentTrade,
@@ -164,8 +173,8 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		Chats:        repos.AgentChat,
 		Chain:        contractClient,
 		Executor:     executorAgent,
-		Orchestrator: orchestrator,
+		Orchestrator: orch,
 	}
-	taskScheduler := agentsvc.NewTaskScheduler(repos.AgentTask, repos.AgentChatMessage, repos.AgentChat, taskSvc, supervisorModel)
+	taskScheduler := task.NewTaskScheduler(repos.AgentTask, repos.AgentChatMessage, repos.AgentChat, taskSvc, supervisorModel)
 	return chatSvc, taskSvc, taskScheduler
 }

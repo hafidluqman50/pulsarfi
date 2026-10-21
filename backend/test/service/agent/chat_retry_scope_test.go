@@ -3,6 +3,10 @@ package agent_test
 import (
 	"context"
 	"errors"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/chat"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
 	"os"
 	"strings"
 	"testing"
@@ -11,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -36,22 +39,22 @@ func TestChatRetry_ScopesToTheChatsOwnLastMessage(t *testing.T) {
 	}
 	repos := repository.NewRegistry(db)
 
-	checkpoints := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
-	orchestrator := &agentsvc.Orchestrator{
+	checkpoints := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	orch := &orchestrator.Orchestrator{
 		Tasks:           repos.AgentTask,
 		SubTasks:        repos.AgentSubTask,
 		ChatMessages:    repos.AgentChatMessage,
 		Quasar:          newAgent(t, "supervisor_agent", []*schema.Message{answer("", "ok")}),
 		CheckPointStore: checkpoints,
 	}
-	orchestrator, err = agentsvc.NewOrchestrator(context.Background(), orchestrator)
+	orch, err = orchestrator.NewOrchestrator(context.Background(), orch)
 	if err != nil {
 		t.Fatalf("build orchestrator: %v", err)
 	}
-	svc := &agentsvc.ChatService{
+	svc := &chat.ChatService{
 		Chats:           repos.AgentChat,
 		ChatMessages:    repos.AgentChatMessage,
-		Orchestrator:    orchestrator,
+		Orchestrator:    orch,
 		CheckPointStore: checkpoints,
 	}
 
@@ -59,7 +62,7 @@ func TestChatRetry_ScopesToTheChatsOwnLastMessage(t *testing.T) {
 	wallet := "0x" + strings.Repeat("d", 40)
 
 	// 1. A chat that does not exist has nothing to retry.
-	if _, err := svc.RetryLastMessage(ctx, uuid.New(), wallet); !errors.Is(err, agentsvc.ErrNothingToRetry) {
+	if _, err := svc.RetryLastMessage(ctx, uuid.New(), wallet); !errors.Is(err, agentcore.ErrNothingToRetry) {
 		t.Fatalf("unknown chat: expected ErrNothingToRetry, got %v", err)
 	}
 
@@ -71,7 +74,7 @@ func TestChatRetry_ScopesToTheChatsOwnLastMessage(t *testing.T) {
 	}
 	seed(ctx, t, repos, settled, "user", "beli BUMIP 100000")
 	seed(ctx, t, repos, settled, "supervisor", "ok")
-	if _, err := svc.RetryLastMessage(ctx, settled, wallet); !errors.Is(err, agentsvc.ErrNothingToRetry) {
+	if _, err := svc.RetryLastMessage(ctx, settled, wallet); !errors.Is(err, agentcore.ErrNothingToRetry) {
 		t.Fatalf("settled chat: expected ErrNothingToRetry, got %v", err)
 	}
 

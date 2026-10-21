@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 )
 
 const instructions = `# Role
@@ -113,7 +113,7 @@ When verifying a stock ticker or analyzing market conditions for a trade intent:
 ` + "```" + `
 - If the stock is NOT tokenized on PulsarFi (e.g. only on Yahoo or unknown), or if market conditions do not warrant a trade, "tradeable" MUST be false.
 - Anything before the ` + "```json" + ` block is your normal analysis prose in the user's active language.
-` + agent.GlobalInstructions
+` + agentcore.GlobalInstructions
 
 // TrustedSourcesInstructions tells Nova which news domains she may read,
 // generated from the same list the read_article gate enforces. read_article

@@ -3,6 +3,8 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
 	"os"
 	"testing"
 
@@ -10,7 +12,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/analyzer"
 	"github.com/joho/godotenv"
 )
@@ -99,11 +100,11 @@ func TestScalpRefactor_CheckPointStoreInterfaces(t *testing.T) {
 		t.Fatalf("connect db: %v", err)
 	}
 	repos := repository.NewRegistry(db)
-	store := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	store := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 
 	// Assert store implements compose.CheckPointStore
 	var _ compose.CheckPointStore = store
 
-	// Assert store implements agentsvc.ExtendedCheckPointStore
-	var _ agentsvc.ExtendedCheckPointStore = store
+	// Assert store implements agentcore.ExtendedCheckPointStore
+	var _ agentcore.ExtendedCheckPointStore = store
 }

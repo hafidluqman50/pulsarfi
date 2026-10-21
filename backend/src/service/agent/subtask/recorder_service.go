@@ -1,10 +1,11 @@
-package agent
+package subtask
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
@@ -12,14 +13,15 @@ import (
 )
 
 // SubTaskRecorder appends one hash-chained agent_sub_tasks row per step a
-// node takes while working a Task — see
-// docs/plans/agent-role-architecture.md §3a/§7. One recorder is scoped to
-// exactly one Task's run; Supervisor, Analyzer, and Executor all record
-// through the same recorder instance so every row in a run shares one
-// continuous chain.
+// node takes while working a Task. One recorder is scoped to exactly one
+// Task's run; Supervisor, Analyzer, and Executor all record through the same
+// recorder instance so every row in a run shares one continuous chain.
+//
+// It implements agentcore.SubTaskWriter: the domain's RunContext carries this
+// as an interface, so the core package never imports Postgres or the chain.
 type SubTaskRecorder struct {
 	subTasks      *repository.AgentSubTaskRepository
-	chain         ChainSubTaskRecorder
+	chain         agentcore.ChainSubTaskRecorder
 	onChainTaskID uint64
 	taskID        int64
 	nextOrder     int
@@ -31,19 +33,11 @@ type SubTaskRecorder struct {
 	OnRecord func(model.AgentSubTask)
 }
 
-// ChainSubTaskRecorder is the narrow chain capability SubTaskRecorder
-// itself needs — a subset of OrchestratorChainClient (ISP): this package
-// never needs CreateTask, only the ability to record one Sub Task on-chain
-// and learn its real, contract-assigned id.
-type ChainSubTaskRecorder interface {
-	RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows []model.AgentSubTask) (onChainSubTaskIDs []uint64, txHash string, err error)
-}
-
 // NewSubTaskRecorder loads the current tip of taskID's chain, or computes
 // its genesis hash if this Task has never recorded a step before — so a
 // recorder built fresh for a re-evaluation tick continues the same chain
 // instead of starting a new, disconnected one.
-func NewSubTaskRecorder(ctx context.Context, subTasks *repository.AgentSubTaskRepository, chain ChainSubTaskRecorder, onChainTaskID uint64, taskID int64, triggerDescription, owner string) (*SubTaskRecorder, error) {
+func NewSubTaskRecorder(ctx context.Context, subTasks *repository.AgentSubTaskRepository, chain agentcore.ChainSubTaskRecorder, onChainTaskID uint64, taskID int64, triggerDescription, owner string) (*SubTaskRecorder, error) {
 	last, found, err := subTasks.LastForTask(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("sub_task_recorder: load chain tip: %w", err)
@@ -57,12 +51,9 @@ func NewSubTaskRecorder(ctx context.Context, subTasks *repository.AgentSubTaskRe
 // Record appends one link to the chain. output is marshaled as given; pass
 // nil when a step has nothing structured to attach beyond its reasoning.
 // label is a short, human-readable description of this step in whatever
-// language the conversation is in (e.g. "Meneruskan ke Analyzer untuk cek
-// tren VKTR") — display only, pass "" when the caller has nothing better
-// than stepName itself to show (the UI falls back to a humanized stepName
-// in that case). label is never part of the hash: stepName is what
-// DecisionHash actually uses, so the chain stays verifiable regardless of
-// which language a label happens to be written in.
+// language the conversation is in. label is never part of the hash: stepName
+// is what DecisionHash actually uses, so the chain stays verifiable regardless
+// of which language a label happens to be written in.
 func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, status, reasoning, label string, output any) (model.AgentSubTask, error) {
 	var outputJSON []byte
 	if output != nil {
@@ -99,14 +90,12 @@ func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, statu
 		DecisionHash:     decisionHash,
 	}
 
-	// On-chain first, same absolute rule as createTask (v2.1) — applies to
-	// every Sub Task, not just trade-related ones
-	// (docs/plans/agent-orchestration-graph-rebuild.md v2.14/v2.15). If this
-	// fails, the whole turn aborts right here: no Postgres row, nothing
-	// partially created. A step existing off-chain only, even transiently,
-	// is not a degraded state to tolerate — the hash chain's own value as a
-	// commitment made *before* the next (possibly irreversible) step
-	// depends on this never happening.
+	// On-chain first, same absolute rule as createTask — applies to every Sub
+	// Task. If this fails, the whole turn aborts right here: no Postgres row,
+	// nothing partially created. A step existing off-chain only, even
+	// transiently, is not a degraded state to tolerate — the hash chain's own
+	// value as a commitment made *before* the next (possibly irreversible)
+	// step depends on this never happening.
 	onChainIDs, txHash, chainErr := r.chain.RecordSubTasks(ctx, r.onChainTaskID, []model.AgentSubTask{unsaved})
 	if chainErr != nil {
 		return model.AgentSubTask{}, fmt.Errorf("sub_task_recorder: on-chain recordSubTasks failed, aborting (on-chain is the source of truth, no off-chain-only step is allowed): %w", chainErr)
@@ -126,26 +115,20 @@ func (r *SubTaskRecorder) Record(ctx context.Context, agentName, stepName, statu
 	if r.OnRecord != nil {
 		r.OnRecord(row)
 	}
-	// Pushed to any WebSocket client watching this Task's reasoning
-	// (docs/plans/realtime-websocket-updates.md §3), independent of
-	// OnRecord above — OnRecord only fires for the one in-flight HTTP
-	// request that triggered this run; this reaches every other client
-	// with this Task's detail view open, replacing what used to be a 5s
-	// poll.
+	// Pushed to any WebSocket client watching this Task's reasoning,
+	// independent of OnRecord above — OnRecord only fires for the one in-flight
+	// HTTP request that triggered this run; this reaches every other client
+	// with this Task's detail view open.
 	realtime.Publish(fmt.Sprintf("agent-task-reasoning:%d", r.taskID), row)
 	return row, nil
 }
 
-// TerminalHash is the chain's current tip — the value submitted on-chain as
-// reasoningHash once a run reaches an execute/skip step (see
-// docs/plans/agent-role-architecture.md §7).
+// TerminalHash is the chain's current tip.
 func (r *SubTaskRecorder) TerminalHash() string {
 	return r.prevHash
 }
 
-// TaskID is the Postgres id of the Task this recorder's chain belongs to —
-// needed by submit_trade to attach a real agent_trades row to the right
-// Task (docs/plans/agent-trade-execution.md).
+// TaskID is the Postgres id of the Task this recorder's chain belongs to.
 func (r *SubTaskRecorder) TaskID() int64 {
 	return r.taskID
 }

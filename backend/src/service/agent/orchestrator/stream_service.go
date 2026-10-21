@@ -1,9 +1,10 @@
-package agent
+package orchestrator
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"io"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
+	helper "github.com/horizonlabs/pulsarfi-backend/src/app/helper"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	dbmodel "github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/realtime"
@@ -121,7 +123,7 @@ func (live *liveSubTasks) done(row dbmodel.AgentSubTask) {
 // turnStream owns everything live about one turn: the sub-task list the
 // frontend sees, and which agent/step is currently working (so a caught tool
 // failure can be attributed to the right row). It is built once per turn, by
-// newRunContext, and reached by every tool through RunContext.Stream — this
+// newRunContext, and reached by every tool through agentcore.RunContext.Stream — this
 // is the one file to read for "how does the UI get sub_tasks".
 type turnStream struct {
 	chatID uuid.UUID
@@ -151,7 +153,7 @@ func (s *turnStream) StepFailed(reason string) {
 	s.live.failed(s.agent, s.step, reason)
 }
 
-// StepDone publishes a step that finished; SubTaskRecorder.OnRecord is wired
+// StepDone publishes a step that finished; subtask.SubTaskRecorder.OnRecord is wired
 // to it.
 func (s *turnStream) StepDone(row dbmodel.AgentSubTask) {
 	s.live.done(row)
@@ -174,13 +176,13 @@ func isToolBudgetExhausted(err error) bool {
 
 type turnOutcome struct {
 	reply     strings.Builder
-	novaCalls []toolCallResult
+	novaCalls []helper.ToolCallResult
 	interrupt *interruptOutcome
 }
 
 type interruptOutcome struct {
-	kind      string
-	id        string
+	Kind      string
+	ID        string
 	questions []contracts.IntakeField
 	message   string
 }
@@ -189,7 +191,7 @@ type interruptOutcome struct {
 // Comet all arrive here, told apart by AgentName: Eino forwards the events of
 // the agents Quasar calls into Quasar's own iterator. Every live signal the
 // frontend gets is published from this loop (or from the Sub Task recorder).
-func (orch *Orchestrator) consume(ctx context.Context, run *RunContext, events *adk.AsyncIterator[*adk.AgentEvent], keepCheckpoint bool) (OrchestratorResult, error) {
+func (orch *Orchestrator) consume(ctx context.Context, run *agentcore.RunContext, events *adk.AsyncIterator[*adk.AgentEvent], keepCheckpoint bool) (OrchestratorResult, error) {
 	topic := ChatStreamTopic(run.ChatID)
 	var outcome turnOutcome
 	for {
@@ -222,7 +224,7 @@ func (orch *Orchestrator) consume(ctx context.Context, run *RunContext, events *
 // finish turns a completed event loop into the turn's result: first what
 // happened to the pause (finishInterrupt), then what the frontend renders
 // (finalizeResult).
-func (orch *Orchestrator) finish(ctx context.Context, run *RunContext, outcome *turnOutcome, keepCheckpoint bool) OrchestratorResult {
+func (orch *Orchestrator) finish(ctx context.Context, run *agentcore.RunContext, outcome *turnOutcome, keepCheckpoint bool) OrchestratorResult {
 	result := OrchestratorResult{TaskID: run.TaskID, OnChainTaskID: run.OnChainTaskID, Reply: outcome.reply.String()}
 	orch.finishInterrupt(ctx, run, outcome.interrupt, keepCheckpoint, &result)
 	orch.finalizeResult(ctx, run, outcome, &result)
@@ -232,10 +234,10 @@ func (orch *Orchestrator) finish(ctx context.Context, run *RunContext, outcome *
 // finishInterrupt records the pause the turn ended on, or clears the chat's
 // checkpoint when a finished turn is over. It is the only writer of the
 // interrupt marker.
-func (orch *Orchestrator) finishInterrupt(ctx context.Context, run *RunContext, interrupt *interruptOutcome, keepCheckpoint bool, result *OrchestratorResult) {
+func (orch *Orchestrator) finishInterrupt(ctx context.Context, run *agentcore.RunContext, interrupt *interruptOutcome, keepCheckpoint bool, result *OrchestratorResult) {
 	if interrupt != nil {
-		orch.interrupts().record(ctx, run.ChatID, interrupt.kind, interrupt.id)
-		if interrupt.kind == interruptQuestions {
+		orch.interrupts().Record(ctx, run.ChatID, interrupt.Kind, interrupt.ID)
+		if interrupt.Kind == agentcore.InterruptQuestions {
 			result.PendingQuestions = interrupt.questions
 		}
 		// A card needs a sentence above it. The pause carries one; use it
@@ -247,14 +249,14 @@ func (orch *Orchestrator) finishInterrupt(ctx context.Context, run *RunContext, 
 		return
 	}
 	if !keepCheckpoint {
-		orch.interrupts().clear(ctx, run.ChatID)
+		orch.interrupts().Clear(ctx, run.ChatID)
 	}
 }
 
 // finalizeResult decides what the frontend renders: plain text, a chart, news,
 // or the clarifying-questions card.
-func (orch *Orchestrator) finalizeResult(ctx context.Context, run *RunContext, outcome *turnOutcome, result *OrchestratorResult) {
-	result.ContentType, result.UIProps = classifyReply(result.PendingQuestions, orch.cardOfTask(ctx, run.TaskID), outcome.novaCalls)
+func (orch *Orchestrator) finalizeResult(ctx context.Context, run *agentcore.RunContext, outcome *turnOutcome, result *OrchestratorResult) {
+	result.ContentType, result.UIProps = helper.ClassifyReply(result.PendingQuestions, orch.cardOfTask(ctx, run.TaskID), outcome.novaCalls)
 	if result.ContentType == "workflow_card" {
 		result.UIComponent = "clarifying_questions"
 	}
@@ -266,14 +268,14 @@ func interruptFrom(info *adk.InterruptInfo) *interruptOutcome {
 			continue
 		}
 		switch payload := interruptCtx.Info.(type) {
-		case QuestionsInterrupt:
-			return &interruptOutcome{kind: interruptQuestions, id: interruptCtx.ID, questions: payload.Questions, message: payload.Message}
-		case *QuestionsInterrupt:
-			return &interruptOutcome{kind: interruptQuestions, id: interruptCtx.ID, questions: payload.Questions, message: payload.Message}
-		case ArmInterrupt:
-			return &interruptOutcome{kind: interruptArm, id: interruptCtx.ID, message: payload.Message}
-		case *ArmInterrupt:
-			return &interruptOutcome{kind: interruptArm, id: interruptCtx.ID, message: payload.Message}
+		case agentcore.QuestionsInterrupt:
+			return &interruptOutcome{Kind: agentcore.InterruptQuestions, ID: interruptCtx.ID, questions: payload.Questions, message: payload.Message}
+		case *agentcore.QuestionsInterrupt:
+			return &interruptOutcome{Kind: agentcore.InterruptQuestions, ID: interruptCtx.ID, questions: payload.Questions, message: payload.Message}
+		case agentcore.ArmInterrupt:
+			return &interruptOutcome{Kind: agentcore.InterruptArm, ID: interruptCtx.ID, message: payload.Message}
+		case *agentcore.ArmInterrupt:
+			return &interruptOutcome{Kind: agentcore.InterruptArm, ID: interruptCtx.ID, message: payload.Message}
 		}
 	}
 	return nil
@@ -386,7 +388,7 @@ func publishAssistant(topic, agentName string, output *adk.MessageVariant, outco
 const thinkingBatchBytes = 160
 
 // publishToolResult closes the tool_call signal for Nova's and Comet's own
-// tools and keeps Nova's results, which classifyReply turns into charts and
+// tools and keeps Nova's results, which helper.ClassifyReply turns into charts and
 // news cards. Quasar's own calls (open_task, analyzer_agent, ...) are
 // hand-offs, already shown as Sub Tasks, not tool activity.
 func publishToolResult(topic, agentName string, output *adk.MessageVariant, outcome *turnOutcome) error {
@@ -403,7 +405,7 @@ func publishToolResult(topic, agentName string, output *adk.MessageVariant, outc
 	}
 	publishChatEvent(topic, "tool_call", map[string]any{"agent": agentName, "tool": toolName, "phase": "end"})
 	if agentName == "analyzer" && message != nil {
-		outcome.novaCalls = append(outcome.novaCalls, toolCallResult{ToolName: toolName, Result: message.Content})
+		outcome.novaCalls = append(outcome.novaCalls, helper.ToolCallResult{ToolName: toolName, Result: message.Content})
 	}
 	return nil
 }

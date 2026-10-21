@@ -15,16 +15,16 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	dbmodel "github.com/horizonlabs/pulsarfi-backend/src/model"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 // TaskOpener is the Task lifecycle Quasar's tools need, implemented by
 // *agent.Orchestrator: open_task and update_task call these, so the Postgres
 // row, the on-chain createTask and the Sub Task chain stay in one place.
 type TaskOpener interface {
-	CommitTask(ctx context.Context, rc *agent.RunContext, decision agent.RouteDecision) error
-	UpdateTask(ctx context.Context, rc *agent.RunContext, decision agent.RouteDecision) error
+	CommitTask(ctx context.Context, rc *agentcore.RunContext, decision agentcore.RouteDecision) error
+	UpdateTask(ctx context.Context, rc *agentcore.RunContext, decision agentcore.RouteDecision) error
 }
 
 // ArmedTaskReader is the one read executor_agent's guard needs: whether the
@@ -89,6 +89,6 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, analyzerAgen
 // default also keeps the card contract's {id} placeholders from being read as
 // prompt template variables.
 func withCurrentTime(_ context.Context, instruction string, input *adk.AgentInput) ([]adk.Message, error) {
-	messages := []adk.Message{schema.SystemMessage(instruction), schema.SystemMessage(agent.CurrentTimeContext())}
+	messages := []adk.Message{schema.SystemMessage(instruction), schema.SystemMessage(agentcore.CurrentTimeContext())}
 	return append(messages, input.Messages...), nil
 }

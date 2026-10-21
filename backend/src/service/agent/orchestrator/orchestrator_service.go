@@ -1,10 +1,11 @@
-package agent
+package orchestrator
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"strings"
 	"time"
 
@@ -19,14 +20,9 @@ import (
 
 func init() {
 	// Interrupt payloads travel inside the Eino checkpoint, so gob must know them.
-	schema.RegisterName[QuestionsInterrupt]("agent_questions_interrupt")
-	schema.RegisterName[ArmInterrupt]("agent_arm_interrupt")
+	schema.RegisterName[agentcore.QuestionsInterrupt]("agent_questions_interrupt")
+	schema.RegisterName[agentcore.ArmInterrupt]("agent_arm_interrupt")
 }
-
-var (
-	ErrNoOpenTask         = errors.New("agent: no open task, call open_task first")
-	ErrNoPendingExecution = errors.New("agent: task has no pending arm pause to resume")
-)
 
 // Reading map for this file.
 //
@@ -55,7 +51,7 @@ type Orchestrator struct {
 
 	Stocks StockCatalog
 
-	CheckPointStore ExtendedCheckPointStore
+	CheckPointStore agentcore.ExtendedCheckPointStore
 
 	runner *adk.Runner
 }
@@ -65,7 +61,7 @@ type Orchestrator struct {
 type OrchestratorChainClient interface {
 	CreateTask(ctx context.Context, owner string, isActionable bool, summary string, promptHash [32]byte) (onChainTaskID uint64, err error)
 	MarkActionable(ctx context.Context, onChainTaskID uint64) error
-	ChainSubTaskRecorder
+	agentcore.ChainSubTaskRecorder
 }
 
 // StockCatalog is the orchestrator's narrow view of the stock catalog, used
@@ -105,48 +101,17 @@ type OrchestratorResult struct {
 	PendingQuestions []contracts.IntakeField
 }
 
-// RouteDecision is the argument of Quasar's open_task and update_task tools:
-// what Quasar understood about the request. It is also what the Task row's
-// trigger description is built from.
-type RouteDecision struct {
-	IsActionable    bool                    `json:"is_actionable" jsonschema_description:"true only if this request could ever result in an on-chain trade; false for anything purely informational (chart, portfolio, news) and while trade parameters are still missing"`
-	Summary         string                  `json:"summary" jsonschema_description:"short one-line summary of the request in the exact language or dialect of the user's message, suitable for on-chain storage"`
-	Label           string                  `json:"label" jsonschema_description:"short human-readable title for this step, in the exact language or dialect of the user's message"`
-	Shape           string                  `json:"shape,omitempty" jsonschema_description:"scalp, swing, investment, or empty when the user has not chosen one"`
-	Side            string                  `json:"side,omitempty" jsonschema_description:"buy or sell (canonical English value), or empty when unknown"`
-	MentionedTicker string                  `json:"mentioned_ticker,omitempty" jsonschema_description:"canonical PulsarFi ticker for the stock the user named: ALL-CAPS with the P suffix (BRPT resolves to BRPTP), or empty when none was named"`
-	BudgetIDRX      string                  `json:"budget_idrx,omitempty" jsonschema_description:"confirmed IDRX budget as plain digits, or empty when not applicable or unknown"`
-	SellAmount      string                  `json:"sell_amount,omitempty" jsonschema_description:"for sell: confirmed quantity of stock tokens as plain digits, or a percentage such as 50%, or empty when unknown"`
-	Card            *contracts.CardContract `json:"card,omitempty" jsonschema_description:"mandatory for any trade Task, authored entirely in the user's language; see the card contract in your instructions"`
+func (orch *Orchestrator) interrupts() *agentcore.InterruptStore {
+	return agentcore.NewInterruptStore(orch.CheckPointStore)
 }
-
-// QuestionsInterrupt is the payload of the ask_user pause. Message is the
-// sentence that introduces the card; it travels with the pause so the user
-// never sees a card under an empty bubble.
-type QuestionsInterrupt struct {
-	Questions []contracts.IntakeField
-	Message   string
-}
-
-// ArmInterrupt is the payload of the await_arm pause. Message introduces the
-// Arm Card, same reason as above.
-type ArmInterrupt struct {
-	TaskID  int64
-	Message string
-}
-
-const (
-	interruptQuestions = "questions"
-	interruptArm       = "arm"
-)
 
 // Send runs one turn for a chat message, routed by the intent ChatService
 // already resolved — including which pause it answers, so the pending marker
 // is read exactly once, in ChatService.resolveTurn. A tool-budget cap is not a
 // failure: the turn is finalized from whatever it produced.
-func (orch *Orchestrator) Send(ctx context.Context, in OrchestratorInput, intent turnIntent) (OrchestratorResult, error) {
+func (orch *Orchestrator) Send(ctx context.Context, in OrchestratorInput, intent agentcore.TurnIntent) (OrchestratorResult, error) {
 	run := orch.newRunContext(in.ChatID, in.Wallet, in.RawPrompt, in.SourceMessageID)
-	ctx = WithRunContext(ctx, run)
+	ctx = agentcore.WithRunContext(ctx, run)
 
 	result, err := orch.dispatchTurn(ctx, run, in, intent)
 	if errors.Is(err, errToolBudgetExhausted) {
@@ -156,11 +121,11 @@ func (orch *Orchestrator) Send(ctx context.Context, in OrchestratorInput, intent
 	return result, err
 }
 
-func (orch *Orchestrator) dispatchTurn(ctx context.Context, run *RunContext, in OrchestratorInput, intent turnIntent) (OrchestratorResult, error) {
-	switch intent.kind {
-	case answerQuestions:
-		return orch.resumeQuestionsTurn(ctx, run, in, intent.interruptID)
-	case sideQuestionDuringArm:
+func (orch *Orchestrator) dispatchTurn(ctx context.Context, run *agentcore.RunContext, in OrchestratorInput, intent agentcore.TurnIntent) (OrchestratorResult, error) {
+	switch intent.Kind {
+	case agentcore.AnswerQuestions:
+		return orch.resumeQuestionsTurn(ctx, run, in, intent.InterruptID)
+	case agentcore.SideQuestionDuringArm:
 		// The message starts a new turn; the pending Arm pause stays alive.
 		return orch.runFreshTurn(ctx, run, in, true)
 	default:
@@ -170,7 +135,7 @@ func (orch *Orchestrator) dispatchTurn(ctx context.Context, run *RunContext, in 
 
 // resumeQuestionsTurn answers a pending questions card: the user's message is
 // the suspended ask_user tool's result.
-func (orch *Orchestrator) resumeQuestionsTurn(ctx context.Context, run *RunContext, in OrchestratorInput, interruptID string) (OrchestratorResult, error) {
+func (orch *Orchestrator) resumeQuestionsTurn(ctx context.Context, run *agentcore.RunContext, in OrchestratorInput, interruptID string) (OrchestratorResult, error) {
 	if err := orch.restoreFromChat(ctx, run); err != nil {
 		return OrchestratorResult{}, err
 	}
@@ -186,7 +151,7 @@ func (orch *Orchestrator) resumeQuestionsTurn(ctx context.Context, run *RunConte
 // runFreshTurn starts a new turn. keepCheckpoint is true only when the chat is
 // paused on the Arm card and this message is a side question: the Arm pause
 // must survive the new turn.
-func (orch *Orchestrator) runFreshTurn(ctx context.Context, run *RunContext, in OrchestratorInput, keepCheckpoint bool) (OrchestratorResult, error) {
+func (orch *Orchestrator) runFreshTurn(ctx context.Context, run *agentcore.RunContext, in OrchestratorInput, keepCheckpoint bool) (OrchestratorResult, error) {
 	events := orch.runner.Run(ctx, in.Messages, adk.WithCheckPointID(run.ChatID.String()))
 	return orch.consume(ctx, run, events, keepCheckpoint)
 }
@@ -194,37 +159,37 @@ func (orch *Orchestrator) runFreshTurn(ctx context.Context, run *RunContext, in 
 // ResumeExecute resumes the Arm pause once the Task layer has confirmed
 // on-chain arm and allowance. It carries only a bare "armed" signal: what to
 // execute already lives in the checkpointed conversation.
-func (orch *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, wallet string) (ExecuteTaskResult, error) {
+func (orch *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, wallet string) (agentcore.ExecuteTaskResult, error) {
 	task, found, err := orch.Tasks.FindByID(ctx, taskID)
 	if err != nil || !found {
-		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: task not found: %d", taskID)
+		return agentcore.ExecuteTaskResult{}, fmt.Errorf("orchestrator: task not found: %d", taskID)
 	}
 
 	chatID := orch.chatIDForTask(ctx, task)
-	pending, hasPending := orch.interrupts().pending(ctx, chatID)
-	if chatID == uuid.Nil || !hasPending || pending.kind != interruptArm {
-		return ExecuteTaskResult{}, fmt.Errorf("%w: task %d", ErrNoPendingExecution, taskID)
+	pending, hasPending := orch.interrupts().Pending(ctx, chatID)
+	if chatID == uuid.Nil || !hasPending || pending.Kind != agentcore.InterruptArm {
+		return agentcore.ExecuteTaskResult{}, fmt.Errorf("%w: task %d", agentcore.ErrNoPendingExecution, taskID)
 	}
 
 	run := orch.newRunContext(chatID, wallet, "", task.SourceMessageID)
 	if err := orch.restoreRunContext(ctx, run, task); err != nil {
-		return ExecuteTaskResult{}, err
+		return agentcore.ExecuteTaskResult{}, err
 	}
-	ctx = WithRunContext(ctx, run)
+	ctx = agentcore.WithRunContext(ctx, run)
 
-	events, err := orch.runner.ResumeWithParams(ctx, chatID.String(), &adk.ResumeParams{Targets: map[string]any{pending.id: "armed"}})
+	events, err := orch.runner.ResumeWithParams(ctx, chatID.String(), &adk.ResumeParams{Targets: map[string]any{pending.ID: "armed"}})
 	if err != nil {
-		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume arm pause: %w", err)
+		return agentcore.ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume arm pause: %w", err)
 	}
 	result, err := orch.consume(ctx, run, events, false)
 	if errors.Is(err, errToolBudgetExhausted) {
 		// The budget is not a failure: return what the turn produced.
-		return ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
+		return agentcore.ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
 	}
 	if err != nil {
-		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume execute failed: %w", err)
+		return agentcore.ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume execute failed: %w", err)
 	}
-	return ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
+	return agentcore.ExecuteTaskResult{TaskID: taskID, Status: "executed", Reply: result.Reply}, nil
 }
 
 // chatIDForTask finds the chat a Task belongs to, needed to look up its
@@ -294,7 +259,7 @@ NEVER hardcode or assume any single language. Do NOT use em dashes.
 Produce a single friendly, professional confirmation sentence stating that the trade plan for %s has been cancelled and no orders or on-chain transactions were executed.
 Return ONLY the confirmation sentence, with no markdown fences, greetings, or extra commentary.`, target, target)
 
-	msgs := append([]*schema.Message{schema.SystemMessage(systemPrompt)}, chatHistory(recent)...)
+	msgs := append([]*schema.Message{schema.SystemMessage(systemPrompt)}, agentcore.ChatHistory(recent)...)
 	resp, err := orch.ReplyModel.Generate(ctx, msgs)
 	if err == nil && resp != nil && strings.TrimSpace(resp.Content) != "" {
 		return strings.TrimSpace(resp.Content)

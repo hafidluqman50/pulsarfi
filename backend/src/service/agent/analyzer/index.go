@@ -3,12 +3,12 @@ package analyzer
 import (
 	"context"
 	"fmt"
+	helper "github.com/horizonlabs/pulsarfi-backend/src/app/helper"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
 
@@ -37,7 +37,7 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, chartReader 
 		Description: "Gathers news and/or technical evidence for a Task's trigger condition and concludes whether it is satisfied, citing the specific evidence that drove the conclusion. Also answers portfolio/chart questions.",
 		Instruction: instructions + TrustedSourcesInstructions(TrustedNewsDomains),
 		Model:       chatModel,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agent.WrapToolsGraceful(tools)}},
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: helper.WrapToolsGraceful(tools)}},
 		// Bounded at 8 iterations: strictly well below 20 to conserve on-chain
 		// ETH gas, while giving enough headroom for multi-step news research
 		// and follow-up reference queries without hitting premature

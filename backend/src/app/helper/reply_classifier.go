@@ -1,4 +1,4 @@
-package agent
+package helper
 
 import (
 	"encoding/json"
@@ -9,8 +9,8 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 )
 
-// toolCallResult mirrors one tool call Nova made internally.
-type toolCallResult struct {
+// ToolCallResult mirrors one tool call an agent made internally.
+type ToolCallResult struct {
 	ToolName string
 	Result   string
 }
@@ -50,7 +50,7 @@ func extractHostName(rawURL string) string {
 	}
 }
 
-func extractNewsEvidenceFromToolCalls(toolCalls []toolCallResult) []newsEvidenceItem {
+func extractNewsEvidenceFromToolCalls(toolCalls []ToolCallResult) []newsEvidenceItem {
 	var evidence []newsEvidenceItem
 	seenURLs := make(map[string]bool)
 
@@ -136,7 +136,9 @@ func extractNewsEvidenceFromToolCalls(toolCalls []toolCallResult) []newsEvidence
 	return evidence
 }
 
-func classifyReply(pendingQuestions []contracts.IntakeField, card *contracts.CardContract, analyzerToolCalls []toolCallResult) (contentType string, uiProps json.RawMessage) {
+// ClassifyReply decides what the frontend should render for a finished turn:
+// the clarifying-questions card, a chart, news, both, or plain text.
+func ClassifyReply(pendingQuestions []contracts.IntakeField, card *contracts.CardContract, analyzerToolCalls []ToolCallResult) (contentType string, uiProps json.RawMessage) {
 	if len(pendingQuestions) > 0 {
 		if payload, err := json.Marshal(map[string]any{
 			"questions": pendingQuestions,

@@ -1,10 +1,13 @@
-package agent
+package task
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/subtask"
 	"log/slog"
 	"math/big"
 	"strings"
@@ -15,14 +18,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-)
-
-var (
-	ErrWalletMismatch    = errors.New("agent: authenticated wallet does not own this task")
-	ErrTaskNotFound      = errors.New("agent: task not found")
-	ErrTaskNotActionable = errors.New("agent: task is not actionable")
-	ErrTaskNotArmed      = errors.New("agent: task has not been armed yet")
-	ErrNothingToRetry    = errors.New("agent: no failed message to retry")
 )
 
 type AgentContractClient interface {
@@ -47,15 +42,7 @@ type TaskService struct {
 	Chats        *repository.AgentChatRepository
 	Chain        AgentContractClient
 	Executor     adk.Agent
-	Orchestrator *Orchestrator
-}
-
-type WorkflowCard struct {
-	TaskID      int64           `json:"task_id,omitempty"`
-	Reply       string          `json:"reply"`
-	ContentType string          `json:"content_type"`
-	UIComponent *string         `json:"ui_component,omitempty"`
-	UIProps     json.RawMessage `json:"ui_props,omitempty"`
+	Orchestrator *orchestrator.Orchestrator
 }
 
 func (s *TaskService) ListTasks(ctx context.Context, walletAddress string) ([]model.AgentTask, error) {
@@ -78,7 +65,7 @@ func (s *TaskService) GetReasoningChain(ctx context.Context, taskID int64) ([]mo
 		return nil, err
 	}
 	if !found {
-		return nil, ErrTaskNotFound
+		return nil, agentcore.ErrTaskNotFound
 	}
 	return s.SubTasks.FindByTaskID(ctx, taskID)
 }
@@ -89,10 +76,10 @@ func (s *TaskService) GetTrades(ctx context.Context, taskID int64, walletAddress
 		return nil, err
 	}
 	if !found {
-		return nil, ErrTaskNotFound
+		return nil, agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, walletAddress) {
-		return nil, ErrWalletMismatch
+		return nil, agentcore.ErrWalletMismatch
 	}
 	return s.Trades.FindByTaskID(ctx, taskID)
 }
@@ -138,10 +125,10 @@ func (s *TaskService) ArmTask(ctx context.Context, taskID int64, wallet string, 
 		return ArmTaskResult{}, err
 	}
 	if !found {
-		return ArmTaskResult{}, ErrTaskNotFound
+		return ArmTaskResult{}, agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ArmTaskResult{}, ErrWalletMismatch
+		return ArmTaskResult{}, agentcore.ErrWalletMismatch
 	}
 	if task.OnChainTaskID == nil {
 		return ArmTaskResult{}, fmt.Errorf("agent: task %d has no on-chain id — every Task must already be created on-chain by the time it reaches Arm, this should never happen", taskID)
@@ -204,7 +191,7 @@ func (s *TaskService) recordArmed(ctx context.Context, task model.AgentTask, tas
 	if task.Summary != nil {
 		summary = *task.Summary
 	}
-	recorder, err := NewSubTaskRecorder(ctx, s.SubTasks, s.Chain, onChainTaskID, taskID, summary, task.WalletAddress)
+	recorder, err := subtask.NewSubTaskRecorder(ctx, s.SubTasks, s.Chain, onChainTaskID, taskID, summary, task.WalletAddress)
 	if err != nil {
 		return fmt.Errorf("agent: build subtask recorder for armed step: %w", err)
 	}
@@ -232,13 +219,13 @@ func (s *TaskService) DisarmTask(ctx context.Context, taskID int64, wallet strin
 		return err
 	}
 	if !found {
-		return ErrTaskNotFound
+		return agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ErrWalletMismatch
+		return agentcore.ErrWalletMismatch
 	}
 	if task.OnChainTaskID == nil {
-		return ErrTaskNotArmed
+		return agentcore.ErrTaskNotArmed
 	}
 	if err := s.Chain.CancelTask(ctx, uint64(*task.OnChainTaskID)); err != nil {
 		return fmt.Errorf("agent: on-chain cancelTask: %w", err)
@@ -252,10 +239,10 @@ func (s *TaskService) PauseTask(ctx context.Context, taskID int64, wallet string
 		return err
 	}
 	if !found {
-		return ErrTaskNotFound
+		return agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ErrWalletMismatch
+		return agentcore.ErrWalletMismatch
 	}
 	return s.Tasks.SetPaused(ctx, taskID, true)
 }
@@ -266,19 +253,12 @@ func (s *TaskService) ResumeTask(ctx context.Context, taskID int64, wallet strin
 		return err
 	}
 	if !found {
-		return ErrTaskNotFound
+		return agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ErrWalletMismatch
+		return agentcore.ErrWalletMismatch
 	}
 	return s.Tasks.SetPaused(ctx, taskID, false)
-}
-
-type ExecuteTaskResult struct {
-	TaskID int64              `json:"task_id"`
-	Status string             `json:"status"`
-	Reply  string             `json:"reply"`
-	Trades []model.AgentTrade `json:"trades,omitempty"`
 }
 
 // ExecuteTask authorizes and triggers execution — nothing else. All LLM
@@ -286,29 +266,29 @@ type ExecuteTaskResult struct {
 // sizing, submit_trade) happens inside the graph via
 // Orchestrator.ResumeExecute; this function never builds a prompt or calls
 // an agent itself (docs/plans/quasar-clean-routing-scalp-refactor.md §2).
-func (s *TaskService) ExecuteTask(ctx context.Context, taskID int64, wallet string) (ExecuteTaskResult, error) {
+func (s *TaskService) ExecuteTask(ctx context.Context, taskID int64, wallet string) (agentcore.ExecuteTaskResult, error) {
 	task, found, err := s.Tasks.FindByID(ctx, taskID)
 	if err != nil {
-		return ExecuteTaskResult{}, err
+		return agentcore.ExecuteTaskResult{}, err
 	}
 	if !found {
-		return ExecuteTaskResult{}, ErrTaskNotFound
+		return agentcore.ExecuteTaskResult{}, agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ExecuteTaskResult{}, ErrWalletMismatch
+		return agentcore.ExecuteTaskResult{}, agentcore.ErrWalletMismatch
 	}
 	if !task.IsActionable {
-		return ExecuteTaskResult{}, ErrTaskNotActionable
+		return agentcore.ExecuteTaskResult{}, agentcore.ErrTaskNotActionable
 	}
 	if task.ArmedAt == nil || task.OnChainTaskID == nil {
-		return ExecuteTaskResult{}, ErrTaskNotArmed
+		return agentcore.ExecuteTaskResult{}, agentcore.ErrTaskNotArmed
 	}
 
 	if task.Status == "executed" {
 		return s.alreadyExecutedResult(ctx, task)
 	}
 	if s.Orchestrator == nil {
-		return ExecuteTaskResult{}, errors.New("agent: orchestrator not initialized")
+		return agentcore.ExecuteTaskResult{}, errors.New("agent: orchestrator not initialized")
 	}
 
 	tradesBefore, _ := s.Trades.FindByTaskID(ctx, taskID)
@@ -319,7 +299,7 @@ func (s *TaskService) ExecuteTask(ctx context.Context, taskID int64, wallet stri
 	res, err := s.Orchestrator.ResumeExecute(ctx, taskID, wallet)
 	if err != nil {
 		s.persistExecutionMessage(ctx, &task, fmt.Sprintf("On-chain execution failed: %s", err.Error()))
-		return ExecuteTaskResult{}, fmt.Errorf("agent: orchestrator resume execute: %w", err)
+		return agentcore.ExecuteTaskResult{}, fmt.Errorf("agent: orchestrator resume execute: %w", err)
 	}
 
 	status, executedTrades := s.reconcileTradeStatus(ctx, taskID, task.Status, countBefore)
@@ -329,10 +309,10 @@ func (s *TaskService) ExecuteTask(ctx context.Context, taskID int64, wallet stri
 		s.persistExecutionMessage(ctx, &task, cleanReply)
 	}
 
-	return ExecuteTaskResult{TaskID: taskID, Status: status, Reply: cleanReply, Trades: executedTrades}, nil
+	return agentcore.ExecuteTaskResult{TaskID: taskID, Status: status, Reply: cleanReply, Trades: executedTrades}, nil
 }
 
-func (s *TaskService) alreadyExecutedResult(ctx context.Context, task model.AgentTask) (ExecuteTaskResult, error) {
+func (s *TaskService) alreadyExecutedResult(ctx context.Context, task model.AgentTask) (agentcore.ExecuteTaskResult, error) {
 	var card *contracts.CardContract
 	if task.TriggerDescription != nil && *task.TriggerDescription != "" {
 		var triggerData struct {
@@ -348,7 +328,7 @@ func (s *TaskService) alreadyExecutedResult(ctx context.Context, task model.Agen
 	if card != nil && card.Ledger.ExecutedDesc != "" {
 		reply = card.Ledger.ExecutedDesc
 	}
-	return ExecuteTaskResult{TaskID: task.ID, Status: task.Status, Reply: reply, Trades: trades}, nil
+	return agentcore.ExecuteTaskResult{TaskID: task.ID, Status: task.Status, Reply: reply, Trades: trades}, nil
 }
 
 func (s *TaskService) reconcileTradeStatus(ctx context.Context, taskID int64, currentStatus string, countBefore int) (string, []model.AgentTrade) {
@@ -406,14 +386,6 @@ func (s *TaskService) resolveExecutionChatID(ctx context.Context, task *model.Ag
 // Task) is intentionally not implemented — standing-instruction monitoring
 // is still undesigned work, tracked separately, not part of this refactor's
 // scalp-only scope.
-
-func truncateRunes(s string, max int) string {
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s
-	}
-	return string(runes[:max])
-}
 
 func cleanExecutionReply(raw string) string {
 	trimmed := strings.TrimSpace(raw)
@@ -535,10 +507,10 @@ func (s *TaskService) SettleHorizonTask(ctx context.Context, taskID int64, walle
 		return err
 	}
 	if !found {
-		return ErrTaskNotFound
+		return agentcore.ErrTaskNotFound
 	}
 	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ErrWalletMismatch
+		return agentcore.ErrWalletMismatch
 	}
 	status := "completed"
 	if policy == "leave_open" {

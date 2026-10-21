@@ -1,6 +1,6 @@
 package executor
 
-import "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+import agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 
 const instructions = `# Role
 
@@ -53,4 +53,4 @@ You are the Executor node in PulsarFi's AI trading agent. Internally you go by t
 - Your entire plain-text reply, trading reasonings, and explanations MUST be 100% in that exact language.
 - STRICTLY FORBIDDEN to output Chinese (中文), mix languages, or default to English when the user communicates in another language.
 - Never output raw JSON or code blocks in your final reply.
-` + agent.GlobalInstructions
+` + agentcore.GlobalInstructions

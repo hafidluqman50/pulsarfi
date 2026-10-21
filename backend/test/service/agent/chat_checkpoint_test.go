@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"os"
 	"strings"
 	"testing"
@@ -10,7 +11,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -37,7 +37,7 @@ func TestChatService_CheckpointPauseResumeCancelAndKeepAlive(t *testing.T) {
 		t.Fatal("expected registry.AgentChat.CheckPointStore to be configured")
 	}
 
-	cpStore, ok := registry.AgentChat.CheckPointStore.(agentsvc.ExtendedCheckPointStore)
+	cpStore, ok := registry.AgentChat.CheckPointStore.(agentcore.ExtendedCheckPointStore)
 	if !ok {
 		t.Fatal("expected registry.AgentChat.CheckPointStore to implement ExtendedCheckPointStore")
 	}

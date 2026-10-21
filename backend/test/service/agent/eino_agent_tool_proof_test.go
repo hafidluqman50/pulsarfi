@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"errors"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"io"
 	"strings"
 	"sync"
@@ -13,7 +14,6 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 // Proof tests for docs/plans/agent-as-tool-orchestration.md (spikes S1-S5):
@@ -273,7 +273,7 @@ func (walletProbeTool) Info(_ context.Context) (*schema.ToolInfo, error) {
 }
 
 func (walletProbeTool) InvokableRun(ctx context.Context, _ string, _ ...tool.Option) (string, error) {
-	runContext, ok := agentsvc.RunContextFrom(ctx)
+	runContext, ok := agentcore.RunContextFrom(ctx)
 	if !ok {
 		return "no run context", nil
 	}
@@ -429,7 +429,7 @@ func TestEinoProofS3_ArmGateStreamsCometAfterResumeAndRefusesUnarmed(t *testing.
 // S4: a RunContext set in ctx before Run is readable inside Nova's own tool,
 // two agents deep.
 func TestEinoProofS4_RunContextReachesNovaTools(t *testing.T) {
-	ctx := agentsvc.WithRunContext(context.Background(), &agentsvc.RunContext{Wallet: "0xabc"})
+	ctx := agentcore.WithRunContext(context.Background(), &agentcore.RunContext{Wallet: "0xabc"})
 	nova := newAgent(t, "nova", []*schema.Message{toolCall("probe", `{}`), answer("", "nova done")}, walletProbeTool{})
 	quasar := newAgent(t, "quasar", []*schema.Message{toolCall("nova", `{"request":"x"}`), answer("", "done")}, adk.NewAgentTool(ctx, nova))
 

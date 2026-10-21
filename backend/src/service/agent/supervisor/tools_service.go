@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"log/slog"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
+	helper "github.com/horizonlabs/pulsarfi-backend/src/app/helper"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 const noOpenTaskReason = "no Task is open yet: call open_task first"
@@ -38,8 +39,8 @@ func refusal(reason string) string {
 	return string(payload)
 }
 
-func runContextWithTask(ctx context.Context) (*agent.RunContext, bool) {
-	run, ok := agent.RunContextFrom(ctx)
+func runContextWithTask(ctx context.Context) (*agentcore.RunContext, bool) {
+	run, ok := agentcore.RunContextFrom(ctx)
 	return run, ok && run.TaskID != 0
 }
 
@@ -47,8 +48,8 @@ func newOpenTaskTool(tasks TaskOpener) (tool.InvokableTool, error) {
 	return utils.InferTool(
 		"open_task",
 		"Opens the permanent on-chain Task for this request. Call it FIRST for anything except plain conversation, even while trade parameters are still missing. Never call it twice in one turn: use update_task afterwards.",
-		func(ctx context.Context, decision agent.RouteDecision) (toolReply, error) {
-			run, ok := agent.RunContextFrom(ctx)
+		func(ctx context.Context, decision agentcore.RouteDecision) (toolReply, error) {
+			run, ok := agentcore.RunContextFrom(ctx)
 			if !ok {
 				return toolReply{}, errors.New("open_task: no run context bound to this turn")
 			}
@@ -67,7 +68,7 @@ func newUpdateTaskTool(tasks TaskOpener) (tool.InvokableTool, error) {
 	return utils.InferTool(
 		"update_task",
 		"Refreshes the Task that is already open once the user's answers settle (more of) the trade parameters. Send the complete, current decision, including the full card. Never opens a second Task.",
-		func(ctx context.Context, decision agent.RouteDecision) (toolReply, error) {
+		func(ctx context.Context, decision agentcore.RouteDecision) (toolReply, error) {
 			run, ok := runContextWithTask(ctx)
 			if !ok {
 				return toolReply{ToolError: noOpenTaskReason}, nil
@@ -107,7 +108,7 @@ func newAskUserTool() (tool.InvokableTool, error) {
 func (t *askUserTool) Info(_ context.Context) (*schema.ToolInfo, error) { return t.info, nil }
 
 func (t *askUserTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
-	wasInterrupted, _, state := tool.GetInterruptState[agent.QuestionsInterrupt](ctx)
+	wasInterrupted, _, state := tool.GetInterruptState[agentcore.QuestionsInterrupt](ctx)
 	if !wasInterrupted {
 		if _, ok := runContextWithTask(ctx); !ok {
 			return refusal(noOpenTaskReason), nil
@@ -116,7 +117,7 @@ func (t *askUserTool) InvokableRun(ctx context.Context, arguments string, _ ...t
 		if err := json.Unmarshal([]byte(arguments), &args); err != nil || len(args.Questions) == 0 {
 			return refusal("ask_user needs at least one question"), nil
 		}
-		payload := agent.QuestionsInterrupt{Questions: args.Questions, Message: args.Message}
+		payload := agentcore.QuestionsInterrupt{Questions: args.Questions, Message: args.Message}
 		return "", tool.StatefulInterrupt(ctx, payload, payload)
 	}
 	if isTarget, hasData, answer := tool.GetResumeContext[string](ctx); isTarget && hasData {
@@ -151,7 +152,7 @@ func newAwaitArmTool() (tool.InvokableTool, error) {
 func (t *awaitArmTool) Info(_ context.Context) (*schema.ToolInfo, error) { return t.info, nil }
 
 func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
-	wasInterrupted, _, state := tool.GetInterruptState[agent.ArmInterrupt](ctx)
+	wasInterrupted, _, state := tool.GetInterruptState[agentcore.ArmInterrupt](ctx)
 	if !wasInterrupted {
 		var args awaitArmArgs
 		_ = json.Unmarshal([]byte(arguments), &args)
@@ -163,7 +164,7 @@ func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...
 			return refusal("this Task is not an actionable trade: update_task with is_actionable true first"), nil
 		}
 		recordAwaitConfirmation(ctx, run)
-		payload := agent.ArmInterrupt{TaskID: run.TaskID, Message: args.Message}
+		payload := agentcore.ArmInterrupt{TaskID: run.TaskID, Message: args.Message}
 		return "", tool.StatefulInterrupt(ctx, payload, payload)
 	}
 	if isTarget, _, _ := tool.GetResumeContext[string](ctx); isTarget {
@@ -172,7 +173,7 @@ func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...
 	return "", tool.StatefulInterrupt(ctx, state, state)
 }
 
-func recordAwaitConfirmation(ctx context.Context, run *agent.RunContext) {
+func recordAwaitConfirmation(ctx context.Context, run *agentcore.RunContext) {
 	if run.Recorder == nil {
 		return
 	}
@@ -237,7 +238,7 @@ func (c *analyzerCall) InvokableRun(ctx context.Context, arguments string, opts 
 		return refusal("this trade is not settled yet: call update_task with the settled parameters and is_actionable true before analyzer_agent"), nil
 	}
 	wrappedArguments, err := rewrapRequest(arguments, func(userRequest string) string {
-		return agent.BuildAnalyzerRequest(userRequest, decision.Shape, decision.MentionedTicker, decision.Side, decision.IsActionable)
+		return helper.BuildAnalyzerRequest(userRequest, decision.Shape, decision.MentionedTicker, decision.Side, decision.IsActionable)
 	})
 	if err != nil {
 		return "", fmt.Errorf("analyzer_agent: %w", err)
@@ -262,9 +263,9 @@ func (c *analyzerCall) InvokableRun(ctx context.Context, arguments string, opts 
 	// request — for an informational one there is no trade to verdict on, so
 	// nothing is parsed as one; Nova's whole reply is just her answer.
 	prose := reply
-	var verdict *agent.NovaVerdict
+	var verdict *helper.NovaVerdict
 	if decision.IsActionable {
-		verdict, prose = agent.ParseNovaVerdict(reply)
+		verdict, prose = helper.ParseNovaVerdict(reply)
 	}
 	if _, err := run.Recorder.Record(ctx, "analyzer", "gather_evidence", "done", prose, decision.Label, nil); err != nil {
 		return "", fmt.Errorf("analyzer_agent: record gather_evidence: %w", err)
@@ -272,7 +273,7 @@ func (c *analyzerCall) InvokableRun(ctx context.Context, arguments string, opts 
 	if verdict == nil {
 		return prose, nil
 	}
-	return prose + "\n\n" + agent.FormatNovaVerdict(verdict), nil
+	return prose + "\n\n" + helper.FormatNovaVerdict(verdict), nil
 }
 
 const executeInstruction = "\n\nThe task is armed and approved on-chain. Size within the approved budget and execute the trade on-chain using submit_trade. If Nova's findings or verdict appear above, reflect them in your chat reasoning to explain your decision."

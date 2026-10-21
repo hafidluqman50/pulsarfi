@@ -1,9 +1,11 @@
-package agent
+package orchestrator
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/subtask"
 	"log/slog"
 	"strings"
 
@@ -13,8 +15,8 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 )
 
-func decisionFromTask(task dbmodel.AgentTask) RouteDecision {
-	decision := RouteDecision{IsActionable: task.IsActionable}
+func decisionFromTask(task dbmodel.AgentTask) agentcore.RouteDecision {
+	decision := agentcore.RouteDecision{IsActionable: task.IsActionable}
 	if task.Summary != nil {
 		decision.Summary = *task.Summary
 		decision.Label = *task.Summary
@@ -57,7 +59,7 @@ func (orch *Orchestrator) cardOfTask(ctx context.Context, taskID int64) *contrac
 // Sub Task recorder — the first time Quasar recognizes an intent, even while
 // parameters are still missing. Every Task is on-chain, so this runs for
 // every request except plain conversation. Later rounds only UpdateTask.
-func (orch *Orchestrator) CommitTask(ctx context.Context, run *RunContext, decision RouteDecision) error {
+func (orch *Orchestrator) CommitTask(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision) error {
 	decision = withCardDefaults(decision)
 
 	triggerDescription, err := orch.buildDecisionTrigger(ctx, run.RawPrompt, decision)
@@ -89,9 +91,9 @@ func (orch *Orchestrator) CommitTask(ctx context.Context, run *RunContext, decis
 // answers complete them — never a second on-chain createTask, only the
 // Postgres summary, trigger description and is_actionable are refreshed, and
 // the on-chain actionable flag is flipped the first time a round settles.
-func (orch *Orchestrator) UpdateTask(ctx context.Context, run *RunContext, decision RouteDecision) error {
+func (orch *Orchestrator) UpdateTask(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision) error {
 	if run.TaskID == 0 {
-		return ErrNoOpenTask
+		return agentcore.ErrNoOpenTask
 	}
 	wasActionable := run.Decision.IsActionable
 	if decision.MentionedTicker == "" {
@@ -134,7 +136,7 @@ func (orch *Orchestrator) UpdateTask(ctx context.Context, run *RunContext, decis
 	return nil
 }
 
-func withCardDefaults(decision RouteDecision) RouteDecision {
+func withCardDefaults(decision agentcore.RouteDecision) agentcore.RouteDecision {
 	if decision.Card == nil {
 		decision.Card = &contracts.CardContract{}
 	}
@@ -144,7 +146,7 @@ func withCardDefaults(decision RouteDecision) RouteDecision {
 	return decision
 }
 
-func (orch *Orchestrator) buildDecisionTrigger(ctx context.Context, rawPrompt string, decision RouteDecision) (string, error) {
+func (orch *Orchestrator) buildDecisionTrigger(ctx context.Context, rawPrompt string, decision agentcore.RouteDecision) (string, error) {
 	if decision.Summary == "" {
 		decision.Summary = defaultSummary(decision.Side, decision, decision.MentionedTicker)
 	}
@@ -160,7 +162,7 @@ func (orch *Orchestrator) buildDecisionTrigger(ctx context.Context, rawPrompt st
 // tied to the Task — "understand_request" fires exactly once, the first time
 // an intent is recognized; "route_decision" fires every round, so the
 // on-chain trail shows how the Task evolved as the user answered.
-func (orch *Orchestrator) recordDecision(ctx context.Context, run *RunContext, decision RouteDecision, isFirst bool) error {
+func (orch *Orchestrator) recordDecision(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision, isFirst bool) error {
 	if run.Recorder == nil {
 		return nil
 	}
@@ -181,7 +183,7 @@ func (orch *Orchestrator) recordDecision(ctx context.Context, run *RunContext, d
 	return nil
 }
 
-func defaultSummary(side string, decision RouteDecision, ticker string) string {
+func defaultSummary(side string, decision agentcore.RouteDecision, ticker string) string {
 	if side == "sell" {
 		return fmt.Sprintf("Sell %s %s", decision.SellAmount, ticker)
 	}
@@ -209,7 +211,7 @@ func (orch *Orchestrator) resolveStockContractAddress(ctx context.Context, side,
 // struct-to-JSON mapping, no lookups. stockContractAddress is non-empty only
 // for sell tasks; the caller resolves it before calling here so this
 // function stays IO-free.
-func buildTriggerDescription(rawPrompt string, decision RouteDecision, stockContractAddress string) (string, error) {
+func buildTriggerDescription(rawPrompt string, decision agentcore.RouteDecision, stockContractAddress string) (string, error) {
 	cleanShape := strings.ToLower(strings.TrimSpace(decision.Shape))
 	side := decision.Side
 
@@ -256,7 +258,7 @@ func buildTriggerDescription(rawPrompt string, decision RouteDecision, stockCont
 	return string(triggerBytes), nil
 }
 
-func (orch *Orchestrator) persistTask(ctx context.Context, run *RunContext, decision RouteDecision, triggerDescription string) (dbmodel.AgentTask, error) {
+func (orch *Orchestrator) persistTask(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision, triggerDescription string) (dbmodel.AgentTask, error) {
 	if orch.Tasks == nil {
 		return dbmodel.AgentTask{}, nil
 	}
@@ -279,7 +281,7 @@ func (orch *Orchestrator) persistTask(ctx context.Context, run *RunContext, deci
 	return task, nil
 }
 
-func (orch *Orchestrator) armOnChain(ctx context.Context, run *RunContext, decision RouteDecision, taskID int64) (uint64, error) {
+func (orch *Orchestrator) armOnChain(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision, taskID int64) (uint64, error) {
 	if orch.Chain == nil {
 		return 0, nil
 	}
@@ -300,8 +302,8 @@ func (orch *Orchestrator) armOnChain(ctx context.Context, run *RunContext, decis
 	return onChainTaskID, nil
 }
 
-func (orch *Orchestrator) attachRecorder(ctx context.Context, run *RunContext, decision RouteDecision, onChainTaskID uint64, taskID int64) error {
-	recorder, err := NewSubTaskRecorder(ctx, orch.SubTasks, orch.Chain, onChainTaskID, taskID, decision.Summary, run.Wallet)
+func (orch *Orchestrator) attachRecorder(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision, onChainTaskID uint64, taskID int64) error {
+	recorder, err := subtask.NewSubTaskRecorder(ctx, orch.SubTasks, orch.Chain, onChainTaskID, taskID, decision.Summary, run.Wallet)
 	if err != nil {
 		return fmt.Errorf("orchestrator: build subtask recorder: %w", err)
 	}
@@ -312,85 +314,4 @@ func (orch *Orchestrator) attachRecorder(ctx context.Context, run *RunContext, d
 	}
 	run.Recorder = recorder
 	return nil
-}
-
-// NovaVerdict is Nova's structured, machine-parsed conclusion on an
-// actionable request. It is advisory only: Comet is given it as context for
-// sizing and timing, but the user's own instruction and approved budget are
-// the final authority.
-type NovaVerdict struct {
-	Tradeable  bool   `json:"tradeable"`
-	EntryPrice string `json:"entry_price"`
-	ExitPrice  string `json:"exit_price,omitempty"`
-	Confidence string `json:"confidence"`
-	Reasoning  string `json:"reasoning"`
-}
-
-// FormatNovaVerdict renders the verdict as plain lines Quasar can pass along
-// to Comet in its request, since Comet only ever sees what Quasar writes.
-func FormatNovaVerdict(verdict *NovaVerdict) string {
-	if verdict == nil {
-		return ""
-	}
-	return fmt.Sprintf(
-		"Nova's structured verdict:\n- Tradeable: %v\n- Entry price: %s\n- Confidence: %s\n- Reasoning: %s",
-		verdict.Tradeable, verdict.EntryPrice, verdict.Confidence, verdict.Reasoning,
-	)
-}
-
-// BuildAnalyzerRequest is the request Nova receives: the user's instruction
-// plus, for an actionable request, the ticker verification and the verdict
-// block Nova must end its reply with.
-func BuildAnalyzerRequest(userInstruction, shape, ticker, side string, isActionable bool) string {
-	if !isActionable {
-		return fmt.Sprintf("User instruction: %s\n\nAnswer using your available tools. This is an informational request only — no trade is being evaluated, do not verify tradeability or output a trade verdict.", userInstruction)
-	}
-	return fmt.Sprintf(
-		"Trading shape: %s\nTicker: %s\nSide: %s\nUser instruction: %s\n\n"+
-			"Verify whether %s is tokenized and tradeable on PulsarFi using verify_ticker. "+
-			"Gather relevant market evidence, live pool price, and technical indicators for %s matching trading shape %s.\n"+
-			"Conclude your reply with a fenced ```json block stating whether tradeable is true or false, entry_price, confidence, and reasoning.",
-		shape, ticker, side, userInstruction, ticker, ticker, shape,
-	)
-}
-
-// ParseNovaVerdict extracts the last fenced ```json block from Nova's reply
-// and unmarshals it into a NovaVerdict. Everything before the block is
-// Nova's normal prose (shown to the user unchanged). A missing or
-// unparseable block fails closed — tradeable:false — never a green light.
-func ParseNovaVerdict(reply string) (*NovaVerdict, string) {
-	lastIdx := strings.LastIndex(reply, "```json")
-	if lastIdx == -1 {
-		lastIdx = strings.LastIndex(reply, "```")
-	}
-	if lastIdx == -1 {
-		return &NovaVerdict{
-			Tradeable:  false,
-			Reasoning:  "Nova reply did not contain a structured JSON verdict block.",
-			Confidence: "low",
-		}, reply
-	}
-
-	prose := strings.TrimSpace(reply[:lastIdx])
-	block := stripFence(reply[lastIdx:])
-
-	var verdict NovaVerdict
-	if err := json.Unmarshal([]byte(block), &verdict); err != nil {
-		slog.Warn("orchestrator: unmarshal nova verdict failed, failing closed", "error", err, "raw", block)
-		return &NovaVerdict{
-			Tradeable:  false,
-			Reasoning:  "Unparseable Nova verdict block.",
-			Confidence: "low",
-		}, prose
-	}
-
-	return &verdict, prose
-}
-
-func stripFence(raw string) string {
-	raw = strings.TrimSpace(raw)
-	raw = strings.TrimPrefix(raw, "```json")
-	raw = strings.TrimPrefix(raw, "```")
-	raw = strings.TrimSuffix(raw, "```")
-	return strings.TrimSpace(raw)
 }

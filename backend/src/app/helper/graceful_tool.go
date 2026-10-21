@@ -1,4 +1,4 @@
-package agent
+package helper
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/cloudwego/eino/components/tool"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 )
 
 type gracefulTool struct {
@@ -36,12 +37,7 @@ func (g *gracefulTool) InvokableRun(ctx context.Context, argumentsInJSON string,
 
 	// The whole point of this wrapper is to hide the failure from the rest
 	// of the run (Supervisor gets a soft tool_error, not a crash) — but
-	// silently was too silent: nothing was ever logged either, so a real
-	// failure (e.g. Analyzer's own run erroring mid-turn) left zero trace
-	// anywhere an operator could find, only a graceful-sounding note in the
-	// conversation itself. Found live: a task's own recorded steps showed
-	// Supervisor retried analyzer_agent after a silent first failure, and
-	// the server's own stdout had nothing at all for it.
+	// silently was too silent, so it is logged as well.
 	toolName := "unknown_tool"
 	if info, infoErr := g.Info(ctx); infoErr == nil && info != nil {
 		toolName = info.Name
@@ -50,9 +46,8 @@ func (g *gracefulTool) InvokableRun(ctx context.Context, argumentsInJSON string,
 
 	// Attribute the failure to whichever step's tool-calling loop is
 	// currently running, so the frontend gets a real failed entry instead of
-	// silently losing this attempt — RunContext is the only thing a tool's
-	// own ctx carries back to the orchestrator turn.
-	if run, ok := RunContextFrom(ctx); ok && run.Stream != nil {
+	// silently losing this attempt.
+	if run, ok := agentcore.RunContextFrom(ctx); ok && run.Stream != nil {
 		run.Stream.StepFailed(err.Error())
 	}
 
