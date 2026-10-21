@@ -17,15 +17,14 @@ import (
 	"github.com/cloudwego/eino/schema"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	dbmodel "github.com/horizonlabs/pulsarfi-backend/src/model"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 // TaskOpener is the Task lifecycle Quasar's tools need, implemented by
 // *agent.Orchestrator: open_task and update_task call these, so the Postgres
 // row, the on-chain createTask and the Sub Task chain stay in one place.
 type TaskOpener interface {
-	CommitTask(ctx context.Context, rc *agent.RunContext, decision agentcore.RouteDecision) error
-	UpdateTask(ctx context.Context, rc *agent.RunContext, decision agentcore.RouteDecision) error
+	CommitTask(ctx context.Context, rc *agentcore.RunContext, decision agentcore.RouteDecision) error
+	UpdateTask(ctx context.Context, rc *agentcore.RunContext, decision agentcore.RouteDecision) error
 }
 
 // ArmedTaskReader is the one read executor_agent's guard needs: whether the

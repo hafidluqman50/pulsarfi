@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"log/slog"
 	"strconv"
 
@@ -10,7 +11,6 @@ import (
 	usermw "github.com/horizonlabs/pulsarfi-backend/src/http/middleware/user"
 	taskrequest "github.com/horizonlabs/pulsarfi-backend/src/http/request/agent/task"
 	"github.com/horizonlabs/pulsarfi-backend/src/http/response"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 // ListTasksHandler always scopes to the authenticated wallet — task

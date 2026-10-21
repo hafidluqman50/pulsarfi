@@ -54,7 +54,7 @@ type ChatService struct {
 	Chats           *repository.AgentChatRepository
 	ChatMessages    *repository.AgentChatMessageRepository
 	Orchestrator    *Orchestrator
-	CheckPointStore ExtendedCheckPointStore
+	CheckPointStore agentcore.ExtendedCheckPointStore
 	// Turns is the per-chat single-turn guard. Nil in tests that build the
 	// service directly; tryStartTurn treats nil as "no guard".
 	Turns *agentcore.TurnRegistry
@@ -98,15 +98,15 @@ func (svc *ChatService) GetChatMessages(ctx context.Context, chatID uuid.UUID, w
 // chat's pending interrupt? It reads the pending marker exactly once; Send
 // then switches on the result instead of asking again.
 func (svc *ChatService) resolveTurn(ctx context.Context, chatID uuid.UUID, message string) turnIntent {
-	pending, paused := svc.interrupts().pending(ctx, chatID)
+	pending, paused := svc.interrupts().Pending(ctx, chatID)
 	if !paused {
 		return turnIntent{kind: freshTurn}
 	}
 	if isCancellationAction(message) {
 		return turnIntent{kind: cancelTurn}
 	}
-	if pending.kind == interruptQuestions {
-		return turnIntent{kind: answerQuestions, interruptID: pending.id}
+	if pending.Kind == agentcore.InterruptQuestions {
+		return turnIntent{kind: answerQuestions, interruptID: pending.ID}
 	}
 	return turnIntent{kind: sideQuestionDuringArm}
 }
@@ -211,6 +211,10 @@ func (svc *ChatService) retryLastMessage(ctx context.Context, chatID uuid.UUID, 
 	return svc.runForMessage(ctx, chatID, lastMessage, existingMessages, strings.ToLower(wallet), svc.resolveTurn(ctx, chatID, lastMessage.Content))
 }
 
+func (svc *ChatService) interrupts() *agentcore.InterruptStore {
+	return agentcore.NewInterruptStore(svc.CheckPointStore)
+}
+
 // tryStartTurn claims the chat's single turn slot. A nil registry (unit tests
 // that build ChatService directly) means "no guard", not a panic.
 func (svc *ChatService) tryStartTurn(chatID uuid.UUID) (func(), bool) {
@@ -272,7 +276,7 @@ func lastUserMessage(messages []model.AgentChatMessage) (model.AgentChatMessage,
 }
 
 func (svc *ChatService) handleCancellation(ctx context.Context, chatID uuid.UUID, message string) (agentcore.WorkflowCard, error) {
-	svc.interrupts().clear(ctx, chatID)
+	svc.interrupts().Clear(ctx, chatID)
 
 	if _, err := svc.ChatMessages.Create(ctx, repository.AgentChatMessageCreateInput{
 		ChatID: chatID, Sender: "user", ContentType: "text", Content: message,

@@ -51,7 +51,7 @@ type Orchestrator struct {
 
 	Stocks StockCatalog
 
-	CheckPointStore ExtendedCheckPointStore
+	CheckPointStore agentcore.ExtendedCheckPointStore
 
 	runner *adk.Runner
 }
@@ -61,7 +61,7 @@ type Orchestrator struct {
 type OrchestratorChainClient interface {
 	CreateTask(ctx context.Context, owner string, isActionable bool, summary string, promptHash [32]byte) (onChainTaskID uint64, err error)
 	MarkActionable(ctx context.Context, onChainTaskID uint64) error
-	ChainSubTaskRecorder
+	agentcore.ChainSubTaskRecorder
 }
 
 // StockCatalog is the orchestrator's narrow view of the stock catalog, used
@@ -101,10 +101,9 @@ type OrchestratorResult struct {
 	PendingQuestions []contracts.IntakeField
 }
 
-const (
-	interruptQuestions = "questions"
-	interruptArm       = "arm"
-)
+func (orch *Orchestrator) interrupts() *agentcore.InterruptStore {
+	return agentcore.NewInterruptStore(orch.CheckPointStore)
+}
 
 // Send runs one turn for a chat message, routed by the intent ChatService
 // already resolved — including which pause it answers, so the pending marker
@@ -112,7 +111,7 @@ const (
 // failure: the turn is finalized from whatever it produced.
 func (orch *Orchestrator) Send(ctx context.Context, in OrchestratorInput, intent turnIntent) (OrchestratorResult, error) {
 	run := orch.newRunContext(in.ChatID, in.Wallet, in.RawPrompt, in.SourceMessageID)
-	ctx = WithRunContext(ctx, run)
+	ctx = agentcore.WithRunContext(ctx, run)
 
 	result, err := orch.dispatchTurn(ctx, run, in, intent)
 	if errors.Is(err, errToolBudgetExhausted) {
@@ -122,7 +121,7 @@ func (orch *Orchestrator) Send(ctx context.Context, in OrchestratorInput, intent
 	return result, err
 }
 
-func (orch *Orchestrator) dispatchTurn(ctx context.Context, run *RunContext, in OrchestratorInput, intent turnIntent) (OrchestratorResult, error) {
+func (orch *Orchestrator) dispatchTurn(ctx context.Context, run *agentcore.RunContext, in OrchestratorInput, intent turnIntent) (OrchestratorResult, error) {
 	switch intent.kind {
 	case answerQuestions:
 		return orch.resumeQuestionsTurn(ctx, run, in, intent.interruptID)
@@ -136,7 +135,7 @@ func (orch *Orchestrator) dispatchTurn(ctx context.Context, run *RunContext, in 
 
 // resumeQuestionsTurn answers a pending questions card: the user's message is
 // the suspended ask_user tool's result.
-func (orch *Orchestrator) resumeQuestionsTurn(ctx context.Context, run *RunContext, in OrchestratorInput, interruptID string) (OrchestratorResult, error) {
+func (orch *Orchestrator) resumeQuestionsTurn(ctx context.Context, run *agentcore.RunContext, in OrchestratorInput, interruptID string) (OrchestratorResult, error) {
 	if err := orch.restoreFromChat(ctx, run); err != nil {
 		return OrchestratorResult{}, err
 	}
@@ -152,7 +151,7 @@ func (orch *Orchestrator) resumeQuestionsTurn(ctx context.Context, run *RunConte
 // runFreshTurn starts a new turn. keepCheckpoint is true only when the chat is
 // paused on the Arm card and this message is a side question: the Arm pause
 // must survive the new turn.
-func (orch *Orchestrator) runFreshTurn(ctx context.Context, run *RunContext, in OrchestratorInput, keepCheckpoint bool) (OrchestratorResult, error) {
+func (orch *Orchestrator) runFreshTurn(ctx context.Context, run *agentcore.RunContext, in OrchestratorInput, keepCheckpoint bool) (OrchestratorResult, error) {
 	events := orch.runner.Run(ctx, in.Messages, adk.WithCheckPointID(run.ChatID.String()))
 	return orch.consume(ctx, run, events, keepCheckpoint)
 }
@@ -167,8 +166,8 @@ func (orch *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, walle
 	}
 
 	chatID := orch.chatIDForTask(ctx, task)
-	pending, hasPending := orch.interrupts().pending(ctx, chatID)
-	if chatID == uuid.Nil || !hasPending || pending.kind != interruptArm {
+	pending, hasPending := orch.interrupts().Pending(ctx, chatID)
+	if chatID == uuid.Nil || !hasPending || pending.Kind != agentcore.InterruptArm {
 		return ExecuteTaskResult{}, fmt.Errorf("%w: task %d", agentcore.ErrNoPendingExecution, taskID)
 	}
 
@@ -176,9 +175,9 @@ func (orch *Orchestrator) ResumeExecute(ctx context.Context, taskID int64, walle
 	if err := orch.restoreRunContext(ctx, run, task); err != nil {
 		return ExecuteTaskResult{}, err
 	}
-	ctx = WithRunContext(ctx, run)
+	ctx = agentcore.WithRunContext(ctx, run)
 
-	events, err := orch.runner.ResumeWithParams(ctx, chatID.String(), &adk.ResumeParams{Targets: map[string]any{pending.id: "armed"}})
+	events, err := orch.runner.ResumeWithParams(ctx, chatID.String(), &adk.ResumeParams{Targets: map[string]any{pending.ID: "armed"}})
 	if err != nil {
 		return ExecuteTaskResult{}, fmt.Errorf("orchestrator: resume arm pause: %w", err)
 	}

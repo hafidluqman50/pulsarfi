@@ -14,7 +14,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 	helper "github.com/horizonlabs/pulsarfi-backend/src/app/helper"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 const noOpenTaskReason = "no Task is open yet: call open_task first"
@@ -40,8 +39,8 @@ func refusal(reason string) string {
 	return string(payload)
 }
 
-func runContextWithTask(ctx context.Context) (*agent.RunContext, bool) {
-	run, ok := agent.RunContextFrom(ctx)
+func runContextWithTask(ctx context.Context) (*agentcore.RunContext, bool) {
+	run, ok := agentcore.RunContextFrom(ctx)
 	return run, ok && run.TaskID != 0
 }
 
@@ -50,7 +49,7 @@ func newOpenTaskTool(tasks TaskOpener) (tool.InvokableTool, error) {
 		"open_task",
 		"Opens the permanent on-chain Task for this request. Call it FIRST for anything except plain conversation, even while trade parameters are still missing. Never call it twice in one turn: use update_task afterwards.",
 		func(ctx context.Context, decision agentcore.RouteDecision) (toolReply, error) {
-			run, ok := agent.RunContextFrom(ctx)
+			run, ok := agentcore.RunContextFrom(ctx)
 			if !ok {
 				return toolReply{}, errors.New("open_task: no run context bound to this turn")
 			}
@@ -174,7 +173,7 @@ func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...
 	return "", tool.StatefulInterrupt(ctx, state, state)
 }
 
-func recordAwaitConfirmation(ctx context.Context, run *agent.RunContext) {
+func recordAwaitConfirmation(ctx context.Context, run *agentcore.RunContext) {
 	if run.Recorder == nil {
 		return
 	}

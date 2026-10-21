@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"sync"
 	"testing"
 
@@ -11,7 +12,6 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 // budgetCheckpoints is a tiny in-memory ExtendedCheckPointStore — this test

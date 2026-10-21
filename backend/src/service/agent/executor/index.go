@@ -12,6 +12,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	helper "github.com/horizonlabs/pulsarfi-backend/src/app/helper"
 	"math/big"
 
 	"github.com/cloudwego/eino/adk"
@@ -23,7 +24,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	dbmodel "github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
 
 // TaskExecutor is the on-chain seam. Per design, the smart contract side is
@@ -133,7 +133,7 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, portfolio Po
 		Description: "Decides the concrete action for a Task (sell, buy, or hold), sizes it within the pre-approved cap, and submits it on-chain when it decides to act.",
 		Instruction: instructions,
 		Model:       chatModel,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agent.WrapToolsGraceful(tools)}},
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: helper.WrapToolsGraceful(tools)}},
 		// See supervisor/index.go's own MaxIterations comment.
 		MaxIterations: 10,
 	})

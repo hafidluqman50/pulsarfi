@@ -3,6 +3,8 @@ package agent_test
 import (
 	"context"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
 	"os"
 	"strings"
 	"sync"
@@ -14,7 +16,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/supervisor"
 )
 
@@ -62,7 +63,7 @@ type flowHarness struct {
 	t            *testing.T
 	repos        *repository.Registry
 	chain        *fakeChain
-	store        *agentsvc.PostgresCheckPointStore
+	store        *checkpoint.PostgresCheckPointStore
 	orchestrator *agentsvc.Orchestrator
 	chat         *agentsvc.ChatService
 	wallet       string
@@ -82,7 +83,7 @@ func newFlowHarness(t *testing.T, quasarSteps, novaSteps, cometSteps []*schema.M
 	}
 	repos := repository.NewRegistry(db)
 	chain := &fakeChain{}
-	store := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	store := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 
 	orchestrator := &agentsvc.Orchestrator{
 		Tasks:           repos.AgentTask,

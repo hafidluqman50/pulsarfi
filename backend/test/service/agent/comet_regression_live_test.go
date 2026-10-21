@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +17,6 @@ import (
 	usermw "github.com/horizonlabs/pulsarfi-backend/src/http/middleware/user"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -165,7 +165,7 @@ func TestCometRegression_BRPT_And_BMRI_HttpEndpoint(t *testing.T) {
 			}
 
 			// Verify Eino checkpoint paused before Comet execute
-			cpStore, ok := registry.AgentChat.CheckPointStore.(agentsvc.ExtendedCheckPointStore)
+			cpStore, ok := registry.AgentChat.CheckPointStore.(agentcore.ExtendedCheckPointStore)
 			if ok {
 				has, err := cpStore.Has(ctx, chatID.String())
 				if err != nil || !has {

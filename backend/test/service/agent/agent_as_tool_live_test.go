@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"io"
 	"os"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
 	"github.com/horizonlabs/pulsarfi-backend/src/service"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/realtime"
 	"github.com/joho/godotenv"
 )

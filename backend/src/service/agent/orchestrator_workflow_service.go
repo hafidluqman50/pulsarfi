@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/subtask"
 	"log/slog"
 	"strings"
 
@@ -58,7 +59,7 @@ func (orch *Orchestrator) cardOfTask(ctx context.Context, taskID int64) *contrac
 // Sub Task recorder — the first time Quasar recognizes an intent, even while
 // parameters are still missing. Every Task is on-chain, so this runs for
 // every request except plain conversation. Later rounds only UpdateTask.
-func (orch *Orchestrator) CommitTask(ctx context.Context, run *RunContext, decision agentcore.RouteDecision) error {
+func (orch *Orchestrator) CommitTask(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision) error {
 	decision = withCardDefaults(decision)
 
 	triggerDescription, err := orch.buildDecisionTrigger(ctx, run.RawPrompt, decision)
@@ -90,7 +91,7 @@ func (orch *Orchestrator) CommitTask(ctx context.Context, run *RunContext, decis
 // answers complete them — never a second on-chain createTask, only the
 // Postgres summary, trigger description and is_actionable are refreshed, and
 // the on-chain actionable flag is flipped the first time a round settles.
-func (orch *Orchestrator) UpdateTask(ctx context.Context, run *RunContext, decision agentcore.RouteDecision) error {
+func (orch *Orchestrator) UpdateTask(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision) error {
 	if run.TaskID == 0 {
 		return agentcore.ErrNoOpenTask
 	}
@@ -161,7 +162,7 @@ func (orch *Orchestrator) buildDecisionTrigger(ctx context.Context, rawPrompt st
 // tied to the Task — "understand_request" fires exactly once, the first time
 // an intent is recognized; "route_decision" fires every round, so the
 // on-chain trail shows how the Task evolved as the user answered.
-func (orch *Orchestrator) recordDecision(ctx context.Context, run *RunContext, decision agentcore.RouteDecision, isFirst bool) error {
+func (orch *Orchestrator) recordDecision(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision, isFirst bool) error {
 	if run.Recorder == nil {
 		return nil
 	}
@@ -257,7 +258,7 @@ func buildTriggerDescription(rawPrompt string, decision agentcore.RouteDecision,
 	return string(triggerBytes), nil
 }
 
-func (orch *Orchestrator) persistTask(ctx context.Context, run *RunContext, decision agentcore.RouteDecision, triggerDescription string) (dbmodel.AgentTask, error) {
+func (orch *Orchestrator) persistTask(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision, triggerDescription string) (dbmodel.AgentTask, error) {
 	if orch.Tasks == nil {
 		return dbmodel.AgentTask{}, nil
 	}
@@ -280,7 +281,7 @@ func (orch *Orchestrator) persistTask(ctx context.Context, run *RunContext, deci
 	return task, nil
 }
 
-func (orch *Orchestrator) armOnChain(ctx context.Context, run *RunContext, decision agentcore.RouteDecision, taskID int64) (uint64, error) {
+func (orch *Orchestrator) armOnChain(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision, taskID int64) (uint64, error) {
 	if orch.Chain == nil {
 		return 0, nil
 	}
@@ -301,8 +302,8 @@ func (orch *Orchestrator) armOnChain(ctx context.Context, run *RunContext, decis
 	return onChainTaskID, nil
 }
 
-func (orch *Orchestrator) attachRecorder(ctx context.Context, run *RunContext, decision agentcore.RouteDecision, onChainTaskID uint64, taskID int64) error {
-	recorder, err := NewSubTaskRecorder(ctx, orch.SubTasks, orch.Chain, onChainTaskID, taskID, decision.Summary, run.Wallet)
+func (orch *Orchestrator) attachRecorder(ctx context.Context, run *agentcore.RunContext, decision agentcore.RouteDecision, onChainTaskID uint64, taskID int64) error {
+	recorder, err := subtask.NewSubTaskRecorder(ctx, orch.SubTasks, orch.Chain, onChainTaskID, taskID, decision.Summary, run.Wallet)
 	if err != nil {
 		return fmt.Errorf("orchestrator: build subtask recorder: %w", err)
 	}

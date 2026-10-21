@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"log/slog"
 	"math"
 	"math/big"
@@ -14,7 +15,6 @@ import (
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	dbmodel "github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/realtime"
 )
 
@@ -87,7 +87,7 @@ func newHoldingsTool(portfolio PortfolioReader) (tool.InvokableTool, error) {
 		"get_portfolio_holdings",
 		"Returns every ticker the owner's wallet currently holds a position in, so you can weigh concentration/diversification before sizing an action. Takes no arguments — the wallet is resolved server-side.",
 		func(ctx context.Context, _ holdingsRequest) (holdingsResponse, error) {
-			run, ok := agent.RunContextFrom(ctx)
+			run, ok := agentcore.RunContextFrom(ctx)
 			if !ok || run.Wallet == "" {
 				return holdingsResponse{}, fmt.Errorf("get_portfolio_holdings: no wallet bound to this run")
 			}
@@ -179,7 +179,7 @@ func newBalanceTool(balances BalanceReader) (tool.InvokableTool, error) {
 		"get_idrx_balance",
 		"Returns the owner's spendable IDRX balance right now, read on-chain. Call this before sizing a buy — a trade larger than the real balance cannot execute, regardless of what the Task's budget allows. Takes no arguments — the wallet is resolved server-side.",
 		func(ctx context.Context, _ balanceRequest) (balanceResponse, error) {
-			run, ok := agent.RunContextFrom(ctx)
+			run, ok := agentcore.RunContextFrom(ctx)
 			if !ok || run.Wallet == "" {
 				return balanceResponse{}, fmt.Errorf("get_idrx_balance: no wallet bound to this run")
 			}
@@ -253,7 +253,7 @@ func newSubmitTradeTool(exec TaskExecutor, stocks StockLookup, prices SpotPriceR
 		"submit_trade",
 		"Submits a trade on-chain against the current Task's armed TradePermission. Call this only once you've decided the trigger is confirmed and an action should fire now — you supply ticker, side, and amount yourself, none of it is pre-set on the Task.",
 		func(ctx context.Context, req submitTradeRequest) (submitTradeResponse, error) {
-			run, ok := agent.RunContextFrom(ctx)
+			run, ok := agentcore.RunContextFrom(ctx)
 			if !ok {
 				return submitTradeResponse{}, fmt.Errorf("submit_trade: no run context bound to this call")
 			}

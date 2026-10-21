@@ -2,6 +2,8 @@ package agent_test
 
 import (
 	"context"
+	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
 	"os"
 	"strings"
 	"testing"
@@ -11,7 +13,6 @@ import (
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -77,7 +78,7 @@ func TestChatTurn_SurvivesACancelledRequest(t *testing.T) {
 	}
 	repos := repository.NewRegistry(db)
 
-	checkpoints := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	checkpoints := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 	orchestrator := &agentsvc.Orchestrator{
 		Tasks:           repos.AgentTask,
 		SubTasks:        repos.AgentSubTask,

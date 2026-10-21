@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	publicsvc "github.com/horizonlabs/pulsarfi-backend/src/service/public"
 )
 
@@ -24,7 +24,7 @@ func newPortfolioSnapshotTool(portfolioReader publicsvc.ChartDataReader) (tool.I
 		"get_portfolio_snapshot",
 		"Fetches chart-ready data about the current wallet's own portfolio: net worth over time, allocation, a comparison across holdings, or cumulative return. Never use this for a question about a stock in general, use get_stock_chart for that instead.",
 		func(ctx context.Context, req portfolioSnapshotRequest) (publicsvc.ChartPayload, error) {
-			rc, ok := agent.RunContextFrom(ctx)
+			rc, ok := agentcore.RunContextFrom(ctx)
 			if !ok {
 				return publicsvc.ChartPayload{}, fmt.Errorf("get_portfolio_snapshot: no run context bound to this call")
 			}

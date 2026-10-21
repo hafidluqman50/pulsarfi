@@ -3,6 +3,7 @@ package agent_test
 import (
 	"bytes"
 	"context"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
 	"os"
 	"testing"
 
@@ -10,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -29,7 +29,7 @@ func TestPostgresCheckPointStore_CRUD(t *testing.T) {
 	}
 
 	repos := repository.NewRegistry(db)
-	store := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	store := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 	ctx := context.Background()
 
 	cpID := "test-cp-" + uuid.New().String()
@@ -142,7 +142,7 @@ func TestPostgresCheckPointStore_EinoGraphCompile(t *testing.T) {
 	}
 
 	repos := repository.NewRegistry(db)
-	store := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	store := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 	ctx := context.Background()
 
 	// Verify that an Eino Graph compiles cleanly with our PostgresCheckPointStore
@@ -195,7 +195,7 @@ func TestPostgresCheckPointStore_StatefulInterruptResume(t *testing.T) {
 	}
 
 	repos := repository.NewRegistry(db)
-	store := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	store := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 	ctx := context.Background()
 
 	g := compose.NewGraph[string, string]()

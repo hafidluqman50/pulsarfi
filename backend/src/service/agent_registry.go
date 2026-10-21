@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
 	"log"
 	"math/big"
 
@@ -130,7 +131,7 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		return nil, nil, nil
 	}
 
-	checkpointStore := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	checkpointStore := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 
 	// Two steps because Quasar's tools open Tasks through the Orchestrator
 	// (supervisor.TaskOpener) while the Orchestrator runs Quasar.

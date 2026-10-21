@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/checkpoint"
 	"os"
 	"strings"
 	"testing"
@@ -12,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/config"
 	"github.com/horizonlabs/pulsarfi-backend/src/repository"
-	agentsvc "github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 	"github.com/joho/godotenv"
 )
 
@@ -37,7 +38,7 @@ func TestChatRetry_ScopesToTheChatsOwnLastMessage(t *testing.T) {
 	}
 	repos := repository.NewRegistry(db)
 
-	checkpoints := agentsvc.NewPostgresCheckPointStore(repos.AgentCheckpoint)
+	checkpoints := checkpoint.NewPostgresCheckPointStore(repos.AgentCheckpoint)
 	orchestrator := &agentsvc.Orchestrator{
 		Tasks:           repos.AgentTask,
 		SubTasks:        repos.AgentSubTask,

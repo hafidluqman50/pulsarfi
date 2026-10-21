@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/subtask"
 	"log/slog"
 	"math/big"
 	"strings"
@@ -189,7 +190,7 @@ func (s *TaskService) recordArmed(ctx context.Context, task model.AgentTask, tas
 	if task.Summary != nil {
 		summary = *task.Summary
 	}
-	recorder, err := NewSubTaskRecorder(ctx, s.SubTasks, s.Chain, onChainTaskID, taskID, summary, task.WalletAddress)
+	recorder, err := subtask.NewSubTaskRecorder(ctx, s.SubTasks, s.Chain, onChainTaskID, taskID, summary, task.WalletAddress)
 	if err != nil {
 		return fmt.Errorf("agent: build subtask recorder for armed step: %w", err)
 	}
