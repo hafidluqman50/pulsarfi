@@ -31,8 +31,8 @@ export interface WorkflowCard {
   content_type: 'text' | 'chart' | 'news';
   ui_component?: string | null;
   ui_props?: unknown;
-  // The persisted rows this call created, so the client can append them
-  // instead of refetching the chat.
+  // The chat's full message list after the turn, so the client can replace
+  // its state instead of refetching.
   messages?: AgentChatMessage[];
 }
 

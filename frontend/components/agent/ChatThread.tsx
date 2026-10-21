@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { sendChatMessage, retryLastMessage, getTurnStatus, type AgentChatMessage, type LiveSubTask } from '@/http/agent/chatApi';
 import { ClarifyingQuestions } from './ClarifyingQuestions';
@@ -424,10 +424,6 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
   );
 });
 
-function appendMessages(queryClient: QueryClient, chatId: string, rows: AgentChatMessage[]): void {
-  queryClient.setQueryData<AgentChatMessage[]>(['agent-chat-messages', chatId], (prev) => [...(prev ?? []), ...rows]);
-}
-
 export function ChatThread({ chatId }: ChatThreadProps) {
   // A new chat is a client UUID with no row yet, so its history is fetched
   // only once the chat exists (shared agent-chats cache). Everything the user
@@ -502,9 +498,8 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     if (!overrideText) setDraft('');
     try {
       const card = await sendChatMessage(chatId, trimmed, hidden);
-      // The response carries the rows this call created: show them instead of
-      // refetching the chat.
-      if (card.messages?.length) appendMessages(queryClient, chatId, card.messages);
+      // The response is the chat's state: replace, never refetch.
+      if (card.messages) queryClient.setQueryData(['agent-chat-messages', chatId], card.messages);
       if (!chatExists) {
         // The first message created the chat server-side; let the sidebar see
         // it. No messages refetch: the rows above are already on screen.
@@ -531,7 +526,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     beginTurn(chatId);
     try {
       const card = await retryLastMessage(chatId);
-      if (card.messages?.length) appendMessages(queryClient, chatId, card.messages);
+      if (card.messages) queryClient.setQueryData(['agent-chat-messages', chatId], card.messages);
       markTurnEnded(chatId);
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';

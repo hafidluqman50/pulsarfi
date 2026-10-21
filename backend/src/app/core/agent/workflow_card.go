@@ -7,8 +7,9 @@ import (
 )
 
 // WorkflowCard is the final result of a turn: what the handler returns and
-// what the chat-stream `final` event carries. Messages holds the chat rows
-// this call created, so a client can append them without refetching.
+// what the chat-stream `final` event carries. Messages is the chat's full
+// message list after the turn, so a client can replace its state instead of
+// refetching.
 type WorkflowCard struct {
 	TaskID      int64                    `json:"task_id,omitempty"`
 	Reply       string                   `json:"reply"`
