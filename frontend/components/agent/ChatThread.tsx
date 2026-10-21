@@ -478,6 +478,16 @@ export function ChatThread({ chatId }: ChatThreadProps) {
   // is redundant and hides itself immediately.
   const pendingBubbleText = pendingText && !messages.some((m) => m.sender === 'user' && m.content === pendingText) ? pendingText : null;
 
+  // The live bubble and the persisted row are the same reply. clearTurnLive
+  // runs only after two invalidations, so the persisted row lands first; at
+  // that point rendering both shows the reply twice. Hide the live copy as
+  // soon as the refetched history contains it, and keep it while the refetch
+  // is in flight so the reply does not blink.
+  const liveReplyText = session.streamingReplyText;
+  const liveReplyPersisted =
+    liveReplyText !== '' &&
+    messages.some((message) => message.sender !== 'user' && !isHiddenMessage(message) && message.content === liveReplyText);
+
   async function handleSend(overrideText?: string, hidden?: boolean) {
     const trimmed = (overrideText ?? draft).trim();
     if (!trimmed || isSendingRef.current) return;
@@ -536,7 +546,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
         isFinalizing={session.isFinalizing}
         showReasoning={showReasoning}
         chartPending={session.chartPending}
-        streamingReplyText={session.streamingReplyText}
+        streamingReplyText={liveReplyPersisted ? '' : liveReplyText}
         onRetry={handleRetry}
         onToggleReasoning={() => setShowReasoning(!showReasoning)}
         onSendPrompt={handleSend}
