@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.0 |
+| **Version** | 1.1 |
 | **Status** | Draft |
 | **Date Created** | 2026-10-21 |
 | **Last Updated** | 2026-10-21 |
@@ -10,6 +10,7 @@
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-10-21 | Initial draft. |
+| 1.1 | 2026-10-21 | Added the new-chat half: §1 notes the empty fetch + skeleton, §2 gains a no-fetch rule, §3/§5 gate the messages query on the chat existing (or the first send), §8 adds the network check. |
 
 ## 1. Problem Statement
 
@@ -33,14 +34,21 @@ persisted reply while `streamingReplyText` still holds the streamed copy, so
 Short replies make the window obvious (the whole reply is one chunk); long
 replies hide it behind the scrolling.
 
+The same mount also fetches messages for a brand-new chat: "+ new chat" is a
+client UUID with no row, `useChatMessages` is always enabled, and the backend
+answers 200 `[]` — but the request is in flight, so the thread shows a loading
+skeleton for a chat that provably has nothing to load.
+
 ## 2. Definition of Done
 
 1. A normal turn renders the reply once, from stream to persisted, with no
    blink and no moment where both exist.
 2. Streaming still grows live while the turn runs.
-3. No behaviour change for charts, cards, hidden messages, retry, or
+3. A brand-new chat issues **no** messages request and shows the empty intro
+   immediately; there is no loading skeleton.
+4. No behaviour change for charts, cards, hidden messages, retry, or
    `clearTurnLive`.
-4. Frontend typecheck/lint/build green.
+5. Frontend typecheck/lint/build green.
 
 ## 3. Feature Description
 
@@ -50,6 +58,11 @@ otherwise keep passing it (no blink while the refetch is in flight).
 
 Equality is exact: the backend persists `result.Reply`, which is the same
 string the stream accumulated in `outcome.reply`.
+
+The messages query is enabled only when the chat is known to the server
+(present in the shared `agent-chats` cache) or after this mount has sent its
+first message. A new chat therefore issues no request; the first send enables
+it, and `hasSent` suppresses the skeleton for that one fetch.
 
 ## 4. Impacted Files
 
@@ -84,7 +97,20 @@ const liveReplyPersisted =
 streamingReplyText={liveReplyPersisted ? '' : liveReplyText}
 ```
 
-New symbols: `liveReplyText`, `liveReplyPersisted` (locals).
+The query gate (ChatThread):
+
+```tsx
+const { data: chats = [] } = useAgentChats();
+const chatExists = chats.some((chat) => chat.id === chatId);
+const [hasSent, setHasSent] = useState(false);
+const { data: messages = [], isLoading } = useChatMessages(chatId, { enabled: chatExists || hasSent });
+```
+
+```tsx
+isLoading={isLoading && !hasSent}
+```
+
+New symbols: `liveReplyText`, `liveReplyPersisted`, `chatExists`, `hasSent`.
 Deleted symbols: none.
 
 Call flow after the change:
@@ -122,3 +148,5 @@ final ──► endedAt ──► refetch ──► messages contains reply?
 5. Manual, long answer: streaming still grows, then swaps to the persisted
    message without a blank frame and without a duplicate.
 6. Manual, chart answer: exactly one chart card, no duplicate text.
+7. DevTools Network: click "+ new chat" → **no** `GET /agent/chats/<uuid>/messages`;
+   send `halo` → exactly one messages request, then the history renders.

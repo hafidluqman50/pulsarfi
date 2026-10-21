@@ -12,7 +12,7 @@ import { PortfolioChart } from './PortfolioChart';
 import { RosterCard } from './RosterCard';
 import { agentDisplayName, MessageMarkdown, statusColor, stepDisplayName, StructuredOrProse } from './SubTaskReasoning';
 import { beginTurn, clearTurnLive, failTurn, getChatSession, markTurnEnded, markTurnStarted, useChatSession } from './chatSession';
-import { useChatMessages } from '@/http/agent/hooks';
+import { useAgentChats, useChatMessages } from '@/http/agent/hooks';
 
 // The thinking indicator is a fixed English UI-chrome label — global for every
 // user, regardless of the conversation's language — plus a remembered
@@ -425,7 +425,15 @@ const MessageList = memo(function MessageList({ chatId, messages, isLoading, isS
 });
 
 export function ChatThread({ chatId }: ChatThreadProps) {
-  const { data: messages = [], isLoading } = useChatMessages(chatId);
+  // A new chat is a client UUID with no row yet: there is nothing to fetch,
+  // so the messages query stays off (no request, no loading skeleton) and the
+  // empty intro renders immediately. It turns on once the chat is known to
+  // the server, or after this mount has sent its first message. useAgentChats
+  // shares QuasarPanel's cache, so this adds no request of its own.
+  const { data: chats = [] } = useAgentChats();
+  const chatExists = chats.some((chat) => chat.id === chatId);
+  const [hasSent, setHasSent] = useState(false);
+  const { data: messages = [], isLoading } = useChatMessages(chatId, { enabled: chatExists || hasSent });
   const queryClient = useQueryClient();
   const session = useChatSession(chatId);
   const [draft, setDraft] = useState('');
@@ -500,6 +508,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     if (!overrideText) setDraft('');
     try {
       await sendChatMessage(chatId, trimmed, hidden);
+      setHasSent(true);
       // The blocking response means the turn finished and the reply is
       // persisted; endedAt then refetches before the live bubbles are dropped.
       markTurnEnded(chatId);
@@ -519,6 +528,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
     beginTurn(chatId);
     try {
       await retryLastMessage(chatId);
+      setHasSent(true);
       markTurnEnded(chatId);
     } catch (error: unknown) {
       const description = error instanceof Error ? error.message : 'Something went wrong';
@@ -536,7 +546,7 @@ export function ChatThread({ chatId }: ChatThreadProps) {
       <MessageList
         chatId={chatId}
         messages={messages}
-        isLoading={isLoading}
+        isLoading={isLoading && !hasSent}
         isStreaming={session.running}
         pendingText={pendingBubbleText}
         failedMessage={session.failedMessage}
