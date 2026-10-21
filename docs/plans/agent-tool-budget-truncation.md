@@ -2,13 +2,14 @@
 
 | | |
 |---|---|
-| **Version** | 1.0 |
-| **Status** | Draft |
+| **Version** | 1.1 |
+| **Status** | Implemented |
 | **Date Created** | 2026-10-20 |
-| **Last Updated** | 2026-10-20 |
+| **Last Updated** | 2026-10-21 |
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1 | 2026-10-21 | Marked Implemented: the plan shipped in #51. |
 | 1.0 | 2026-10-20 | Initial draft. |
 
 ## 1. Problem Statement
