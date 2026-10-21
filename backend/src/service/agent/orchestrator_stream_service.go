@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
+	helper "github.com/horizonlabs/pulsarfi-backend/src/app/helper"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	dbmodel "github.com/horizonlabs/pulsarfi-backend/src/model"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/realtime"
@@ -174,7 +175,7 @@ func isToolBudgetExhausted(err error) bool {
 
 type turnOutcome struct {
 	reply     strings.Builder
-	novaCalls []toolCallResult
+	novaCalls []helper.ToolCallResult
 	interrupt *interruptOutcome
 }
 
@@ -254,7 +255,7 @@ func (orch *Orchestrator) finishInterrupt(ctx context.Context, run *RunContext, 
 // finalizeResult decides what the frontend renders: plain text, a chart, news,
 // or the clarifying-questions card.
 func (orch *Orchestrator) finalizeResult(ctx context.Context, run *RunContext, outcome *turnOutcome, result *OrchestratorResult) {
-	result.ContentType, result.UIProps = classifyReply(result.PendingQuestions, orch.cardOfTask(ctx, run.TaskID), outcome.novaCalls)
+	result.ContentType, result.UIProps = helper.ClassifyReply(result.PendingQuestions, orch.cardOfTask(ctx, run.TaskID), outcome.novaCalls)
 	if result.ContentType == "workflow_card" {
 		result.UIComponent = "clarifying_questions"
 	}
@@ -386,7 +387,7 @@ func publishAssistant(topic, agentName string, output *adk.MessageVariant, outco
 const thinkingBatchBytes = 160
 
 // publishToolResult closes the tool_call signal for Nova's and Comet's own
-// tools and keeps Nova's results, which classifyReply turns into charts and
+// tools and keeps Nova's results, which helper.ClassifyReply turns into charts and
 // news cards. Quasar's own calls (open_task, analyzer_agent, ...) are
 // hand-offs, already shown as Sub Tasks, not tool activity.
 func publishToolResult(topic, agentName string, output *adk.MessageVariant, outcome *turnOutcome) error {
@@ -403,7 +404,7 @@ func publishToolResult(topic, agentName string, output *adk.MessageVariant, outc
 	}
 	publishChatEvent(topic, "tool_call", map[string]any{"agent": agentName, "tool": toolName, "phase": "end"})
 	if agentName == "analyzer" && message != nil {
-		outcome.novaCalls = append(outcome.novaCalls, toolCallResult{ToolName: toolName, Result: message.Content})
+		outcome.novaCalls = append(outcome.novaCalls, helper.ToolCallResult{ToolName: toolName, Result: message.Content})
 	}
 	return nil
 }

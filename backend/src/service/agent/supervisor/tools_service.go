@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
+	helper "github.com/horizonlabs/pulsarfi-backend/src/app/helper"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent"
 )
@@ -237,7 +238,7 @@ func (c *analyzerCall) InvokableRun(ctx context.Context, arguments string, opts 
 		return refusal("this trade is not settled yet: call update_task with the settled parameters and is_actionable true before analyzer_agent"), nil
 	}
 	wrappedArguments, err := rewrapRequest(arguments, func(userRequest string) string {
-		return agent.BuildAnalyzerRequest(userRequest, decision.Shape, decision.MentionedTicker, decision.Side, decision.IsActionable)
+		return helper.BuildAnalyzerRequest(userRequest, decision.Shape, decision.MentionedTicker, decision.Side, decision.IsActionable)
 	})
 	if err != nil {
 		return "", fmt.Errorf("analyzer_agent: %w", err)
@@ -262,9 +263,9 @@ func (c *analyzerCall) InvokableRun(ctx context.Context, arguments string, opts 
 	// request — for an informational one there is no trade to verdict on, so
 	// nothing is parsed as one; Nova's whole reply is just her answer.
 	prose := reply
-	var verdict *agent.NovaVerdict
+	var verdict *helper.NovaVerdict
 	if decision.IsActionable {
-		verdict, prose = agent.ParseNovaVerdict(reply)
+		verdict, prose = helper.ParseNovaVerdict(reply)
 	}
 	if _, err := run.Recorder.Record(ctx, "analyzer", "gather_evidence", "done", prose, decision.Label, nil); err != nil {
 		return "", fmt.Errorf("analyzer_agent: record gather_evidence: %w", err)
@@ -272,7 +273,7 @@ func (c *analyzerCall) InvokableRun(ctx context.Context, arguments string, opts 
 	if verdict == nil {
 		return prose, nil
 	}
-	return prose + "\n\n" + agent.FormatNovaVerdict(verdict), nil
+	return prose + "\n\n" + helper.FormatNovaVerdict(verdict), nil
 }
 
 const executeInstruction = "\n\nThe task is armed and approved on-chain. Size within the approved budget and execute the trade on-chain using submit_trade. If Nova's findings or verdict appear above, reflect them in your chat reasoning to explain your decision."
