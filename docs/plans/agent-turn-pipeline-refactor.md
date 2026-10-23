@@ -2,13 +2,14 @@
 
 | | |
 |---|---|
-| **Version** | 1.2 |
-| **Status** | Draft |
+| **Version** | 1.3 |
+| **Status** | Implemented |
 | **Date Created** | 2026-10-20 |
-| **Last Updated** | 2026-10-20 |
+| **Last Updated** | 2026-10-21 |
 
 | Version | Date | Change |
 |---|---|---|
+| 1.3 | 2026-10-21 | Marked Implemented: the plan shipped in #54. |
 | 1.2 | 2026-10-20 | Re-applied on top of the newer `main` (new-chat model, tool-budget truncation, turn lifecycle). The resolution keeps those behaviours: `Send`/`ResumeExecute` still finalize a budget-exhausted turn, and `ChatService` still takes the per-chat turn slot and runs the turn on a detached context. Added `FreshTurnIntent()` because `Send` now takes a `turnIntent` and one test drives it directly. |
 | 1.0 | 2026-10-20 | Initial draft. |
 

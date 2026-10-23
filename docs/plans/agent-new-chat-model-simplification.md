@@ -2,13 +2,14 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
-| **Status** | Draft |
+| **Version** | 1.2 |
+| **Status** | Implemented |
 | **Date Created** | 2026-10-20 |
-| **Last Updated** | 2026-10-20 |
+| **Last Updated** | 2026-10-21 |
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2 | 2026-10-21 | Marked Implemented: the plan shipped in #50. |
 | 1.1 | 2026-10-20 | Added the regression test for the idempotent read (§4, §8): `chat_service_test.go` asserts `GetChatMessages` returns an empty slice with a nil error for a chat that has no row, and that a wallet mismatch on an existing chat still returns `ErrWalletMismatch`. Rationale: the not-found branch is the change that makes mounting a fresh chat cheap, so it is worth a test of its own rather than being covered implicitly. |
 | 1.0 | 2026-10-20 | Initial draft. |
 

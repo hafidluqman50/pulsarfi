@@ -2,13 +2,14 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
-| **Status** | Draft |
+| **Version** | 1.2 |
+| **Status** | Implemented |
 | **Date Created** | 2026-10-20 |
-| **Last Updated** | 2026-10-20 |
+| **Last Updated** | 2026-10-21 |
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2 | 2026-10-21 | Marked Implemented: the plan shipped in #53. |
 | 1.1 | 2026-10-20 | Aligned with the implementation: the `turn` events are published from `ChatService` (which owns the registry and the turn's start/end), not from `orchestrator_stream_service.go`; the registry type is exported (`TurnRegistry` / `NewTurnRegistry`) so `agent_registry.go` can construct it. Impacted-files row updated. |
 | 1.0 | 2026-10-20 | Initial draft. |
 

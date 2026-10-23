@@ -2,13 +2,14 @@
 
 | | |
 |---|---|
-| **Version** | 1.2 |
-| **Status** | Draft |
+| **Version** | 1.3 |
+| **Status** | Implemented |
 | **Date Created** | 2026-10-20 |
-| **Last Updated** | 2026-10-20 |
+| **Last Updated** | 2026-10-21 |
 
 | Version | Date | Change |
 |---|---|---|
+| 1.3 | 2026-10-21 | Marked Implemented: the plan shipped in #52. |
 | 1.2 | 2026-10-20 | Also retired `TestLiveAgentAsTool_StatusFollowsTheUsersLanguage` and the `status` collection in `summarize` (`backend/test/service/agent/agent_as_tool_live_test.go`) — it asserted the one `status` event per turn that this plan removes. §4 and §8 updated. |
 | 1.1 | 2026-10-20 | Made the test retirement explicit (§4, §8): `backend/test/service/agent/chat_status_test.go` is deleted with `announceStatus`, but its unrelated `TestTrustedSources_PromptIsGeneratedFromTheList` (owned by `news-brief-evidence-cards.md`) is relocated to a new `backend/test/service/agent/trusted_sources_test.go` rather than lost. |
 | 1.0 | 2026-10-20 | Initial draft. |
