@@ -166,19 +166,14 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		Turns:           agentcore.NewTurnRegistry(),
 	}
 	taskSvc := &task.TaskService{
-		Tasks:             repos.AgentTask,
-		SubTasks:          repos.AgentSubTask,
-		Trades:            repos.AgentTrade,
-		ChatMessages:      repos.AgentChatMessage,
-		Chats:             repos.AgentChat,
-		Chain:             contractClient,
-		Executor:          executorAgent,
-		Orchestrator:      orch,
-		Stocks:            repos.Stock,
-		Prices:            prices,
-		StockTransactions: repos.StockTransaction,
-		ExecutionGasLimit: onchainCfg.ExecutionGasLimit,
-		InstantExecution:  onchainCfg.InstantExecution,
+		Tasks:        repos.AgentTask,
+		SubTasks:     repos.AgentSubTask,
+		Trades:       repos.AgentTrade,
+		ChatMessages: repos.AgentChatMessage,
+		Chats:        repos.AgentChat,
+		Chain:        contractClient,
+		Executor:     executorAgent,
+		Orchestrator: orch,
 	}
 	taskScheduler := task.NewTaskScheduler(repos.AgentTask, repos.AgentChatMessage, repos.AgentChat, taskSvc, supervisorModel)
 	return chatSvc, taskSvc, taskScheduler

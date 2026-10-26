@@ -54,9 +54,6 @@ export interface ArmTaskResult {
   on_chain_task_id: number;
   token_address?: string;
   total_budget?: string;
-  status?: string;
-  tx_hash?: string;
-  trade?: AgentTrade;
 }
 
 export async function listTasks(): Promise<AgentTask[]> {

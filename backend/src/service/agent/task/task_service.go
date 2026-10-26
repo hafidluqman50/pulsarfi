@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
-	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/executor"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/orchestrator"
 	"github.com/horizonlabs/pulsarfi-backend/src/service/agent/subtask"
 	"log/slog"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/adk"
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/google/uuid"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
@@ -28,8 +26,6 @@ type AgentContractClient interface {
 	RecordSubTasks(ctx context.Context, onChainTaskID uint64, rows []model.AgentSubTask) (onChainSubTaskIDs []uint64, txHash string, err error)
 	CancelTask(ctx context.Context, onChainTaskID uint64) error
 	TradePermissionRemaining(ctx context.Context, onChainTaskID uint) (string, error)
-	SubmitTradePair(ctx context.Context, onChainTaskID, subTaskID uint64, token common.Address, ticker string, side contracts.TradeSide, amount, minOut *big.Int, summary string, reasoningHash [32]byte, grantTotalBudget string, grantDurationSec int64, grantMaxPerTrade string, grantCooldown uint32, gasLimit uint64) (armHash, executeHash string, nonce uint64, err error)
-	WaitTradeByHash(ctx context.Context, txHash string) (*agentcore.ExecuteTradeOutput, error)
 }
 
 // TaskService is the Task-layer surface HTTP handlers call. It is a thin
@@ -47,12 +43,6 @@ type TaskService struct {
 	Chain        AgentContractClient
 	Executor     adk.Agent
 	Orchestrator *orchestrator.Orchestrator
-
-	Stocks            executor.StockLookup
-	Prices            executor.SpotPriceReader
-	StockTransactions *repository.StockTransactionRepository
-	ExecutionGasLimit uint64
-	InstantExecution  bool
 }
 
 func (s *TaskService) ListTasks(ctx context.Context, walletAddress string) ([]model.AgentTask, error) {
@@ -119,12 +109,9 @@ type ArmTaskInput struct {
 }
 
 type ArmTaskResult struct {
-	OnChainTaskID int64             `json:"on_chain_task_id"`
-	TokenAddress  string            `json:"token_address,omitempty"`
-	TotalBudget   string            `json:"total_budget,omitempty"`
-	Status        string            `json:"status,omitempty"`
-	TxHash        string            `json:"tx_hash,omitempty"`
-	Trade         *model.AgentTrade `json:"trade,omitempty"`
+	OnChainTaskID int64  `json:"on_chain_task_id"`
+	TokenAddress  string `json:"token_address,omitempty"`
+	TotalBudget   string `json:"total_budget,omitempty"`
 }
 
 // ArmTask is the one call that moves a Task on-chain into an executable
@@ -148,26 +135,6 @@ func (s *TaskService) ArmTask(ctx context.Context, taskID int64, wallet string, 
 	}
 	onChainTaskID := uint64(*task.OnChainTaskID)
 
-	// Instant path: the Arm Card's on-chain anchor is already recorded, so
-	// this call only claims the Task, signs grant+execute, sends both in one
-	// batch, waits for the execute receipt and writes the trade rows. The
-	// legacy grant/execute flow below stays for everything else.
-	if s.InstantExecution && task.IsActionable && !input.IsRecurring {
-		if decide, ok := executionDecideOf(task); ok {
-			if task.Status != "pending" {
-				return s.existingTradeOrConflict(ctx, taskID, wallet)
-			}
-			claimed, claimErr := s.Tasks.ClaimForExecution(ctx, taskID, wallet)
-			if errors.Is(claimErr, repository.ErrExecutionClaimLost) {
-				return s.existingTradeOrConflict(ctx, taskID, wallet)
-			}
-			if claimErr != nil {
-				return ArmTaskResult{}, claimErr
-			}
-			return s.armAndExecute(ctx, claimed, decide, input)
-		}
-	}
-
 	if task.IsActionable {
 		if err := s.grantAndPersistArm(ctx, taskID, onChainTaskID, input); err != nil {
 			return ArmTaskResult{}, err
@@ -182,281 +149,6 @@ func (s *TaskService) ArmTask(ctx context.Context, taskID int64, wallet string, 
 	}
 
 	return ArmTaskResult{OnChainTaskID: int64(onChainTaskID), TokenAddress: input.TokenAddress, TotalBudget: input.TotalBudget}, nil
-}
-
-type executionDecide struct {
-	SubTaskID     int64
-	OnChainID     uint64
-	ReasoningHash string
-	Side          string
-	Ticker        string
-	StockID       int64
-	Label         string
-}
-
-func executionDecideOf(task model.AgentTask) (executionDecide, bool) {
-	if task.TriggerDescription == nil {
-		return executionDecide{}, false
-	}
-	var payload struct {
-		ExecutionDecide *struct {
-			SubTaskID     int64  `json:"sub_task_id"`
-			OnChainID     uint64 `json:"on_chain_id"`
-			ReasoningHash string `json:"reasoning_hash"`
-			StockID       int64  `json:"stock_id"`
-		} `json:"execution_decide"`
-		Side           string `json:"side"`
-		ResolvedTicker string `json:"resolved_ticker"`
-		StockTicker    string `json:"stock_ticker"`
-	}
-	if err := json.Unmarshal([]byte(*task.TriggerDescription), &payload); err != nil {
-		return executionDecide{}, false
-	}
-	if payload.ExecutionDecide == nil || payload.ExecutionDecide.OnChainID == 0 {
-		return executionDecide{}, false
-	}
-	ticker := payload.ResolvedTicker
-	if ticker == "" {
-		ticker = payload.StockTicker
-	}
-	label := ""
-	if task.Summary != nil {
-		label = *task.Summary
-	}
-	return executionDecide{
-		SubTaskID:     payload.ExecutionDecide.SubTaskID,
-		OnChainID:     payload.ExecutionDecide.OnChainID,
-		ReasoningHash: payload.ExecutionDecide.ReasoningHash,
-		Side:          payload.Side,
-		Ticker:        ticker,
-		StockID:       payload.ExecutionDecide.StockID,
-		Label:         label,
-	}, true
-}
-
-func (s *TaskService) armAndExecute(ctx context.Context, task model.AgentTask, decide executionDecide, input ArmTaskInput) (ArmTaskResult, error) {
-	onChainTaskID := uint64(*task.OnChainTaskID)
-	amount, ok := new(big.Int).SetString(input.TotalBudget, 10)
-	if !ok || amount.Sign() <= 0 {
-		_ = s.Tasks.SetStatus(ctx, task.ID, "pending")
-		return ArmTaskResult{}, fmt.Errorf("agent: invalid total_budget %q", input.TotalBudget)
-	}
-	side := contracts.TradeSide(decide.Side)
-	if side != contracts.TradeSideBuy && side != contracts.TradeSideSell {
-		_ = s.Tasks.SetStatus(ctx, task.ID, "pending")
-		return ArmTaskResult{}, fmt.Errorf("agent: invalid side %q", decide.Side)
-	}
-	stockID := decide.StockID
-	var stockContract string
-	if stockID == 0 || (side == contracts.TradeSideSell && input.TokenAddress == "") {
-		stock, found, err := s.Stocks.FindByTicker(ctx, decide.Ticker)
-		if err != nil || !found {
-			_ = s.Tasks.SetStatus(ctx, task.ID, "pending")
-			return ArmTaskResult{}, fmt.Errorf("agent: ticker %q not found", decide.Ticker)
-		}
-		if stockID == 0 {
-			stockID = stock.ID
-		}
-		if stock.ContractAddress != nil {
-			stockContract = *stock.ContractAddress
-		}
-	}
-	if stockID == 0 {
-		_ = s.Tasks.SetStatus(ctx, task.ID, "pending")
-		return ArmTaskResult{}, fmt.Errorf("agent: stock id is missing for %q", decide.Ticker)
-	}
-	token := common.HexToAddress(input.TokenAddress)
-	if token == (common.Address{}) && stockContract != "" {
-		token = common.HexToAddress(stockContract)
-	}
-	if token == (common.Address{}) {
-		_ = s.Tasks.SetStatus(ctx, task.ID, "pending")
-		return ArmTaskResult{}, fmt.Errorf("agent: token address is empty")
-	}
-	minOutStarted := time.Now()
-	minOut, err := s.minOutFor(ctx, side, decide.Ticker, amount)
-	if err != nil {
-		_ = s.Tasks.SetStatus(ctx, task.ID, "pending")
-		return ArmTaskResult{}, err
-	}
-	slog.InfoContext(ctx, "agent: instant minOut", "task_id", task.ID, "duration_ms", time.Since(minOutStarted).Milliseconds())
-
-	submitStarted := time.Now()
-	_, executeHash, _, err := s.Chain.SubmitTradePair(ctx,
-		onChainTaskID, decide.OnChainID, token, decide.Ticker, side,
-		amount, minOut, decide.Label, common.HexToHash(decide.ReasoningHash),
-		input.TotalBudget, input.DurationSec, input.MaxAmountPerTrade, input.CooldownInterval,
-		s.ExecutionGasLimit,
-	)
-	if err != nil {
-		_ = s.Tasks.SetStatus(ctx, task.ID, "pending")
-		return ArmTaskResult{}, fmt.Errorf("agent: submit trade pair: %w", err)
-	}
-	slog.InfoContext(ctx, "agent: instant submitPair", "task_id", task.ID, "duration_ms", time.Since(submitStarted).Milliseconds())
-
-	waitStarted := time.Now()
-	trade, err := s.Chain.WaitTradeByHash(ctx, executeHash)
-	if err != nil {
-		_ = s.Tasks.SetStatus(ctx, task.ID, "pending")
-		return ArmTaskResult{}, fmt.Errorf("agent: wait trade receipt: %w", err)
-	}
-	slog.InfoContext(ctx, "agent: instant waitTrade", "task_id", task.ID, "duration_ms", time.Since(waitStarted).Milliseconds())
-
-	dbStarted := time.Now()
-
-	amountRaw := amount.String()
-	if trade.Amount != nil {
-		amountRaw = trade.Amount.String()
-	}
-	receivedRaw := ""
-	if trade.ReceivedAmount != nil {
-		receivedRaw = trade.ReceivedAmount.String()
-	}
-	idrxAmount := amountRaw
-	stockAmount := receivedRaw
-	if side == contracts.TradeSideSell {
-		idrxAmount = receivedRaw
-		stockAmount = amountRaw
-	}
-	fee := "0"
-	if trade.ProtocolFee != nil {
-		fee = trade.ProtocolFee.String()
-	}
-	agentTrade, err := s.Trades.RecordInstantExecution(ctx, repository.InstantExecutionRecord{
-		TaskID:          task.ID,
-		SubTaskID:       decide.SubTaskID,
-		OnChainTradeID:  int64(trade.TradeID),
-		TxHash:          executeHash,
-		Ticker:          decide.Ticker,
-		Side:            string(side),
-		Amount:          amountRaw,
-		Summary:         decide.Label,
-		StockID:         stockID,
-		WalletAddress:   strings.ToLower(strings.TrimSpace(task.WalletAddress)),
-		IdrxAmount:      idrxAmount,
-		StockAmount:     stockAmount,
-		ProtocolFeeIdrx: fee,
-		BlockNumber:     trade.BlockNumber,
-		LogIndex:        trade.LogIndex,
-	})
-	if err != nil {
-		return ArmTaskResult{}, fmt.Errorf("agent: record instant execution: %w", err)
-	}
-	slog.InfoContext(ctx, "agent: instant dbWrites", "task_id", task.ID, "duration_ms", time.Since(dbStarted).Milliseconds())
-
-	go func() {
-		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
-		defer cancel()
-		// The audit trail is not part of the trade. Delay it so its nonce
-		// never sits in front of the next scalp trade on the same wallet.
-		select {
-		case <-time.After(30 * time.Second):
-		case <-bg.Done():
-			return
-		}
-		if err := s.recordArmed(bg, task, task.ID, onChainTaskID, input.TotalBudget); err != nil {
-			slog.WarnContext(bg, "agent: record armed after execution failed", "task_id", task.ID, "error", err)
-		}
-		recorder, err := subtask.NewSubTaskRecorder(bg, s.SubTasks, s.Chain, onChainTaskID, task.ID, summaryOf(task), task.WalletAddress)
-		if err != nil {
-			slog.WarnContext(bg, "agent: audit recorder after execution failed", "task_id", task.ID, "error", err)
-		} else {
-			_, _ = recorder.Record(bg, "executor", "execute", "done", decide.Label, decide.Label, map[string]any{
-				"tx_hash":  executeHash,
-				"trade_id": trade.TradeID,
-			})
-			_, _ = recorder.Record(bg, "executor", "sync_database", "done", decide.Label, decide.Label, nil)
-		}
-		s.persistExecutionMessage(bg, &task, cardExecutedText(task))
-	}()
-
-	return ArmTaskResult{
-		OnChainTaskID: int64(onChainTaskID),
-		TokenAddress:  input.TokenAddress,
-		TotalBudget:   input.TotalBudget,
-		Status:        "executed",
-		TxHash:        executeHash,
-		Trade:         &agentTrade,
-	}, nil
-}
-
-func (s *TaskService) minOutFor(ctx context.Context, side contracts.TradeSide, ticker string, amount *big.Int) (*big.Int, error) {
-	if s.Prices == nil {
-		return nil, fmt.Errorf("agent: price reader is not configured")
-	}
-	price, err := s.Prices.OnchainSpotPrice(ctx, ticker)
-	if err != nil {
-		return nil, fmt.Errorf("agent: spot price %s: %w", ticker, err)
-	}
-	if price <= 0 {
-		return nil, fmt.Errorf("agent: non-positive spot price for %s", ticker)
-	}
-
-	oneE18 := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
-	var minOut *big.Int
-	if side == contracts.TradeSideSell {
-		wholeStock := new(big.Float).Quo(new(big.Float).SetInt(amount), new(big.Float).SetInt(oneE18))
-		idrxRaw := new(big.Float).Mul(wholeStock, big.NewFloat(price*100))
-		minOut, _ = new(big.Float).Mul(idrxRaw, big.NewFloat(0.99)).Int(nil)
-	} else {
-		idrxDisplay := new(big.Float).Quo(new(big.Float).SetInt(amount), big.NewFloat(100))
-		wholeStock := new(big.Float).Quo(idrxDisplay, big.NewFloat(price))
-		stockRaw := new(big.Float).Mul(wholeStock, new(big.Float).SetInt(oneE18))
-		minOut, _ = new(big.Float).Mul(stockRaw, big.NewFloat(0.99)).Int(nil)
-	}
-	if minOut == nil || minOut.Sign() <= 0 {
-		return nil, fmt.Errorf("agent: computed zero minimum output for %s", ticker)
-	}
-	return minOut, nil
-}
-
-func (s *TaskService) existingTradeOrConflict(ctx context.Context, taskID int64, wallet string) (ArmTaskResult, error) {
-	task, found, err := s.Tasks.FindByID(ctx, taskID)
-	if err != nil {
-		return ArmTaskResult{}, err
-	}
-	if !found {
-		return ArmTaskResult{}, agentcore.ErrTaskNotFound
-	}
-	if !strings.EqualFold(task.WalletAddress, wallet) {
-		return ArmTaskResult{}, agentcore.ErrWalletMismatch
-	}
-	trades, err := s.Trades.FindByTaskID(ctx, taskID)
-	if err == nil && len(trades) > 0 {
-		last := trades[len(trades)-1]
-		result := ArmTaskResult{Status: "executed", Trade: &last}
-		if task.OnChainTaskID != nil {
-			result.OnChainTaskID = *task.OnChainTaskID
-		}
-		if last.TxHash != nil {
-			result.TxHash = *last.TxHash
-		}
-		return result, nil
-	}
-	return ArmTaskResult{}, agentcore.ErrExecutionInFlight
-}
-
-func summaryOf(task model.AgentTask) string {
-	if task.Summary != nil {
-		return *task.Summary
-	}
-	return ""
-}
-
-func cardExecutedText(task model.AgentTask) string {
-	if task.TriggerDescription == nil {
-		return ""
-	}
-	var payload struct {
-		Card *contracts.CardContract `json:"card"`
-	}
-	if err := json.Unmarshal([]byte(*task.TriggerDescription), &payload); err != nil || payload.Card == nil {
-		return ""
-	}
-	if payload.Card.Ledger.ExecutedDesc != "" {
-		return payload.Card.Ledger.ExecutedDesc
-	}
-	return payload.Card.Footnotes.ExecutedSuccess
 }
 
 func (s *TaskService) grantAndPersistArm(ctx context.Context, taskID int64, onChainTaskID uint64, input ArmTaskInput) error {
@@ -503,7 +195,7 @@ func (s *TaskService) recordArmed(ctx context.Context, task model.AgentTask, tas
 	if err != nil {
 		return fmt.Errorf("agent: build subtask recorder for armed step: %w", err)
 	}
-	_, err = recorder.Record(ctx, "supervisor", "armed", "done", summary, summary, nil)
+	_, err = recorder.Record(ctx, "supervisor", "armed", "done", fmt.Sprintf("Armed on-chain with budget %s.", totalBudget), "", nil)
 	return err
 }
 
