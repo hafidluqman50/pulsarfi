@@ -2,13 +2,14 @@
 
 | | |
 |---|---|
-| **Version** | 3.1 |
+| **Version** | 3.2 |
 | **Status** | In Progress |
 | **Date Created** | 2026-10-25 |
 | **Last Updated** | 2026-10-25 |
 
 | Version | Date | Change |
 |---|---|---|
+| 3.2 | 2026-10-25 | Final local measurement after the 30s fee cache and the stored `stock_id`: 2.85s / 1.48s / 1.68s. The warm runs are 1.48–1.68s; the slow first run was dominated by a 1.26s receipt. The send remains 0.60–0.82s and the DB path 0.20–0.45s. The <1s target is still not proven; no code change in this revision. |
 | 3.1 | 2026-10-25 | Implementation status. The deployed `agent_tasks_status_check` forbids `executing`, so the atomic claim uses `pending → armed` and resets to `pending` on failure; no migration. The three task updates plus `agent_trades` and `stock_transactions` are now one data-modifying CTE. The audit rows are delayed 30s so their nonces never block the next scalp trade. Fee cache TTL is 30s and warmed; the on-chain `Idrx()` read is skipped when configured. Local live results: 3 real trades at 2.36s / 1.88s / 1.46s (warm), with send ~0.6–0.75s, receipt ~0.20–0.37s, DB ~0.20–0.40s; double-click produced exactly one trade. The <1s target is not yet proven; the deployed Fly measurement is pending. Existing live tests in the full suite fail on the LLM provider's exhausted credits and Supabase's 15-session pooler limit, not on this code. |
 | 3.0 | 2026-10-25 | MAJOR rewrite per review. Removed `executeFast`, `ArmAndExecute`, `ExecutionPreparer`, the new endpoint and every migration. The fast path is a branch inside the existing `ArmTask`; `ArmTaskHandler`, `useArmTask` and `ArmPanel.handleArm` are reused. The existing `await_confirmation` on-chain row is reused as the `decide` anchor, so the chat turn gains no transaction. No new table, column or index. Testing is mandatory live, not skipped. |
 | 2.0 | 2026-10-25 | Removed the new table/migration; still used new `ArmAndExecute`/`ExecutionPreparer` code. Superseded by 3.0. |
@@ -30,13 +31,13 @@
 | One data-modifying CTE for `agent_trades` + `stock_transactions` + task `executed`/`armed_at`/`executed_at` | Built |
 | Audit `armed`/`execute`/`sync_database` delayed 30s; final reply after the response | Built |
 | Live DB test `TestInstantExecution_ClaimAndDecide` | Pass |
-| Live chain test `TestInstantExecution_LiveArm` (3 runs, 3 trades, DB rows) | Pass; 2.36s / 1.88s / 1.46s |
+| Live chain test `TestInstantExecution_LiveArm` (3 runs, 3 trades, DB rows) | Pass; 2.85s / 1.48s / 1.68s |
 | Live double-click `TestInstantExecution_LiveDoubleClick` (ok=1, conflict=1, exactly 1 trade) | Pass |
 | Frontend `tsc --noEmit` + `npm run build` | Pass |
-| Server P95 < 1s on the deployed API | **Not proven**; local warm 1.46s, Fly measurement pending |
+| Server P95 < 1s on the deployed API | **Not proven**; local warm 1.48–1.68s, Fly measurement pending |
 | Full `go test ./... -race` | New tests pass; existing live tests fail on the provider's exhausted credits and Supabase's 15-session pooler, not on this code |
 
-The remaining local gap is dominated by the two-transaction batch send (~0.6–0.75s) and the receipt (~0.2–0.37s); the DB path is now ~0.2–0.4s. Two levers remain: (a) deploy and measure on Fly, where the RPC/DB latency may differ; (b) pre-grant the permission during the chat turn so the click sends one transaction, which changes the consent boundary and needs explicit approval.
+The remaining local gap is dominated by the two-transaction batch send (~0.60–0.82s) and the execute receipt (~0.23–1.26s); the DB path is now ~0.20–0.45s. Two levers remain: (a) deploy and measure on Fly, where the RPC/DB latency may differ; (b) pre-grant the permission during the chat turn so the click sends one transaction, which changes the consent boundary and needs explicit approval.
 
 ---
 
