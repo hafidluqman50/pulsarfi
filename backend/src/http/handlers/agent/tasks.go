@@ -99,13 +99,21 @@ func ArmTaskHandler(c *gin.Context) {
 		response.Forbidden(c, "task does not belong to the authenticated wallet")
 		return
 	}
+	if errors.Is(err, agentcore.ErrExecutionInFlight) {
+		response.Conflict(c, "an execution is already in flight for this task")
+		return
+	}
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "agent: arm task failed", "task_id", taskID, "error", err)
 		response.InternalError(c, "failed to arm task")
 		return
 	}
 
-	response.OK(c, "task armed", armResult)
+	message := "task armed"
+	if armResult.Status == "executed" {
+		message = "task executed"
+	}
+	response.OK(c, message, armResult)
 }
 
 // DisarmTaskHandler calls cancelTask only. approve(0) on the relevant

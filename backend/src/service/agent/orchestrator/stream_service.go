@@ -6,6 +6,7 @@ import (
 	"fmt"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -225,6 +226,17 @@ func (orch *Orchestrator) consume(ctx context.Context, run *agentcore.RunContext
 // happened to the pause (finishInterrupt), then what the frontend renders
 // (finalizeResult).
 func (orch *Orchestrator) finish(ctx context.Context, run *agentcore.RunContext, outcome *turnOutcome, keepCheckpoint bool) OrchestratorResult {
+	if run.TaskID != 0 && run.DecideOnChainID != 0 && orch.Tasks != nil {
+		var stockID int64
+		if orch.Stocks != nil && run.Decision.MentionedTicker != "" {
+			if stock, found, err := orch.Stocks.FindByTickerOrIdxTicker(ctx, run.Decision.MentionedTicker); err == nil && found {
+				stockID = stock.ID
+			}
+		}
+		if err := orch.Tasks.SetExecutionDecide(ctx, run.TaskID, run.DecideSubTaskID, run.DecideOnChainID, run.DecideHash, stockID); err != nil {
+			slog.WarnContext(ctx, "orchestrator: persist execution_decide failed", "task", run.TaskID, "chat", run.ChatID, "error", err)
+		}
+	}
 	result := OrchestratorResult{TaskID: run.TaskID, OnChainTaskID: run.OnChainTaskID, Reply: outcome.reply.String()}
 	orch.finishInterrupt(ctx, run, outcome.interrupt, keepCheckpoint, &result)
 	orch.finalizeResult(ctx, run, outcome, &result)

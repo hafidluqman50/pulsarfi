@@ -26,6 +26,13 @@ type RunContext struct {
 	Recorder      SubTaskWriter
 	Decision      RouteDecision
 
+	// decision anchor recorded with the Arm Card. executeTrade references
+	// DecideOnChainID as its on-chain subTaskId; the turn persists all three
+	// into the Task's trigger_description so the Arm click can use them.
+	DecideSubTaskID int64
+	DecideOnChainID uint64
+	DecideHash      string
+
 	// live
 	Stream TurnStream
 }

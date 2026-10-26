@@ -2,12 +2,19 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/horizonlabs/pulsarfi-backend/src/model"
 	"gorm.io/gorm"
 )
+
+// ErrExecutionClaimLost means another request already moved this Task out of
+// pending/armed. It is the double-click guard: the one atomic UPDATE below is
+// the only claim.
+var ErrExecutionClaimLost = errors.New("agent: execution claim lost")
 
 type AgentTaskRepository struct {
 	DB *gorm.DB
@@ -216,3 +223,56 @@ func (r *AgentTaskRepository) SetExitPolicy(ctx context.Context, id int64, polic
 		Updates(updates).Error
 }
 
+// ClaimForExecution is the whole Arm-click concurrency guard: one atomic
+// UPDATE moves the Task out of pending. Zero affected rows means another
+// request won the click. It uses "armed" (already allowed by the existing
+// status check) as the in-flight marker; no schema change.
+func (r *AgentTaskRepository) ClaimForExecution(ctx context.Context, id int64, wallet string) (model.AgentTask, error) {
+	var task model.AgentTask
+	err := r.DB.WithContext(ctx).Raw(`
+		UPDATE agent_tasks
+		SET status = 'armed'
+		WHERE id = ? AND wallet_address = ? AND status = 'pending'
+		RETURNING *`, id, wallet).Scan(&task).Error
+	if err != nil {
+		return model.AgentTask{}, err
+	}
+	if task.ID == 0 {
+		return model.AgentTask{}, ErrExecutionClaimLost
+	}
+	return task, nil
+}
+
+// SetExecutionDecide stores the on-chain anchor the Arm click will pass to
+// executeTrade. It edits the existing trigger_description JSON; there is no
+// schema change.
+func (r *AgentTaskRepository) SetExecutionDecide(ctx context.Context, id int64, subTaskID int64, onChainID uint64, reasoningHash string, stockID int64) error {
+	task, found, err := r.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return gorm.ErrRecordNotFound
+	}
+
+	payload := map[string]any{}
+	if task.TriggerDescription != nil && strings.TrimSpace(*task.TriggerDescription) != "" {
+		if err := json.Unmarshal([]byte(*task.TriggerDescription), &payload); err != nil {
+			payload = map[string]any{}
+		}
+	}
+	payload["execution_decide"] = map[string]any{
+		"sub_task_id":    subTaskID,
+		"on_chain_id":    onChainID,
+		"reasoning_hash": reasoningHash,
+		"stock_id":       stockID,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	trigger := string(encoded)
+	return r.DB.WithContext(ctx).Model(&model.AgentTask{}).
+		Where("id = ?", id).
+		Update("trigger_description", trigger).Error
+}

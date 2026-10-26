@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // OnchainConfig is every chain setting the backend needs, read once at boot so
@@ -14,6 +16,13 @@ type OnchainConfig struct {
 	AgentTaskManager      string
 	PulsarProtocol        string
 	IDRXAddress           string
+
+	// Instant execution: the Arm click signs grant+execute and waits for one
+	// receipt. The flag is a kill switch, on unless explicitly set to false.
+	InstantExecution  bool
+	ExecutionGasLimit uint64
+	GrantGasLimit     uint64
+	FeeCacheTTL       time.Duration
 }
 
 // LoadOnchain reads and validates the on-chain settings. The first three are
@@ -27,6 +36,10 @@ func LoadOnchain() (OnchainConfig, error) {
 		AgentTaskManager:      strings.TrimSpace(os.Getenv("AGENT_TASK_MANAGER_ADDRESS")),
 		PulsarProtocol:        strings.TrimSpace(os.Getenv("PULSAR_PROTOCOL")),
 		IDRXAddress:           strings.TrimSpace(os.Getenv("IDRX_ADDRESS")),
+		InstantExecution:      os.Getenv("INSTANT_EXECUTION_ENABLED") != "false",
+		ExecutionGasLimit:     uintEnv("EXECUTION_GAS_LIMIT", 700000),
+		GrantGasLimit:         uintEnv("GRANT_GAS_LIMIT", 200000),
+		FeeCacheTTL:           time.Duration(uintEnv("FEE_CACHE_TTL_SEC", 30)) * time.Second,
 	}
 
 	switch {
@@ -39,4 +52,16 @@ func LoadOnchain() (OnchainConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func uintEnv(key string, fallback uint64) uint64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || value == 0 {
+		return fallback
+	}
+	return value
 }

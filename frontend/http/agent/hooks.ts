@@ -114,7 +114,18 @@ export function useArmTask(taskId: number) {
   return useMutation({
     mutationFn: (input: taskApi.ArmTaskParams) =>
       taskApi.armTask(taskId, input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agent-tasks'] }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
+      if (!data?.trade) return;
+      queryClient.invalidateQueries({ queryKey: ['agent-task-trades', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['agent-task-reasoning', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['agent-activity'] });
+      queryClient.invalidateQueries({ queryKey: ['agent-chat-messages'] });
+      queryClient.invalidateQueries({ queryKey: ['stock-transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['market-stocks'] });
+      queryClient.invalidateQueries({ queryKey: ['protocol-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['readContracts'] });
+    },
     onError: toastAgentError('Could not arm the task'),
   });
 }

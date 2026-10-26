@@ -134,7 +134,7 @@ export function ArmPanel({ taskId, isActionable, tokenAddress, tokenSymbol, side
   const managerAddress = process.env.NEXT_PUBLIC_AGENT_TASK_MANAGER_ADDRESS as Address | undefined;
   const needsApproval = isActionable && !!effectiveTokenAddress && !!effectiveRawBudget && !!managerAddress;
 
-  const { refetch: refetchAllowance } = useReadContract({
+  const { data: currentAllowance, refetch: refetchAllowance } = useReadContract({
     address: effectiveTokenAddress,
     abi: erc20Abi,
     functionName: 'allowance',
@@ -153,23 +153,99 @@ export function ArmPanel({ taskId, isActionable, tokenAddress, tokenSymbol, side
     setErrorMessage(null);
     try {
       const alreadyArmed = Boolean(initialArmed || currentTask?.armed_at);
-      if (!alreadyArmed) {
+      const fastPath = Boolean(parsedTrigger?.execution_decide) && !alreadyArmed;
+
+      // Allowance first: the 1s execution budget starts after this receipt.
+      if (needsApproval) {
+        const amount = BigInt(effectiveRawBudget);
+        let covered = typeof currentAllowance === 'bigint' && currentAllowance >= amount;
+        if (!covered) {
+          try {
+            const fresh = await refetchAllowance();
+            covered = typeof fresh.data === 'bigint' && fresh.data >= amount;
+          } catch (e) {
+            console.warn('Allowance check failed, requesting approval:', e);
+          }
+        }
+
+        if (!covered) {
+          setStep('approving');
+          setSubProgress(contract.button_labels.approving);
+
+          const feeOverrides: { maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint } = {};
+          if (publicClient) {
+            try {
+              const fees = await publicClient.estimateFeesPerGas();
+              if (fees.maxFeePerGas) {
+                feeOverrides.maxFeePerGas = (fees.maxFeePerGas * BigInt(125)) / BigInt(100);
+                feeOverrides.maxPriorityFeePerGas = fees.maxPriorityFeePerGas ?? BigInt(100000000);
+              }
+            } catch (e) {
+              console.warn('Failed to estimate fees per gas, using wallet defaults:', e);
+            }
+          }
+
+          let writeRequest: any = {
+            address: effectiveTokenAddress!,
+            abi: erc20Abi,
+            functionName: 'approve',
+            args: [managerAddress!, amount],
+            chainId: appChainId,
+            ...feeOverrides,
+          };
+
+          if (publicClient && address) {
+            try {
+              const { request: simRequest } = await publicClient.simulateContract({
+                address: effectiveTokenAddress!,
+                abi: erc20Abi,
+                functionName: 'approve',
+                args: [managerAddress!, amount],
+                account: address,
+              });
+              writeRequest = {
+                ...simRequest,
+                chainId: appChainId,
+                ...feeOverrides,
+              };
+            } catch (simErr) {
+              console.error('Simulate contract approve failed:', simErr);
+              throw simErr;
+            }
+          }
+
+          const txHash = await writeContractAsync(writeRequest);
+          setSubProgress(contract.button_labels.submitting_approve || contract.button_labels.approving);
+
+          if (publicClient) {
+            const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+            if (receipt.status !== 'success') {
+              throw new Error('ERC20 approve transaction failed or reverted on-chain.');
+            }
+          }
+          await refetchAllowance();
+        }
+      }
+
+      let maxPerTradeRaw: string | undefined = undefined;
+      if (maxPerTradeDisplay && Number(maxPerTradeDisplay) > 0) {
+        const mNum = Math.max(1, Math.floor(Number(maxPerTradeDisplay)));
+        maxPerTradeRaw = (BigInt(mNum) * (BigInt(10) ** BigInt(decimals))).toString();
+      }
+
+      const effectiveDuration = effectiveShape === 'swing'
+        ? swingHorizonDays * 24 * 60 * 60
+        : effectiveShape === 'investment'
+        ? 30 * 24 * 60 * 60
+        : (durationSec || 24 * 60 * 60);
+
+      // One arm call. On the instant path the backend also executes and
+      // returns the trade; otherwise this is the existing grant-only arm.
+      if (fastPath || !alreadyArmed) {
         setStep('arming');
         setSubProgress(contract.button_labels.arming);
 
-        let maxPerTradeRaw: string | undefined = undefined;
-        if (maxPerTradeDisplay && Number(maxPerTradeDisplay) > 0) {
-          const mNum = Math.max(1, Math.floor(Number(maxPerTradeDisplay)));
-          maxPerTradeRaw = (BigInt(mNum) * (BigInt(10) ** BigInt(decimals))).toString();
-        }
-
-        const effectiveDuration = effectiveShape === 'swing'
-          ? swingHorizonDays * 24 * 60 * 60
-          : effectiveShape === 'investment'
-          ? 30 * 24 * 60 * 60
-          : (durationSec || 24 * 60 * 60);
-
-        await armTask.mutateAsync({
+        const armRes = await armTask.mutateAsync({
           totalBudget: effectiveRawBudget,
           durationSec: effectiveDuration,
           tokenAddress: effectiveTokenAddress,
@@ -177,69 +253,14 @@ export function ArmPanel({ taskId, isActionable, tokenAddress, tokenSymbol, side
           cooldownInterval: cooldownSec > 0 ? cooldownSec : undefined,
           isRecurring: effectiveShape === 'investment' ? isRecurring : false,
         });
-      }
 
-      // Always approve, unconditionally, on every arm — never skip it based
-      // on a read of current on-chain allowance. A stale/cached read (e.g.
-      // right after the contract address itself changes) can report
-      // "already sufficient" when it is not, silently skipping the one
-      // step that actually grants the new contract spending rights.
-      if (needsApproval) {
-        setStep('approving');
-        setSubProgress(contract.button_labels.approving);
-
-        const feeOverrides: { maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint } = {};
-        if (publicClient) {
-          try {
-            const fees = await publicClient.estimateFeesPerGas();
-            if (fees.maxFeePerGas) {
-              feeOverrides.maxFeePerGas = (fees.maxFeePerGas * BigInt(125)) / BigInt(100);
-              feeOverrides.maxPriorityFeePerGas = fees.maxPriorityFeePerGas ?? BigInt(100000000);
-            }
-          } catch (e) {
-            console.warn('Failed to estimate fees per gas, using wallet defaults:', e);
-          }
+        if (armRes?.status === 'executed' && armRes.trade) {
+          setStep('executed');
+          toast.success('Transaction executed on-chain!', {
+            description: 'Trade completed on Uniswap V4.',
+          });
+          return;
         }
-
-        let writeRequest: any = {
-          address: effectiveTokenAddress!,
-          abi: erc20Abi,
-          functionName: 'approve',
-          args: [managerAddress!, BigInt(effectiveRawBudget)],
-          chainId: appChainId,
-          ...feeOverrides,
-        };
-
-        if (publicClient && address) {
-          try {
-            const { request: simRequest } = await publicClient.simulateContract({
-              address: effectiveTokenAddress!,
-              abi: erc20Abi,
-              functionName: 'approve',
-              args: [managerAddress!, BigInt(effectiveRawBudget)],
-              account: address,
-            });
-            writeRequest = {
-              ...simRequest,
-              chainId: appChainId,
-              ...feeOverrides,
-            };
-          } catch (simErr) {
-            console.error('Simulate contract approve failed:', simErr);
-            throw simErr;
-          }
-        }
-
-        const txHash = await writeContractAsync(writeRequest);
-        setSubProgress(contract.button_labels.submitting_approve || contract.button_labels.approving);
-
-        if (publicClient) {
-          const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-          if (receipt.status !== 'success') {
-            throw new Error('ERC20 approve transaction failed or reverted on-chain.');
-          }
-        }
-        await refetchAllowance();
       }
 
       setStep('executing');

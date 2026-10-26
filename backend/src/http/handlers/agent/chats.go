@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
+	"log/slog"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -76,6 +77,7 @@ func respondWithTurn(c *gin.Context, run func() (agentcore.WorkflowCard, error))
 		response.Conflict(c, "a turn is already running for this chat")
 		return
 	case err != nil:
+		slog.ErrorContext(c.Request.Context(), "agent: chat turn failed", "chat_id", c.Param("id"), "error", err)
 		response.InternalError(c, "Failed to process chat message")
 		return
 	}

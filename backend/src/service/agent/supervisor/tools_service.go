@@ -7,6 +7,7 @@ import (
 	"fmt"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"log/slog"
+	"strings"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
@@ -163,7 +164,7 @@ func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...
 		if !run.Decision.IsActionable {
 			return refusal("this Task is not an actionable trade: update_task with is_actionable true first"), nil
 		}
-		recordAwaitConfirmation(ctx, run)
+		recordAwaitConfirmation(ctx, run, args.Message)
 		payload := agentcore.ArmInterrupt{TaskID: run.TaskID, Message: args.Message}
 		return "", tool.StatefulInterrupt(ctx, payload, payload)
 	}
@@ -173,15 +174,27 @@ func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...
 	return "", tool.StatefulInterrupt(ctx, state, state)
 }
 
-func recordAwaitConfirmation(ctx context.Context, run *agentcore.RunContext) {
+func recordAwaitConfirmation(ctx context.Context, run *agentcore.RunContext, message string) {
 	if run.Recorder == nil {
 		return
 	}
 	label := run.Decision.Label
-	run.Stream.StepStarted("supervisor", "await_confirmation", label)
-	if _, err := run.Recorder.Record(ctx, "supervisor", "await_confirmation", "done", "Arm Card presented, awaiting the user's on-chain confirmation.", label, nil); err != nil {
-		slog.WarnContext(ctx, "supervisor: record await_confirmation failed", "error", err)
+	reasoning := message
+	if strings.TrimSpace(reasoning) == "" {
+		reasoning = label
 	}
+
+	run.Stream.StepStarted("supervisor", "await_confirmation", label)
+	row, err := run.Recorder.Record(ctx, "supervisor", "await_confirmation", "done", reasoning, label, nil)
+	if err != nil {
+		slog.WarnContext(ctx, "supervisor: record decision anchor failed", "task", run.TaskID, "chat", run.ChatID, "error", err)
+		return
+	}
+	run.DecideSubTaskID = row.ID
+	if row.OnChainSubTaskID != nil {
+		run.DecideOnChainID = uint64(*row.OnChainSubTaskID)
+	}
+	run.DecideHash = row.DecisionHash
 }
 
 type agentRequest struct {
