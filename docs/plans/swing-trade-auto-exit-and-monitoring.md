@@ -2,13 +2,14 @@
 
 | | |
 |---|---|
-| **Version** | 1.0 |
-| **Status** | Draft |
+| **Version** | 1.1 |
+| **Status** | Superseded |
 | **Date Created** | 2026-09-17 |
-| **Last Updated** | 2026-09-17 |
+| **Last Updated** | 2026-10-25 |
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1 | 2026-10-25 | Marked Superseded by `swing-investment-strategy-execution.md` v1.0. That plan folds swing monitoring and the investment DCA loop into one workstream and reaches automatic swing exits through a companion exit Task created at trigger time, avoiding the `AgentTaskManager` redeploy and dual-permission contract change this draft required. No technical content below is changed. |
 | 1.0 | 2026-09-17 | Initial draft |
 
 ## 1. Problem Statement
