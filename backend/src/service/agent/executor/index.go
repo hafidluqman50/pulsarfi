@@ -11,14 +11,17 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	helper "github.com/horizonlabs/pulsarfi-backend/src/app/helper"
+	"log/slog"
 	"math/big"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
 	"github.com/ethereum/go-ethereum/common"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
@@ -141,4 +144,93 @@ func New(ctx context.Context, chatModel model.ToolCallingChatModel, portfolio Po
 		return nil, fmt.Errorf("executor: build agent: %w", err)
 	}
 	return executorAgent, nil
+}
+
+type ArmedTaskReader interface {
+    FindByID(ctx context.Context, id int64) (dbmodel.AgentTask, bool, error)
+}
+
+// runner: the runner of Comet.
+// tasks: reads the Task to confirm it was armed on-chain.
+// step: runs one agent turn for a graph node.
+func NewNode(runner *adk.Runner, tasks ArmedTaskReader, step agentcore.StepFunc) agentcore.NodeFunc {
+    return func(ctx context.Context, state *agentcore.TurnState) (*agentcore.TurnState, error) {
+        run, ok := agentcore.RunContextFrom(ctx)
+        if !ok {
+            return state, errors.New("executor: no run context bound to this node")
+        }
+
+        if state == nil {
+            return nil, errors.New("executor: node started without state")
+        }
+
+        task, err := requireArmedTask(ctx, tasks, run)
+        if err != nil {
+            return state, err
+        }
+
+        decision := run.Decision
+        rawPrompt := run.RawPrompt
+        if task.RawPrompt != nil {
+            rawPrompt = *task.RawPrompt
+        }
+
+        request := helper.BuildExecutorRequest(rawPrompt, decision.Shape, decision.MentionedTicker, decision.Side, decision.BudgetIDRX, decision.SellAmount, state.NovaFindings)
+        if err := recordCometRoute(ctx, run); err != nil {
+            return state, err
+        }
+
+        tipBefore := run.Recorder.TerminalHash()
+        run.Stream.SetCurrent("executor", "decide")
+
+        result, reply, err := step(ctx, runner, "comet", state, []adk.Message{schema.UserMessage(request)})
+        if err != nil {
+            recordCometFailure(ctx, run, err)
+            return result, fmt.Errorf("executor: comet run: %w", err)
+        }
+
+        return recordCometResult(ctx, run, result, reply, tipBefore)
+    }
+}
+
+func requireArmedTask(ctx context.Context, tasks ArmedTaskReader, run *agentcore.RunContext) (dbmodel.AgentTask, error) {
+    task, found, err := tasks.FindByID(ctx, run.TaskID)
+    if err != nil {
+        return dbmodel.AgentTask{}, fmt.Errorf("executor: load task %d: %w", run.TaskID, err)
+    }
+
+    if !found || task.ArmedAt == nil || task.OnChainTaskID == nil {
+        return dbmodel.AgentTask{}, fmt.Errorf("executor: task %d is not armed", run.TaskID)
+    }
+
+    return task, nil
+}
+
+func recordCometRoute(ctx context.Context, run *agentcore.RunContext) error {
+    label := run.Decision.Label
+    run.Stream.StepStarted("supervisor", "route_to_executor", label)
+    if _, err := run.Recorder.Record(ctx, "supervisor", "route_to_executor", "done", "Routed to Comet for execution.", label, nil); err != nil {
+        return fmt.Errorf("executor: record route_to_executor: %w", err)
+    }
+
+    return nil
+}
+
+func recordCometFailure(ctx context.Context, run *agentcore.RunContext, cause error) {
+    if _, err := run.Recorder.Record(ctx, "executor", "decide", "failed", cause.Error(), run.Decision.Label, nil); err != nil {
+        slog.ErrorContext(ctx, "executor: record decide failed step", "chat_id", run.ChatID.String(), "error", err)
+    }
+}
+
+func recordCometResult(ctx context.Context, run *agentcore.RunContext, state *agentcore.TurnState, reply, tipBefore string) (*agentcore.TurnState, error) {
+    if run.Recorder.TerminalHash() == tipBefore {
+        if _, err := run.Recorder.Record(ctx, "executor", "decide", "done", reply, run.Decision.Label, nil); err != nil {
+            return state, fmt.Errorf("executor: record decide step: %w", err)
+        }
+    }
+
+    state.CometDone = true
+    note := fmt.Sprintf("System note: Comet finished executing Task %d. His result:\n\n%s\n\nConfirm the result to the user.", state.TaskID, reply)
+    state.Messages = append(state.Messages, schema.UserMessage(note))
+    return state, nil
 }

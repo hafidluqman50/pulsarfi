@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	agentcore "github.com/horizonlabs/pulsarfi-backend/src/app/core/agent"
 	"log/slog"
 
-	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
-	helper "github.com/horizonlabs/pulsarfi-backend/src/app/helper"
 	"github.com/horizonlabs/pulsarfi-backend/src/contracts"
 )
 
@@ -163,11 +160,19 @@ func (t *awaitArmTool) InvokableRun(ctx context.Context, arguments string, _ ...
 		if !run.Decision.IsActionable {
 			return refusal("this Task is not an actionable trade: update_task with is_actionable true first"), nil
 		}
+        if agentcore.RouteNeedsNova(run.Route) && !run.NovaDone {
+            return refusal("Nova has not analysed this Task yet: end your turn now, the system runs Nova next and brings you back"), nil
+        }
+
 		recordAwaitConfirmation(ctx, run)
 		payload := agentcore.ArmInterrupt{TaskID: run.TaskID, Message: args.Message}
 		return "", tool.StatefulInterrupt(ctx, payload, payload)
 	}
 	if isTarget, _, _ := tool.GetResumeContext[string](ctx); isTarget {
+        if run, ok := agentcore.RunContextFrom(ctx); ok {
+            run.Armed = true
+        }
+
 		return "armed", nil
 	}
 	return "", tool.StatefulInterrupt(ctx, state, state)
@@ -184,157 +189,37 @@ func recordAwaitConfirmation(ctx context.Context, run *agentcore.RunContext) {
 	}
 }
 
-type agentRequest struct {
-	Request string `json:"request"`
+type understandArgs struct {
+    Route          string `json:"route" jsonschema_description:"where this request goes: none (plain conversation), analyzer_only (ask Nova and relay her findings), analyzer_then_executor (ask Nova, then execute the trade once armed), or executor_only (execute the trade once armed, no Nova)"`
+    RequestForNova string `json:"request_for_nova,omitempty" jsonschema_description:"what Nova should gather and conclude, in plain words; required when the route includes Nova, with every ticker, index and news topic the user named"`
 }
 
-func rewrapRequest(arguments string, build func(userRequest string) string) (string, error) {
-	var request agentRequest
-	if err := json.Unmarshal([]byte(arguments), &request); err != nil {
-		return "", fmt.Errorf("invalid request arguments: %w", err)
-	}
-	wrapped, err := json.Marshal(agentRequest{Request: build(request.Request)})
-	if err != nil {
-		return "", err
-	}
-	return string(wrapped), nil
+type understandReply struct {
+    Route     string `json:"route,omitempty"`
+    ToolError string `json:"tool_error,omitempty"`
 }
 
-func innerAgentTool(ctx context.Context, inner adk.Agent) (tool.InvokableTool, error) {
-	invokable, ok := adk.NewAgentTool(ctx, inner).(tool.InvokableTool)
-	if !ok {
-		return nil, errors.New("agent tool is not invokable")
-	}
-	return invokable, nil
-}
+func newUnderstandTool() (tool.InvokableTool, error) {
+    return utils.InferTool(
+        "understand",
+        "Declares where this request goes: Nova, execution, both, or neither. Call it FIRST for anything except plain conversation, before open_task. Call it again if the user's answers change the route or what Nova should gather. The system runs Nova by itself once the Task is open and settled.",
+        func(ctx context.Context, args understandArgs) (understandReply, error) {
+            run, ok := agentcore.RunContextFrom(ctx)
+            if !ok {
+                return understandReply{}, errors.New("understand: no run context bound to this turn")
+            }
 
-// analyzerCall calls Nova and writes the two Sub Tasks around her work. It
-// forwards every tool option to the inner agent tool: dropping them silently
-// loses all of Nova's live events (spike S5).
-type analyzerCall struct {
-	inner tool.InvokableTool
-}
+            if !agentcore.IsKnownRoute(args.Route) {
+                return understandReply{ToolError: "route must be one of none, analyzer_only, analyzer_then_executor, executor_only"}, nil
+            }
 
-func newAnalyzerCall(ctx context.Context, analyzerAgent adk.Agent) (tool.InvokableTool, error) {
-	inner, err := innerAgentTool(ctx, analyzerAgent)
-	if err != nil {
-		return nil, err
-	}
-	return &analyzerCall{inner: inner}, nil
-}
+            if agentcore.RouteNeedsNova(args.Route) && args.RequestForNova == "" {
+                return understandReply{ToolError: "request_for_nova is required when the route includes Nova"}, nil
+            }
 
-func (c *analyzerCall) Info(ctx context.Context) (*schema.ToolInfo, error) { return c.inner.Info(ctx) }
-
-func (c *analyzerCall) InvokableRun(ctx context.Context, arguments string, opts ...tool.Option) (string, error) {
-	run, ok := runContextWithTask(ctx)
-	if !ok {
-		return refusal(noOpenTaskReason), nil
-	}
-	decision := run.Decision
-	// Nova's request is built from the Task. A trade that is still being
-	// configured would send her the wrong instructions (no verification, no
-	// verdict), so the Task must be settled first.
-	if decision.Side != "" && !decision.IsActionable {
-		return refusal("this trade is not settled yet: call update_task with the settled parameters and is_actionable true before analyzer_agent"), nil
-	}
-	wrappedArguments, err := rewrapRequest(arguments, func(userRequest string) string {
-		return helper.BuildAnalyzerRequest(userRequest, decision.Shape, decision.MentionedTicker, decision.Side, decision.IsActionable)
-	})
-	if err != nil {
-		return "", fmt.Errorf("analyzer_agent: %w", err)
-	}
-
-	run.Stream.StepStarted("supervisor", "route_to_analyzer", decision.Label)
-	if _, err := run.Recorder.Record(ctx, "supervisor", "route_to_analyzer", "done", "Routed to Nova for evaluation.", decision.Label, nil); err != nil {
-		return "", fmt.Errorf("analyzer_agent: record route_to_analyzer: %w", err)
-	}
-
-	run.Stream.StepStarted("analyzer", "gather_evidence", decision.Label)
-	run.Stream.SetCurrent("analyzer", "gather_evidence")
-	reply, err := c.inner.InvokableRun(ctx, wrappedArguments, opts...)
-	if err != nil {
-		if _, recErr := run.Recorder.Record(ctx, "analyzer", "gather_evidence", "failed", err.Error(), decision.Label, nil); recErr != nil {
-			slog.ErrorContext(ctx, "supervisor: record gather_evidence failed step", "error", recErr)
-		}
-		return "", fmt.Errorf("analyzer_agent run: %w", err)
-	}
-
-	// A tradeable/entry_price verdict is only meaningful for an actionable
-	// request — for an informational one there is no trade to verdict on, so
-	// nothing is parsed as one; Nova's whole reply is just her answer.
-	prose := reply
-	var verdict *helper.NovaVerdict
-	if decision.IsActionable {
-		verdict, prose = helper.ParseNovaVerdict(reply)
-	}
-	if _, err := run.Recorder.Record(ctx, "analyzer", "gather_evidence", "done", prose, decision.Label, nil); err != nil {
-		return "", fmt.Errorf("analyzer_agent: record gather_evidence: %w", err)
-	}
-	if verdict == nil {
-		return prose, nil
-	}
-	return prose + "\n\n" + helper.FormatNovaVerdict(verdict), nil
-}
-
-const executeInstruction = "\n\nThe task is armed and approved on-chain. Size within the approved budget and execute the trade on-chain using submit_trade. If Nova's findings or verdict appear above, reflect them in your chat reasoning to explain your decision."
-
-// executorCall calls Comet. It never interrupts (the Arm pause is
-// await_arm); it only refuses until the Task is armed, reading the same
-// ArmedAt condition ExecuteTask already checks, then writes route_to_executor
-// and, when Comet's own tools recorded nothing, the decide step.
-type executorCall struct {
-	inner tool.InvokableTool
-	armed ArmedTaskReader
-}
-
-func newExecutorCall(ctx context.Context, executorAgent adk.Agent, armed ArmedTaskReader) (tool.InvokableTool, error) {
-	inner, err := innerAgentTool(ctx, executorAgent)
-	if err != nil {
-		return nil, err
-	}
-	return &executorCall{inner: inner, armed: armed}, nil
-}
-
-func (c *executorCall) Info(ctx context.Context) (*schema.ToolInfo, error) { return c.inner.Info(ctx) }
-
-func (c *executorCall) InvokableRun(ctx context.Context, arguments string, opts ...tool.Option) (string, error) {
-	run, ok := runContextWithTask(ctx)
-	if !ok {
-		return refusal(noOpenTaskReason), nil
-	}
-	task, found, err := c.armed.FindByID(ctx, run.TaskID)
-	if err != nil {
-		return "", fmt.Errorf("executor_agent: load task: %w", err)
-	}
-	if !found || task.ArmedAt == nil || task.OnChainTaskID == nil {
-		return refusal("the Task is not armed yet: call await_arm first and wait for \"armed\""), nil
-	}
-	wrappedArguments, err := rewrapRequest(arguments, func(userRequest string) string {
-		return userRequest + executeInstruction
-	})
-	if err != nil {
-		return "", fmt.Errorf("executor_agent: %w", err)
-	}
-
-	label := run.Decision.Label
-	run.Stream.StepStarted("supervisor", "route_to_executor", label)
-	if _, err := run.Recorder.Record(ctx, "supervisor", "route_to_executor", "done", "Routed to Comet for execution.", label, nil); err != nil {
-		return "", fmt.Errorf("executor_agent: record route_to_executor: %w", err)
-	}
-
-	tipBefore := run.Recorder.TerminalHash()
-	run.Stream.SetCurrent("executor", "decide")
-	reply, err := c.inner.InvokableRun(ctx, wrappedArguments, opts...)
-	if err != nil {
-		if _, recErr := run.Recorder.Record(ctx, "executor", "decide", "failed", err.Error(), label, nil); recErr != nil {
-			slog.ErrorContext(ctx, "supervisor: record decide failed step", "error", recErr)
-		}
-		return "", fmt.Errorf("executor_agent run: %w", err)
-	}
-	if run.Recorder.TerminalHash() == tipBefore {
-		if _, err := run.Recorder.Record(ctx, "executor", "decide", "done", reply, label, nil); err != nil {
-			return "", fmt.Errorf("executor_agent: record decide step: %w", err)
-		}
-	}
-	return reply, nil
+            run.Route = args.Route
+            run.NovaRequest = args.RequestForNova
+            return understandReply{Route: args.Route}, nil
+        },
+    )
 }

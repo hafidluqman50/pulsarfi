@@ -68,10 +68,9 @@ func (a balanceAdapter) IDRXBalance(ctx context.Context, wallet string) (*big.In
 // logs instead of failing NewRegistry outright — same "disabled, not fatal"
 // pattern as the rest of NewRegistry's optional integrations.
 //
-// Quasar is an adk.ChatModelAgent again (service/agent/supervisor) with
-// Nova and Comet as its tools, run by the Orchestrator over an adk.Runner
-// (docs/plans/agent-as-tool-orchestration.md): ChatModelAgent does stream,
-// the earlier belief that it cannot was wrong.
+// Quasar, Nova and Comet are adk.ChatModelAgents, each a node of the
+// Orchestrator graph run over its own adk.Runner
+// (docs/plans/agent-workflow-graph.md).
 func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.PortfolioChartReader) (*chat.ChatService, *task.TaskService, *task.TaskScheduler) {
 	ctx := context.Background()
 
@@ -146,12 +145,14 @@ func newAgentTaskServices(repos *repository.Registry, chartReader *publicsvc.Por
 		ReplyModel:      supervisorModel,
 		Stocks:          repos.Stock,
 	}
-	supervisorAgent, err := supervisor.New(ctx, supervisorModel, analyzerAgent, executorAgent, orch, repos.AgentTask)
+	supervisorAgent, err := supervisor.New(ctx, supervisorModel, orch)
 	if err != nil {
 		log.Printf("agent task service disabled: build supervisor agent: %v", err)
 		return nil, nil, nil
 	}
-	orch.Quasar = supervisorAgent
+    orch.Quasar = supervisorAgent
+    orch.Nova = analyzerAgent
+    orch.Comet = executorAgent
 	orch, err = orchestrator.NewOrchestrator(ctx, orch)
 	if err != nil {
 		log.Printf("agent task service disabled: build orchestrator: %v", err)
