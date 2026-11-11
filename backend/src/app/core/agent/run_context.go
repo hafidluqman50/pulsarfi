@@ -26,6 +26,11 @@ type RunContext struct {
 	Recorder      SubTaskWriter
 	Decision      RouteDecision
 
+    Route       string
+    NovaRequest string
+    NovaDone    bool
+    Armed       bool
+
 	// live
 	Stream TurnStream
 }

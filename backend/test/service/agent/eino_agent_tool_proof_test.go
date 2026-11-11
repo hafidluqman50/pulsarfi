@@ -53,6 +53,10 @@ func (m *scriptedModel) Stream(_ context.Context, _ []*schema.Message, _ ...mode
 	if len(step.ToolCalls) > 0 {
 		return schema.StreamReaderFromArray([]*schema.Message{step}), nil
 	}
+    if step.Content == "" && step.ReasoningContent == "" {
+        return schema.StreamReaderFromArray([]*schema.Message{{Role: schema.Assistant}}), nil
+    }
+
 	var chunks []*schema.Message
 	for _, part := range splitInHalf(step.ReasoningContent) {
 		chunks = append(chunks, &schema.Message{Role: schema.Assistant, ReasoningContent: part})

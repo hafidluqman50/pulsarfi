@@ -12,7 +12,7 @@ import (
 
 func NewDatabase(databaseURL string) (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger: queryStatsLogger{Interface: logger.Default.LogMode(logger.Silent)},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
