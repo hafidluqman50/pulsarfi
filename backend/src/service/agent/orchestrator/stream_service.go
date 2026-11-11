@@ -162,7 +162,11 @@ func (s *turnStream) StepDone(row dbmodel.AgentSubTask) {
 // errToolBudgetExhausted is not a failure to report: the agent used its whole
 // tool-call budget without writing a final answer. consume returns it together
 // with the partial result so Send can finish the turn instead of failing it.
-var errToolBudgetExhausted = errors.New("agent: tool budget exhausted")
+var errToolBudgetExhausted = agentcore.ErrToolBudgetExhausted
+
+func isToolBudgetError(err error) bool {
+    return errors.Is(err, errToolBudgetExhausted) || strings.Contains(err.Error(), errToolBudgetExhausted.Error())
+}
 
 // isToolBudgetExhausted reports whether err is Eino's "exceeds max iterations",
 // bare or wrapped by the node/run error types.
@@ -178,6 +182,19 @@ type turnOutcome struct {
 	reply     strings.Builder
 	novaCalls []helper.ToolCallResult
 	interrupt *interruptOutcome
+    finals    map[string]string
+}
+
+func (outcome *turnOutcome) setFinal(agentName, content string) {
+    if outcome.finals == nil {
+        outcome.finals = map[string]string{}
+    }
+
+    outcome.finals[agentName] = content
+}
+
+func (outcome *turnOutcome) finalOf(agentName string) string {
+    return outcome.finals[agentName]
 }
 
 type interruptOutcome struct {
@@ -185,40 +202,42 @@ type interruptOutcome struct {
 	ID        string
 	questions []contracts.IntakeField
 	message   string
+    payload   any
 }
 
-// consume is the one loop over the Runner's event stream. Quasar, Nova and
-// Comet all arrive here, told apart by AgentName: Eino forwards the events of
-// the agents Quasar calls into Quasar's own iterator. Every live signal the
+// readEvents is the one loop over an agent's event stream. Every node reads
+// its agent's events here, told apart by AgentName, and every live signal the
 // frontend gets is published from this loop (or from the Sub Task recorder).
-func (orch *Orchestrator) consume(ctx context.Context, run *agentcore.RunContext, events *adk.AsyncIterator[*adk.AgentEvent], keepCheckpoint bool) (OrchestratorResult, error) {
-	topic := ChatStreamTopic(run.ChatID)
-	var outcome turnOutcome
-	for {
-		event, ok := events.Next()
-		if !ok {
-			break
-		}
-		if event.Err != nil {
-			if isToolBudgetExhausted(event.Err) {
-				// The cap is a budget, not an error: keep whatever the turn
-				// produced and let Send ("dapat gak dapat") finalize it.
-				return orch.finish(ctx, run, &outcome, keepCheckpoint), errToolBudgetExhausted
-			}
-			return OrchestratorResult{}, event.Err
-		}
-		if event.Action != nil && event.Action.Interrupted != nil {
-			outcome.interrupt = interruptFrom(event.Action.Interrupted)
-			continue
-		}
-		if event.Output == nil || event.Output.MessageOutput == nil {
-			continue
-		}
-		if err := publishMessage(topic, frontendAgentName(event.AgentName), event.Output.MessageOutput, &outcome); err != nil {
-			return OrchestratorResult{}, err
-		}
-	}
-	return orch.finish(ctx, run, &outcome, keepCheckpoint), nil
+// It returns the pause the agent ended on, if any.
+func (orchestrator *Orchestrator) readEvents(topic string, events *adk.AsyncIterator[*adk.AgentEvent], outcome *turnOutcome) (*interruptOutcome, error) {
+    var interrupt *interruptOutcome
+    for {
+        event, ok := events.Next()
+        if !ok {
+            return interrupt, nil
+        }
+
+        if event.Err != nil {
+            if isToolBudgetExhausted(event.Err) {
+                return nil, errToolBudgetExhausted
+            }
+
+            return nil, event.Err
+        }
+
+        if event.Action != nil && event.Action.Interrupted != nil {
+            interrupt = interruptFrom(event.Action.Interrupted.InterruptContexts)
+            continue
+        }
+
+        if event.Output == nil || event.Output.MessageOutput == nil {
+            continue
+        }
+
+        if err := publishMessage(topic, frontendAgentName(event.AgentName), event.Output.MessageOutput, outcome); err != nil {
+            return nil, err
+        }
+    }
 }
 
 // finish turns a completed event loop into the turn's result: first what
@@ -262,23 +281,21 @@ func (orch *Orchestrator) finalizeResult(ctx context.Context, run *agentcore.Run
 	}
 }
 
-func interruptFrom(info *adk.InterruptInfo) *interruptOutcome {
-	for _, interruptCtx := range info.InterruptContexts {
-		if !interruptCtx.IsRootCause {
-			continue
-		}
-		switch payload := interruptCtx.Info.(type) {
-		case agentcore.QuestionsInterrupt:
-			return &interruptOutcome{Kind: agentcore.InterruptQuestions, ID: interruptCtx.ID, questions: payload.Questions, message: payload.Message}
-		case *agentcore.QuestionsInterrupt:
-			return &interruptOutcome{Kind: agentcore.InterruptQuestions, ID: interruptCtx.ID, questions: payload.Questions, message: payload.Message}
-		case agentcore.ArmInterrupt:
-			return &interruptOutcome{Kind: agentcore.InterruptArm, ID: interruptCtx.ID, message: payload.Message}
-		case *agentcore.ArmInterrupt:
-			return &interruptOutcome{Kind: agentcore.InterruptArm, ID: interruptCtx.ID, message: payload.Message}
-		}
-	}
-	return nil
+func interruptFrom(contexts []*adk.InterruptCtx) *interruptOutcome {
+    for _, interruptContext := range contexts {
+        if !interruptContext.IsRootCause {
+            continue
+        }
+
+        switch payload := interruptContext.Info.(type) {
+        case agentcore.QuestionsInterrupt:
+            return &interruptOutcome{Kind: agentcore.InterruptQuestions, ID: interruptContext.ID, questions: payload.Questions, message: payload.Message, payload: payload}
+        case agentcore.ArmInterrupt:
+            return &interruptOutcome{Kind: agentcore.InterruptArm, ID: interruptContext.ID, message: payload.Message, payload: payload}
+        }
+    }
+
+    return nil
 }
 
 // frontendAgentName maps an Eino agent name to the agent label the frontend
@@ -376,6 +393,10 @@ func publishAssistant(topic, agentName string, output *adk.MessageVariant, outco
 		message = output.Message
 	}
 	flushThinking()
+
+    if !isQuasar && message != nil && strings.TrimSpace(message.Content) != "" {
+        outcome.setFinal(agentName, message.Content)
+    }
 
 	if !isQuasar && message != nil {
 		for _, call := range message.ToolCalls {

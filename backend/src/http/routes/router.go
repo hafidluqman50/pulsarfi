@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +18,7 @@ import (
 func SetupRouter(db *gorm.DB, jwtConfig auth.Config) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(middleware.Logger())
+	router.Use(middleware.Logger(sqlPool(db)))
 	router.Use(middleware.HTTPSRedirect())
 	router.Use(middleware.MaxBodySize(10 << 20))
 	router.Use(middleware.RateLimit(100, time.Minute))
@@ -42,4 +43,13 @@ func SetupRouter(db *gorm.DB, jwtConfig auth.Config) *gin.Engine {
 	realtimeRoutes.RegisterRoutes(api.Group("/realtime"), jwtConfig)
 
 	return router
+}
+
+func sqlPool(db *gorm.DB) *sql.DB {
+    pool, err := db.DB()
+    if err != nil {
+        panic("router: get sql pool: " + err.Error())
+    }
+
+    return pool
 }

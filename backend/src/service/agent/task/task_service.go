@@ -117,7 +117,7 @@ type ArmTaskResult struct {
 // ArmTask is the one call that moves a Task on-chain into an executable
 // state: grantTradePermission only (createTask already happened the instant
 // Quasar committed the Task — see commitTask in
-// orchestrator_workflow_service.go). Calling CreateTask again here would
+// orchestrator/task_lifecycle_service.go). Calling CreateTask again here would
 // open a second, orphaned on-chain Task and silently rebind Postgres to it.
 func (s *TaskService) ArmTask(ctx context.Context, taskID int64, wallet string, input ArmTaskInput) (ArmTaskResult, error) {
 	task, found, err := s.Tasks.FindByID(ctx, taskID)

@@ -14,4 +14,5 @@ var (
 	ErrNothingToRetry     = errors.New("agent: no failed message to retry")
 	ErrNoOpenTask         = errors.New("agent: no open task, call open_task first")
 	ErrNoPendingExecution = errors.New("agent: task has no pending arm pause to resume")
+    ErrToolBudgetExhausted = errors.New("agent: tool budget exhausted")
 )

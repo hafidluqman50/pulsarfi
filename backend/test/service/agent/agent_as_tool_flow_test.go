@@ -93,13 +93,14 @@ func newFlowHarness(t *testing.T, quasarSteps, novaSteps, cometSteps []*schema.M
 		Chain:           chain,
 		CheckPointStore: store,
 	}
-	quasar, err := supervisor.New(ctx, &scriptedModel{steps: quasarSteps},
-		newAgent(t, "analyzer_agent", novaSteps), newAgent(t, "executor_agent", cometSteps),
-		orch, repos.AgentTask)
-	if err != nil {
-		t.Fatalf("build supervisor: %v", err)
-	}
-	orch.Quasar = quasar
+    quasar, err := supervisor.New(ctx, &scriptedModel{steps: quasarSteps}, orch)
+    if err != nil {
+        t.Fatalf("build supervisor: %v", err)
+    }
+
+    orch.Quasar = quasar
+    orch.Nova = newAgent(t, "analyzer_agent", novaSteps)
+    orch.Comet = newAgent(t, "executor_agent", cometSteps)
 	if orch, err = orchestrator.NewOrchestrator(ctx, orch); err != nil {
 		t.Fatalf("build orchestrator: %v", err)
 	}
@@ -167,195 +168,205 @@ func equalSteps(t *testing.T, got, want []string) {
 }
 
 const (
-	informationalDecision = `{"is_actionable":false,"summary":"IHSG chart","label":"IHSG chart"}`
-	partialTradeDecision  = `{"is_actionable":false,"summary":"Buy BBCA","label":"Buy BBCA","side":"buy","mentioned_ticker":"BBCAP"}`
-	settledTradeDecision  = `{"is_actionable":true,"summary":"Buy 1000000 IDRX of BBCAP","label":"Buy BBCAP","shape":"scalp","side":"buy","mentioned_ticker":"BBCAP","budget_idrx":"1000000"}`
-	cardQuestions         = `{"message":"I need a couple of things confirmed.","questions":[{"key":"shape","question":"Which style?","options":["scalp","swing","investment"]},{"key":"idrx_cap","question":"How much?"}]}`
+    informationalDecision = `{"is_actionable":false,"summary":"IHSG chart","label":"IHSG chart"}`
+    partialTradeDecision  = `{"is_actionable":false,"summary":"Buy BBCA","label":"Buy BBCA","side":"buy","mentioned_ticker":"BBCAP"}`
+    settledTradeDecision  = `{"is_actionable":true,"summary":"Buy 1000000 IDRX of BBCAP","label":"Buy BBCAP","shape":"scalp","side":"buy","mentioned_ticker":"BBCAP","budget_idrx":"1000000"}`
+    cardQuestions         = `{"message":"I need a couple of things confirmed.","questions":[{"key":"shape","question":"Which style?","options":["scalp","swing","investment"]},{"key":"idrx_cap","question":"How much?"}]}`
+
+    routeInformation = `{"route":"analyzer_only","request_for_nova":"IHSG chart"}`
+    routeAnalyzeTrade = `{"route":"analyzer_then_executor","request_for_nova":"evaluate BBCAP"}`
+    routeDirectTrade = `{"route":"executor_only"}`
 )
 
 func withContent(content string, calls ...*schema.Message) *schema.Message {
-	merged := calls[0]
-	merged.Content = content
-	return merged
+    merged := calls[0]
+    merged.Content = content
+    return merged
 }
 
-// Scenario A: plain conversation opens no Task and calls no tool.
+func handOff() *schema.Message { return answer("", "") }
+
 func TestFlowA_GreetingOpensNoTask(t *testing.T) {
-	h := newFlowHarness(t, []*schema.Message{answer("", "Halo! Ada yang bisa dibantu?")}, nil, nil)
+    h := newFlowHarness(t, []*schema.Message{answer("", "Halo! Ada yang bisa dibantu?")}, nil, nil)
 
-	card := h.say("Halo")
+    card := h.say("Halo")
 
-	if card.TaskID != 0 || card.Reply != "Halo! Ada yang bisa dibantu?" {
-		t.Fatalf("unexpected card: %+v", card)
-	}
-	if h.chain.createdTasks != 0 {
-		t.Fatalf("a greeting created %d on-chain tasks", h.chain.createdTasks)
-	}
+    if card.TaskID != 0 || card.Reply != "Halo! Ada yang bisa dibantu?" {
+        t.Fatalf("unexpected card: %+v", card)
+    }
+
+    if h.chain.createdTasks != 0 {
+        t.Fatalf("a greeting created %d on-chain tasks", h.chain.createdTasks)
+    }
 }
 
-// Scenario B: an information request still opens an on-chain Task, then asks Nova.
-func TestFlowB_InformationOpensATaskAndCallsNova(t *testing.T) {
-	h := newFlowHarness(t, []*schema.Message{
-		toolCall("open_task", informationalDecision),
-		toolCall("analyzer_agent", `{"request":"IHSG chart"}`),
-		answer("", "IHSG is up today."),
-	}, []*schema.Message{answer("nova thinking", "IHSG closed higher.")}, nil)
+func TestFlowB_InformationOpensATaskAndRunsNova(t *testing.T) {
+    h := newFlowHarness(t, []*schema.Message{
+        toolCall("understand", routeInformation),
+        toolCall("open_task", informationalDecision),
+        handOff(),
+        answer("", "IHSG is up today."),
+    }, []*schema.Message{answer("nova thinking", "IHSG closed higher.")}, nil)
 
-	card := h.say("Ambilin chart IHSG")
+    card := h.say("Ambilin chart IHSG")
 
-	if card.TaskID == 0 || card.Reply != "IHSG is up today." {
-		t.Fatalf("unexpected card: %+v", card)
-	}
-	equalSteps(t, h.steps(card.TaskID), []string{
-		"supervisor/understand_request", "supervisor/route_decision",
-		"supervisor/route_to_analyzer", "analyzer/gather_evidence",
-	})
-	task, _, _ := h.repos.AgentTask.FindByID(context.Background(), card.TaskID)
-	if task.IsActionable {
-		t.Fatal("an information task must not be actionable")
-	}
-	if found, _ := h.store.Has(context.Background(), h.chatID.String()); found {
-		t.Fatal("a finished turn must not leave a checkpoint behind")
-	}
+    if card.TaskID == 0 || card.Reply != "IHSG is up today." {
+        t.Fatalf("unexpected card: %+v", card)
+    }
+
+    equalSteps(t, h.steps(card.TaskID), []string{
+        "supervisor/understand_request", "supervisor/route_decision",
+        "supervisor/route_to_analyzer", "analyzer/gather_evidence",
+    })
+
+    task, _, _ := h.repos.AgentTask.FindByID(context.Background(), card.TaskID)
+    if task.IsActionable {
+        t.Fatal("an information task must not be actionable")
+    }
+
+    if found, _ := h.store.Has(context.Background(), h.chatID.String()); found {
+        t.Fatal("a finished turn must not leave a checkpoint behind")
+    }
 }
 
-// Task-first and Arm guards: a refused call returns a tool_error, runs
-// nothing, and the turn carries on.
-func TestFlowGuards_TaskFirstAndArmedAreEnforcedInCode(t *testing.T) {
-	h := newFlowHarness(t, []*schema.Message{
-		toolCall("analyzer_agent", `{"request":"too early"}`),
-		toolCall("open_task", settledTradeDecision),
-		toolCall("executor_agent", `{"request":"execute now"}`),
-		answer("", "Please arm the task first."),
-	}, []*schema.Message{answer("", "must not run")}, []*schema.Message{answer("", "must not run")})
+func TestFlowGuards_AwaitArmRefusesWithoutATaskAndNothingRuns(t *testing.T) {
+    h := newFlowHarness(t, []*schema.Message{
+        toolCall("understand", routeDirectTrade),
+        toolCall("await_arm", `{"message":"too early"}`),
+    }, []*schema.Message{answer("", "must not run")}, []*schema.Message{answer("", "must not run")})
 
-	card := h.say("Beli BBCA 1 juta")
+    card := h.say("Beli BBCA 1 juta")
 
-	if card.Reply != "Please arm the task first." {
-		t.Fatalf("unexpected reply: %q", card.Reply)
-	}
-	equalSteps(t, h.steps(card.TaskID), []string{"supervisor/understand_request", "supervisor/route_decision"})
+    if card.TaskID != 0 || h.chain.createdTasks != 0 {
+        t.Fatalf("a refused await_arm must open no Task, got card %+v and %d on-chain tasks", card, h.chain.createdTasks)
+    }
+
+    if h.pendingKind() != "" {
+        t.Fatalf("a refused await_arm must leave no pause, pending=%q", h.pendingKind())
+    }
 }
 
-// Nova's request is built from the Task, so a trade still being configured
-// must be settled with update_task before Nova is asked.
-func TestFlowGuards_NovaWaitsForASettledTrade(t *testing.T) {
-	h := newFlowHarness(t, []*schema.Message{
-		toolCall("open_task", partialTradeDecision),
-		toolCall("analyzer_agent", `{"request":"evaluate BBCAP"}`),
-		answer("", "Let me confirm the details first."),
-	}, []*schema.Message{answer("", "must not run")}, nil)
+func TestFlowGuards_NovaIsSkippedForATradeThatIsNotSettled(t *testing.T) {
+    h := newFlowHarness(t, []*schema.Message{
+        toolCall("understand", routeAnalyzeTrade),
+        toolCall("open_task", partialTradeDecision),
+        handOff(),
+        answer("", "Let me confirm the details first."),
+    }, []*schema.Message{answer("", "must not run")}, nil)
 
-	card := h.say("Beli BBCA")
+    card := h.say("Beli BBCA")
 
-	equalSteps(t, h.steps(card.TaskID), []string{"supervisor/understand_request", "supervisor/route_decision"})
+    equalSteps(t, h.steps(card.TaskID), []string{"supervisor/understand_request", "supervisor/route_decision"})
 }
 
-// Scenarios D and the Arm pause: questions card, resume with the answer,
-// Nova, Arm Card, then ExecuteTask's resume streams Comet. The Sub Task hash
-// chain must come out unbroken and in the order the graph used to record.
 func TestFlowD_QuestionsThenAnalysisThenArmThenExecute(t *testing.T) {
-	h := newFlowHarness(t, []*schema.Message{
-		toolCall("open_task", partialTradeDecision),
-		toolCall("ask_user", cardQuestions),
-		toolCall("update_task", settledTradeDecision),
-		toolCall("analyzer_agent", `{"request":"evaluate BBCAP"}`),
-		withContent("BBCA looks fine. Review the card and click Arm.", toolCall("await_arm", `{"message":"ignored, the model already wrote text"}`)),
-		toolCall("executor_agent", `{"request":"buy 1000000 IDRX of BBCAP"}`),
-		answer("", "Done. Tx 0xabc"),
-	}, []*schema.Message{answer("nova thinking", "BBCAP is tradeable.\n```json\n{\"tradeable\":true,\"entry_price\":\"100\",\"confidence\":\"high\",\"reasoning\":\"ok\"}\n```")},
-		[]*schema.Message{answer("comet thinking", "executed")})
+    h := newFlowHarness(t, []*schema.Message{
+        toolCall("understand", routeAnalyzeTrade),
+        toolCall("open_task", partialTradeDecision),
+        toolCall("ask_user", cardQuestions),
+        toolCall("update_task", settledTradeDecision),
+        handOff(),
+        withContent("BBCA looks fine. Review the card and click Arm.", toolCall("await_arm", `{"message":"ignored, the model already wrote text"}`)),
+        answer("", "Done. Tx 0xabc"),
+    }, []*schema.Message{answer("nova thinking", "BBCAP is tradeable.\n```json\n{\"tradeable\":true,\"entry_price\":\"100\",\"confidence\":\"high\",\"reasoning\":\"ok\"}\n```")},
+        []*schema.Message{answer("comet thinking", "executed")})
 
-	first := h.say("Beli BBCA")
-	if first.ContentType != "workflow_card" || first.UIComponent == nil || *first.UIComponent != "clarifying_questions" {
-		t.Fatalf("turn 1 should raise the questions card, got %+v", first)
-	}
-	if first.TaskID == 0 || first.Reply != "I need a couple of things confirmed." {
-		t.Fatalf("turn 1 should open the Task before the card and keep the framing sentence: %+v", first)
-	}
-	if h.pendingKind() != "questions" {
-		t.Fatalf("turn 1 should be paused on the questions card, pending=%q", h.pendingKind())
-	}
+    first := h.say("Beli BBCA")
+    if first.ContentType != "workflow_card" || first.UIComponent == nil || *first.UIComponent != "clarifying_questions" {
+        t.Fatalf("turn 1 should raise the questions card, got %+v", first)
+    }
 
-	second := h.say("scalp, 1000000, analyze first")
-	if second.TaskID != first.TaskID || second.Reply != "BBCA looks fine. Review the card and click Arm." {
-		t.Fatalf("turn 2 should resume the same Task and point at the Arm Card: %+v", second)
-	}
-	if h.pendingKind() != "arm" {
-		t.Fatalf("turn 2 should be paused on the Arm Card, pending=%q", h.pendingKind())
-	}
-	if h.chain.createdTasks != 1 || h.chain.markActionable != 1 {
-		t.Fatalf("one on-chain Task and one markActionable expected, got create=%d mark=%d", h.chain.createdTasks, h.chain.markActionable)
-	}
+    if first.TaskID == 0 || first.Reply != "I need a couple of things confirmed." {
+        t.Fatalf("turn 1 should open the Task before the card and keep the framing sentence: %+v", first)
+    }
 
-	h.arm(first.TaskID)
-	result, err := h.orchestrator.ResumeExecute(context.Background(), first.TaskID, h.wallet)
-	if err != nil {
-		t.Fatalf("ResumeExecute: %v", err)
-	}
-	if result.Reply != "Done. Tx 0xabc" {
-		t.Fatalf("unexpected execution reply: %q", result.Reply)
-	}
+    if h.pendingKind() != "questions" {
+        t.Fatalf("turn 1 should be paused on the questions card, pending=%q", h.pendingKind())
+    }
 
-	equalSteps(t, h.steps(first.TaskID), []string{
-		"supervisor/understand_request", "supervisor/route_decision", "supervisor/route_decision",
-		"supervisor/route_to_analyzer", "analyzer/gather_evidence",
-		"supervisor/await_confirmation", "supervisor/route_to_executor", "executor/decide",
-	})
-	if found, _ := h.store.Has(context.Background(), h.chatID.String()); found {
-		t.Fatal("the checkpoint must be gone once the execution finished")
-	}
+    second := h.say("scalp, 1000000, analyze first")
+    if second.TaskID != first.TaskID || second.Reply != "BBCA looks fine. Review the card and click Arm." {
+        t.Fatalf("turn 2 should resume the same Task and point at the Arm Card: %+v", second)
+    }
+
+    if h.pendingKind() != "arm" {
+        t.Fatalf("turn 2 should be paused on the Arm Card, pending=%q", h.pendingKind())
+    }
+
+    if h.chain.createdTasks != 1 || h.chain.markActionable != 1 {
+        t.Fatalf("one on-chain Task and one markActionable expected, got create=%d mark=%d", h.chain.createdTasks, h.chain.markActionable)
+    }
+
+    h.arm(first.TaskID)
+    result, err := h.orchestrator.ResumeExecute(context.Background(), first.TaskID, h.wallet)
+    if err != nil {
+        t.Fatalf("ResumeExecute: %v", err)
+    }
+
+    if result.Reply != "Done. Tx 0xabc" {
+        t.Fatalf("unexpected execution reply: %q", result.Reply)
+    }
+
+    equalSteps(t, h.steps(first.TaskID), []string{
+        "supervisor/understand_request", "supervisor/route_decision", "supervisor/route_decision",
+        "supervisor/route_to_analyzer", "analyzer/gather_evidence",
+        "supervisor/await_confirmation", "supervisor/route_to_executor", "executor/decide",
+    })
+
+    if found, _ := h.store.Has(context.Background(), h.chatID.String()); found {
+        t.Fatal("the checkpoint must be gone once the execution finished")
+    }
 }
 
-// Scenario H: a chat message while the Arm Card is open and the Task is not
-// armed must neither resume the Arm pause nor destroy it.
 func TestFlowH_ChatWhileArmPendingDoesNotResumeOrDestroyThePause(t *testing.T) {
-	h := newFlowHarness(t, []*schema.Message{
-		toolCall("open_task", settledTradeDecision),
-		toolCall("await_arm", `{"message":"Review the card and click Arm."}`),
-		answer("", "The card is waiting for you."),
-		toolCall("executor_agent", `{"request":"buy 1000000 IDRX of BBCAP"}`),
-		answer("", "Done. Tx 0xabc"),
-	}, nil, []*schema.Message{answer("", "executed")})
+    h := newFlowHarness(t, []*schema.Message{
+        toolCall("understand", routeDirectTrade),
+        toolCall("open_task", settledTradeDecision),
+        toolCall("await_arm", `{"message":"Review the card and click Arm."}`),
+        answer("", "The card is waiting for you."),
+        answer("", "Done. Tx 0xabc"),
+    }, nil, []*schema.Message{answer("", "executed")})
 
-	first := h.say("Beli BBCA 1 juta, langsung eksekusi")
-	if h.pendingKind() != "arm" {
-		t.Fatalf("expected the Arm pause, pending=%q", h.pendingKind())
-	}
-	if first.Reply != "Review the card and click Arm." {
-		t.Fatalf("the Arm Card must carry its introducing sentence even when the model wrote no text: %q", first.Reply)
-	}
+    first := h.say("Beli BBCA 1 juta, langsung eksekusi")
+    if h.pendingKind() != "arm" {
+        t.Fatalf("expected the Arm pause, pending=%q", h.pendingKind())
+    }
 
-	chatter := h.say("sudah belum?")
-	if chatter.Reply != "The card is waiting for you." {
-		t.Fatalf("a chat message while Arm is pending should be an ordinary turn: %+v", chatter)
-	}
-	if h.pendingKind() != "arm" {
-		t.Fatalf("the Arm pause must survive a chat message, pending=%q", h.pendingKind())
-	}
-	equalSteps(t, h.steps(first.TaskID), []string{
-		"supervisor/understand_request", "supervisor/route_decision", "supervisor/await_confirmation",
-	})
+    if first.Reply != "Review the card and click Arm." {
+        t.Fatalf("the Arm Card must carry its introducing sentence even when the model wrote no text: %q", first.Reply)
+    }
 
-	h.arm(first.TaskID)
-	if _, err := h.orchestrator.ResumeExecute(context.Background(), first.TaskID, h.wallet); err != nil {
-		t.Fatalf("the Arm pause should still resume after the chat message: %v", err)
-	}
+    chatter := h.say("sudah belum?")
+    if chatter.Reply != "The card is waiting for you." {
+        t.Fatalf("a chat message while Arm is pending should be an ordinary turn: %+v", chatter)
+    }
+
+    if h.pendingKind() != "arm" {
+        t.Fatalf("the Arm pause must survive a chat message, pending=%q", h.pendingKind())
+    }
+
+    equalSteps(t, h.steps(first.TaskID), []string{
+        "supervisor/understand_request", "supervisor/route_decision", "supervisor/await_confirmation",
+    })
+
+    h.arm(first.TaskID)
+    if _, err := h.orchestrator.ResumeExecute(context.Background(), first.TaskID, h.wallet); err != nil {
+        t.Fatalf("the Arm pause should still resume after the chat message: %v", err)
+    }
 }
 
-// ResumeExecute with no pending pause (what a recurring tranche hits after
-// the first execution) is an explicit error, never a silent reply.
 func TestFlowResumeExecuteWithoutPendingPauseIsAnExplicitError(t *testing.T) {
-	h := newFlowHarness(t, []*schema.Message{
-		toolCall("open_task", informationalDecision),
-		answer("", "ok"),
-	}, nil, nil)
-	card := h.say("tolong catat ini")
-	h.arm(card.TaskID)
+    h := newFlowHarness(t, []*schema.Message{
+        toolCall("understand", routeDirectTrade),
+        toolCall("open_task", informationalDecision),
+        answer("", "ok"),
+    }, nil, nil)
+    card := h.say("tolong catat ini")
+    h.arm(card.TaskID)
 
-	_, err := h.orchestrator.ResumeExecute(context.Background(), card.TaskID, h.wallet)
+    _, err := h.orchestrator.ResumeExecute(context.Background(), card.TaskID, h.wallet)
 
-	if err == nil || !strings.Contains(err.Error(), agentcore.ErrNoPendingExecution.Error()) {
-		t.Fatalf("expected ErrNoPendingExecution, got %v", err)
-	}
+    if err == nil || !strings.Contains(err.Error(), agentcore.ErrNoPendingExecution.Error()) {
+        t.Fatalf("expected ErrNoPendingExecution, got %v", err)
+    }
 }
